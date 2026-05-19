@@ -27,6 +27,7 @@ import Link from "next/link";
 import { getTranslations, LANG_PICKER_LABELS } from "@/lib/i18n";
 import { getLang } from "@/lib/cookies";
 import type { Session } from "@/lib/cookies";
+import LanguageSwitcher from "@/components/LanguageSwitcher";
 
 export default async function LandingInvited({
   session,
@@ -86,21 +87,7 @@ export default async function LandingInvited({
 
         <div className="mb-8">
           <div className="label mb-3">{t.selectLanguage}</div>
-          {/* Replaced in file 6 by <LanguageSwitcher /> client component.
-              Static markup here for layout review only. */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <LangButton
-              active={lang === "en"}
-              label="English"
-              sublabel="Latin script · left-to-right"
-            />
-            <LangButton
-              active={lang === "ar"}
-              label="العربية"
-              sublabel="نص عربي · من اليمين إلى اليسار"
-              arabic
-            />
-          </div>
+          <LanguageSwitcher currentLang={lang} />
         </div>
 
         <Link href="/consent" className="btn-primary">
@@ -153,37 +140,3 @@ function ClockIcon() {
   );
 }
 
-function LangButton({
-  active,
-  label,
-  sublabel,
-  arabic,
-}: {
-  active: boolean;
-  label: string;
-  sublabel: string;
-  arabic?: boolean;
-}) {
-  return (
-    <div
-      className={`text-start p-4 rounded-lg border-2 transition-all ${
-        active ? "border-brand-600 bg-brand-50" : "border-line bg-white"
-      }`}
-    >
-      <div
-        className={`text-[18px] font-semibold ${
-          active ? "text-brand-800" : "text-ink"
-        } ${arabic ? "font-arabic" : ""}`}
-      >
-        {label}
-      </div>
-      <div
-        className={`text-[12px] mt-1 ${
-          active ? "text-brand-700" : "text-muted"
-        } ${arabic ? "font-arabic" : ""}`}
-      >
-        {sublabel}
-      </div>
-    </div>
-  );
-}
