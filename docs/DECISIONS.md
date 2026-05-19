@@ -377,6 +377,76 @@ Application code calls these via `supabase.rpc(...)`. One RPC round-trip per PII
 
 **Methodological grounding:** Compound questions are called "double-barrelled" in survey methodology literature (Bradburn et al., *Asking Questions*, 2004). The recommendation to either split them pre-fielding *or* code their answers separately post-fielding is established practice. Pilot V1 ships with compound Q2/Q4 intentionally — F1-F3 feedback will tell us whether respondents found them confusing enough to split for V2.
 
+### D41. Respondent session cookie is unsigned; DB validation is the integrity check
+
+**Decision:** The `yarmouk_session` cookie carries the raw `response_id` UUID (and nothing else) as an unsigned, opaque value. There is no HMAC, no JWE, no signing secret. On every server-side read, a single helper (`getSession()` in `lib/cookies.ts`) joins `responses` to `invitations` and rejects the session if the row is missing, locked, submitted, or attached to an expired invitation.
+
+**Why:** The only thing an attacker could forge in the cookie is the `response_id`, which is a UUIDv4 with 122 bits of entropy. Computationally infeasible to guess. Signing adds machinery that defends a vector that doesn't exist for this payload, while creating real costs: a new env var (`SESSION_COOKIE_SECRET`), a rotation procedure to document, and a crypto round-trip on every request.
+
+**Threat model in plain terms:**
+
+- **Cookie tampering:** a respondent edits their own `response_id` to point at someone else's response. They'd need to guess a 122-bit UUID. Infeasible.
+- **Cookie theft:** someone gets a copy of the cookie. The cookie is `httpOnly` + `Secure` + `SameSite=Lax`, so theft requires either physical access to the device or a successful XSS exploit. This threat is identical with or without signing — signing protects against forgery, not theft.
+- **Server-side bug:** the cookie validates but we serve the wrong data. The DB hydration in `getSession()` is the actual check — signing wouldn't help here.
+
+**Implication:** No `SESSION_COOKIE_SECRET` env var. `getSession()` does one DB read per request (small, well-indexed). If we ever identify a real signing threat — e.g., we start storing cookie payloads that aren't pure DB lookups — revisit this decision and add signing then. Do not pre-emptively add signing "just in case."
+
+**Not relitigated when:** considering `jose`, `iron-session`, or roll-your-own HMAC. The point isn't the library; it's that signing defends nothing here.
+
+### D42. Response row is created inside `validate_invitation_token`, not by the caller
+
+**Decision:** On a fresh-claim hit to `/r/[token]`, the `responses` row is INSERTed inside the `validate_invitation_token` SECURITY DEFINER function, in the same transaction as the use_count increment and status transition. The function returns the new `response_id` on both fresh-claim and resumption paths. The route handler never INSERTs into `responses`.
+
+**Why:** Atomicity. The alternative — caller does the INSERT after RPC — has two failure modes the atomic version doesn't: (a) the validate RPC succeeds and increments `use_count`, but the follow-up INSERT fails (race with delete, transient DB error, RLS misconfiguration), leaving an invitation marked "opened" with no response and a respondent who sees an error page; (b) the route handler crashes between RPC and INSERT, same outcome. Putting both into one SECURITY DEFINER body collapses these to a single transaction. Either both happen or neither does.
+
+**Side benefit — RLS:** the `responses` table only permits INSERT for the owner role (`r_owner_insert`). The anonymous route handler couldn't INSERT directly even if we wanted it to; SECURITY DEFINER inside the function bypasses RLS legitimately. We could have added an `r_anon_insert` policy with some conditional check, but the policy logic would have to re-prove what the function already proves (valid token, not exhausted, not submitted). Keeping the INSERT inside the function avoids duplicating that logic in two places.
+
+**Implication:** Migration 012 extends `validate_invitation_token`'s `RETURNS TABLE` with `response_id UUID` (non-null on every non-empty return) and `ref_code TEXT`. The route handler becomes a single RPC + cookie write + redirect. Cleanup of orphaned responses (if a respondent enters but never answers) is trivial via a future cron — `started_at < NOW() - interval 'N days' AND submitted_at IS NULL AND NOT EXISTS (SELECT 1 FROM answers WHERE response_id = r.id)` — deferred until pilot data shows whether it's needed.
+
+**Caught the design hole:** Initially the response row was going to be created in the route handler. The RLS issue surfaced during Session 2b-2 scoping. Easier to design atomically than to retrofit.
+
+### D43. Language resolution order: invitation overrides on entry; cookie everywhere else; Accept-Language ignored
+
+**Decision:** The respondent's display language is resolved in this priority order:
+
+1. **On `/r/[token]` entry:** `invitations.preferred_language` is written to the `yarmouk_lang` cookie, overriding any existing cookie value. The invitation wins on entry, every time.
+2. **Everywhere else (landing, consent, questionnaire, submitted):** the `yarmouk_lang` cookie is the source of truth. The respondent can change it via the LanguageSwitcher component, which updates the cookie + triggers a server-side re-render.
+3. **`Accept-Language` header:** ignored entirely. Never consulted.
+
+**Why invitation wins on entry:** `invitations.preferred_language` is the most intentional signal in the system. Sura sets it deliberately per recipient (an Arabic-first official gets `'ar'`; a researcher who corresponds in English gets `'en'`). The recipient may have a cookie left over from a previous visit in the other language — typically because they clicked a friend's link, or were testing. The invitation's language carries Sura's research intent and should not be silently overridden by stale browser state.
+
+**Why the cookie thereafter:** once the respondent has chosen (implicitly, by accepting the invitation default, or explicitly, by clicking the switcher), that choice should persist across page navigations and through the autosave/resume flow. localStorage was the original plan (D14) but cookies (D30) win: server components can read them without JS, RTL `dir` attribute renders correctly on first paint, and there's no flash-of-wrong-language.
+
+**Why not `Accept-Language`:** noisy, often wrong, and easy to spoof. A respondent's browser locale tells us almost nothing about which language they want to *answer in*. Many bilingual respondents have an English browser but answer in Arabic. Inferring from the browser would override the carefully-chosen invitation language for no good reason.
+
+**Implication:** The `/r/[token]` route handler always calls `setLang(row.language)` unconditionally. `getLang()` reads the cookie with `'en'` as the only fallback. The LanguageSwitcher writes the cookie + `router.refresh()`. No middleware, no header sniffing.
+
+### D44. Invitation token plaintext format: 32 random bytes, base64url-encoded
+
+**Decision:** Every invitation token is generated as exactly 32 cryptographically random bytes, encoded as base64url without padding (43 characters, URL-safe, no `+`, `/`, or `=`). Stored as the SHA-256 hex digest in `invitations.token_hash`. Plaintext exists only at mint-time and in the recipient's email inbox.
+
+**Why:** 32 bytes = 256 bits of entropy, matching the SHA-256 output size. base64url is URL-safe — survives copy/paste through email clients, mobile messaging, and URL bars without escaping. 43 chars keeps the link short enough to render cleanly in plain-text email. No padding means no trailing `=` that some email clients mangle.
+
+**Generators MUST use this format:**
+
+- The admin "create invitation" Server Action (Session 3)
+- Any future bulk import that mints tokens
+- Any backfill or migration that needs to issue tokens
+- Test fixtures and seed scripts that exercise the token flow
+
+**Generation pattern (TypeScript, for Session 3):**
+
+```ts
+import { randomBytes, createHash } from "node:crypto";
+const plaintext = randomBytes(32).toString("base64url");
+const hash = createHash("sha256").update(plaintext).digest("hex");
+// Send plaintext in email; store only hash in invitations.token_hash.
+```
+
+**Why not stored:** plaintext is forward-only. The hash column is one-way; resend = mint new, rotate hash, old link stops working. Documented as Task #11 (TASK_STATE.md) for Session 4 admin docs.
+
+**Not relitigated when:** considering shorter tokens for "nicer URLs." Tokens are clicked from email, never typed. 43 chars is fine. Also not relitigated when considering UUIDs as tokens — UUIDs leak generator state, have only 122 bits of entropy, and don't match the SHA-256 hash size.
+
 ## Out of Scope (Explicitly)
 
 - **AI translation** between EN/AR. Button exists in mock as placeholder; clicking does nothing. Real translation would require GPT-4 or DeepL API; deferred.
