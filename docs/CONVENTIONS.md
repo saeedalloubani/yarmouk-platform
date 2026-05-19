@@ -184,6 +184,34 @@ For a thesis project, exhaustive automated testing is overkill. Minimum bar:
 
 We're not writing unit tests for individual components. We're writing integration tests for critical flows only.
 
+## Database Migrations
+
+Migrations live in `supabase/migrations/` and are applied via `supabase db push`. Filenames use the CLI-required `YYYYMMDDHHMMSS_<name>.sql` format. Apply order is lexicographic — keep timestamps strictly increasing per change.
+
+**Review checklist before applying any migration that adds or replaces a function:**
+
+1. **D38 — pgcrypto qualification.** If the function uses any pgcrypto symbol, every call is qualified `extensions.digest`, `extensions.pgp_sym_encrypt`, etc. Grep:
+   ```
+   grep -nE '\b(digest|pgp_sym_(encrypt|decrypt)|crypt|gen_salt|hmac)\b' \
+     supabase/migrations/*.sql | grep -v 'extensions\.'
+   ```
+   Empty output = clean.
+
+2. **D39 — `RETURNS TABLE` aliasing.** If the function has `RETURNS TABLE`, every table reference in the body has an alias and every column reference is qualified. Grep for the affected files:
+   ```
+   grep -nE 'RETURNS TABLE' supabase/migrations/*.sql
+   ```
+   For each match, read the body and verify aliases on every `SELECT` / `UPDATE` / `RETURNING`.
+
+3. **Smoke test.** Every new SECURITY DEFINER function gets at minimum one smoke-test query that exercises the function body before its migration is considered complete. The smoke test runs **after `supabase db push` succeeds**, not before — because PL/pgSQL bodies compile lazily and CREATE FUNCTION won't catch most logic errors. The smallest useful smoke test is usually a known-empty input, e.g.:
+   ```sql
+   SELECT * FROM public.validate_invitation_token('not-a-real-token');
+   -- Expected: zero rows, no error
+   ```
+   A passing smoke test confirms search_path, qualified extension symbols, and OUT-parameter/column resolution all work end-to-end.
+
+4. **Failing smoke = revert via next migration**, not by editing the just-applied file. Migration history is forward-only; the file on disk represents the historical state, even if it's wrong. Add a follow-up migration (`CREATE OR REPLACE FUNCTION ...` or `DROP ... ; CREATE ...`) that supersedes the broken one. Same pattern we used for `0008` (pgcrypto qualifier) and `0009` (OUT-param aliasing).
+
 ## Git
 
 - Branch off `main` for any non-trivial change: `feat/notifications`, `fix/audio-upload`, etc.

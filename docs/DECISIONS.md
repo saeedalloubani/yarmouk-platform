@@ -337,6 +337,30 @@ Application code calls these via `supabase.rpc(...)`. One RPC round-trip per PII
 
    Extend the alternation when adding calls to other pgcrypto functions (`armor`, `dearmor`, `pgp_pub_encrypt`, `encrypt_iv`, etc.). The point is the grep is part of the review checklist for any crypto-touching migration — not a one-time audit.
 
+### D39. SECURITY DEFINER functions that read from tables must alias every reference and qualify every column
+
+**Decision:** In every SECURITY DEFINER PL/pgSQL function that reads from tables, every table reference gets an alias (`invitations AS i`, `responses AS r`) and every column reference inside `SELECT` / `WHERE` / `UPDATE` / `RETURNING` uses that alias. No exceptions. No `#variable_conflict use_column` pragma.
+
+**Why:** PL/pgSQL turns every `RETURNS TABLE (...)` column name into an implicit OUT parameter visible inside the function body. When an OUT parameter shares a name with a real column on a table the function queries (`id`, `expires_at`, `category`, `status`, etc. — likely most of them), bare references are ambiguous and Postgres errors at execution.
+
+**Caught the hard way:** The same `validate_invitation_token` that needed `extensions.digest` qualification in 0008 also has 7 OUT parameters from its `RETURNS TABLE`. Bare `expires_at` and `id` references inside the body collided with the same-named columns on `invitations`. Lazy compile hid this through CREATE FUNCTION; surfaced at first call. Fix in `20260519170009_alias_validate_token_columns.sql`.
+
+**Why not `#variable_conflict use_column`:** It silently prefers column over variable, which means a future variable that happens to share a column name is silently shadowed and the function behaves wrong instead of erroring. Implicit resolution is the wrong tool when correctness is load-bearing.
+
+**Why not renaming OUT params (`out_id`, `out_expires_at`):** It pollutes the function's public API. `database.types.ts`, the repos, and any RPC consumer would all need to read `out_id` instead of `id`. Worse for downstream code than a verbose internal convention.
+
+**Convention:**
+
+1. **In SQL code.** Inside any SECURITY DEFINER function body that reads from tables, every table reference is aliased and every column is qualified. The RETURN QUERY SELECT source side can stay unqualified when sourcing from a record variable (`v_inv.id`, `v_resp.id`) — that's already unambiguous. The destination side (OUT params by position) doesn't need qualification.
+
+2. **In migration review.** Before any migration that adds or modifies a function with `RETURNS TABLE`, grep:
+
+   ```
+   grep -nE 'RETURNS TABLE' supabase/migrations/*.sql
+   ```
+
+   Then for each match, read the function body and verify every `SELECT` / `UPDATE` / `RETURNING` uses table aliases on every table-column reference. Add this to the same review checklist as D38's pgcrypto grep — both are "after CREATE, before considering applied" checks.
+
 ## Out of Scope (Explicitly)
 
 - **AI translation** between EN/AR. Button exists in mock as placeholder; clicking does nothing. Real translation would require GPT-4 or DeepL API; deferred.
