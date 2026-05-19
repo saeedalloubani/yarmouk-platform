@@ -148,7 +148,9 @@ supabase/
 
 ## Current Status
 
-See `docs/STATUS.md`. We're entering production build via Claude in Chrome, Session 1.
+If you're picking up the project cold, start with **`TASK_STATE.md`** at the repo root — it's the session-handoff snapshot: where we are, what's done, what's next, key decisions, concrete values (project ref, Vault secret names, etc.), and lessons learned the hard way.
+
+`docs/STATUS.md` has the session-by-session build status. `docs/DECISIONS.md` has the full decision history (D1-D40). `docs/CONVENTIONS.md` has the conventions. `RUNBOOK.md` has manual ops (Vault key lifecycle).
 
 ## Don't Relitigate
 
