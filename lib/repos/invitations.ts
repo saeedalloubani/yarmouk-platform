@@ -66,26 +66,35 @@ export type Invitation = {
 };
 
 function rowToInvitation(row: DbRow | DbViewRow): Invitation {
+  // PG view metadata doesn't carry NOT NULL info, so generated DbViewRow
+  // types every column as nullable. At runtime the view returns base-table
+  // values verbatim for non-redacted columns. We cast to DbRow to recover
+  // the schema's actual non-null guarantees. PII columns
+  // (recipient_*_encrypted) are intentionally NULL in the view, so accessed
+  // via the original `row` reference where the union nullability is honest.
+  // preferred_language is narrowed via `as 'en' | 'ar'` because the DB
+  // CHECK constraint enforces this but gen types don't reflect CHECK.
   // token_hash exists on DbRow but is intentionally not surfaced here.
+  const r = row as DbRow;
   return {
-    id: row.id,
-    refCode: row.ref_code,
+    id: r.id,
+    refCode: r.ref_code,
     recipientNameEncrypted: row.recipient_name_encrypted,
     recipientEmailEncrypted: row.recipient_email_encrypted,
-    category: row.category,
-    nationality: row.nationality,
-    preferredLanguage: row.preferred_language,
-    questionnaireVersionId: row.questionnaire_version_id,
-    status: row.status,
-    expiresAt: row.expires_at,
-    useCount: row.use_count,
-    maxUses: row.max_uses,
-    sentAt: row.sent_at,
-    openedAt: row.opened_at,
-    startedAt: row.started_at,
-    submittedAt: row.submitted_at,
-    createdAt: row.created_at,
-    createdBy: row.created_by,
+    category: r.category,
+    nationality: r.nationality,
+    preferredLanguage: r.preferred_language as "en" | "ar",
+    questionnaireVersionId: r.questionnaire_version_id,
+    status: r.status,
+    expiresAt: r.expires_at,
+    useCount: r.use_count,
+    maxUses: r.max_uses,
+    sentAt: r.sent_at,
+    openedAt: r.opened_at,
+    startedAt: r.started_at,
+    submittedAt: r.submitted_at,
+    createdAt: r.created_at,
+    createdBy: r.created_by,
   };
 }
 

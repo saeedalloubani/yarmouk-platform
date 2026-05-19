@@ -29,16 +29,25 @@ export type ConsentRecord = {
 };
 
 function rowToConsent(row: DbRow | DbViewRow): ConsentRecord {
+  // PG view metadata doesn't carry NOT NULL info, so generated DbViewRow
+  // types every column as nullable. At runtime the view returns base-table
+  // values verbatim for non-redacted columns. We cast to DbRow to recover
+  // the schema's actual non-null guarantees. signed_name_encrypted is
+  // genuinely NULL in the view, so we access it via the original `row`
+  // reference where the union nullability (string | null) is honest.
+  // language is narrowed via `as 'en' | 'ar'` because the DB CHECK
+  // constraint enforces this but Supabase's gen types don't reflect CHECK.
+  const r = row as DbRow;
   return {
-    id: row.id,
-    responseId: row.response_id,
+    id: r.id,
+    responseId: r.response_id,
     signedNameEncrypted: row.signed_name_encrypted,
-    signedAt: row.signed_at,
-    audioConsent: row.audio_consent,
-    agreedToRead: row.agreed_to_read,
-    agreedToParticipate: row.agreed_to_participate,
-    consentTextVersion: row.consent_text_version,
-    language: row.language,
+    signedAt: r.signed_at,
+    audioConsent: r.audio_consent,
+    agreedToRead: r.agreed_to_read,
+    agreedToParticipate: r.agreed_to_participate,
+    consentTextVersion: r.consent_text_version,
+    language: r.language as "en" | "ar",
   };
 }
 

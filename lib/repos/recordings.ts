@@ -49,21 +49,31 @@ export type Recording = {
 };
 
 function rowToRecording(row: DbRow | DbViewRow): Recording {
+  // PG view metadata doesn't carry NOT NULL info, so generated DbViewRow
+  // types every column as nullable. We cast to DbRow to recover the
+  // schema's actual non-null guarantees on id, response_id, status,
+  // uploaded_at. All redacted fields (audio_*, transcript_*, substitution_key)
+  // are already nullable in the base table — the union naturally captures
+  // their nullability via the cast, no special handling needed.
+  // substitution_key is widened to a typed Record at the boundary
+  // (Supabase generates it as Json; we know our shape).
+  // language is narrowed via `as 'en' | 'ar' | null` (CHECK + nullable).
+  const r = row as DbRow;
   return {
-    id: row.id,
-    responseId: row.response_id,
-    audioStoragePath: row.audio_storage_path,
-    audioFilename: row.audio_filename,
-    audioDurationSeconds: row.audio_duration_seconds,
-    audioSizeBytes: row.audio_size_bytes,
-    transcriptOriginal: row.transcript_original,
-    transcriptAnonymized: row.transcript_anonymized,
-    substitutionKey: row.substitution_key as Record<string, string> | null,
-    language: row.language,
-    status: row.status,
-    uploadedBy: row.uploaded_by,
-    uploadedAt: row.uploaded_at,
-    publishedAt: row.published_at,
+    id: r.id,
+    responseId: r.response_id,
+    audioStoragePath: r.audio_storage_path,
+    audioFilename: r.audio_filename,
+    audioDurationSeconds: r.audio_duration_seconds,
+    audioSizeBytes: r.audio_size_bytes,
+    transcriptOriginal: r.transcript_original,
+    transcriptAnonymized: r.transcript_anonymized,
+    substitutionKey: r.substitution_key as Record<string, string> | null,
+    language: r.language as "en" | "ar" | null,
+    status: r.status,
+    uploadedBy: r.uploaded_by,
+    uploadedAt: r.uploaded_at,
+    publishedAt: r.published_at,
   };
 }
 

@@ -1,10 +1,12 @@
 # Build Status
 
-Last updated: start of production build, Session 1.
+Last updated: end of Session 2a.
 
 ## Where We Are
 
-**Phase**: Design complete → production build beginning.
+**Phase**: Foundation built; entering the respondent flow.
+
+Session 1 (scaffold + design system) and Session 2a (DB schema + RLS + repo pattern + types) are complete. Production Supabase project is linked and all 9 migrations applied via `supabase db push` with smoke tests passing. Session 2b (encryption helpers + public respondent flow) is next — scoped deliberately in a planning pass before implementation, because Vault setup has its own gotchas.
 
 A working v3 visual mock exists at `~/Downloads/yarmouk-mock` on the owner's Mac. It demonstrates every screen and interaction. The production build replaces the mock's hardcoded data with real database queries while preserving every visual and behavioral detail.
 
@@ -38,31 +40,55 @@ All 20 pages designed and clickable in the v3 mock:
 
 ## In Progress
 
-Nothing yet. Session 1 starts now.
+Nothing in flight. Session 2b will be planned in a dedicated pass before implementation begins.
 
-## Next (Session 1 — Foundation)
+## Done
 
-- [ ] Create GitHub repo `saeedalloubani/yarmouk-platform`
-- [ ] Initialize Next.js 15 + TypeScript + Tailwind
-- [ ] Port design system from mock: `tailwind.config.ts`, `globals.css`, color tokens, fonts
-- [ ] Create Supabase project (free tier)
-- [ ] Apply all migrations from `SCHEMA.md`
-- [ ] Set up Vercel deploy from `main` branch
-- [ ] Seed database with Pilot V1 · Officials questions (verbatim from mock's `lib/questions.ts`)
-- [ ] Create the empty Draft entries for the other 6 variants
-- [ ] **End state**: Landing page accessible at a Vercel preview URL, visually identical to mock
+### Session 1 — Foundation (scaffold + design system)
+- [x] GitHub repo `saeedalloubani/yarmouk-platform` (private, force-push + delete protection on `main`)
+- [x] Next.js 15 + TypeScript + Tailwind v3 (pinned per D34 / D35)
+- [x] Design system ported from mock: `tailwind.config.ts`, `globals.css`, tokens, fonts via `next/font` (D33)
+- [x] Folder skeleton (`app/`, `lib/`, `components/`, `supabase/migrations/`, `docs/`)
+- [x] `.env.example` with `ENCRYPTION_KEY` + `BACKUP_PASSPHRASE` documented as separate secrets
+- [x] Placeholder landing at `/` verifies design tokens render correctly
 
-## After That (Sessions 2–7)
+### Session 2a — DB schema + RLS + repo pattern + types
+- [x] Supabase project provisioned and linked
+- [x] 9 migrations applied via `supabase db push`, timestamped `YYYYMMDDHHMMSS_*.sql`:
+  - `…001_enums.sql` — enums + pgcrypto extension
+  - `…002_tables.sql` — all tables, `token_hash` (SHA-256, never plaintext) + `preferred_language` on invitations
+  - `…003_functions.sql` — `current_admin_role()`, `current_admin_id()`, `validate_invitation_token()` (atomic claim + resumption), `audit_log` actor-snapshot trigger (unconditional overwrite + `system` / `unknown` sentinels)
+  - `…004_rls.sql` — Owner-all / read-only-select for PII tables, per-admin for notifications + preferences
+  - `…005_views.sql` — `*_redacted` views (invitations, recordings, consent_records) with `security_invoker = true`; read-only SELECT policies co-located with each view
+  - `…006_indexes.sql` — partial unique on active `questionnaire_versions` + secondary indexes
+  - `…007_settings_seed.sql` — settings table seed (retention, sender identity, ethics fields)
+  - `…008_fix_pgcrypto_qualification.sql` — `extensions.digest(...)` qualification fix (D38 caught at smoke test)
+  - `…009_alias_validate_token_columns.sql` — RETURNS TABLE column aliasing fix (D39 caught at smoke test)
+- [x] Repo pattern in `lib/repos/{invitations,recordings,consent}.ts` (Owner→base, Read-only→redacted view per D31)
+- [x] Three Supabase client factories in `lib/supabase/{server,client,admin}.ts`
+- [x] TypeScript types generated from live schema via `npm run db:types` (script uses `--linked`)
+- [x] Repo mappers reconciled to generated types (cast pattern documented per-file)
+- [x] Smoke tests passing: `SELECT * FROM public.validate_invitation_token('not-a-real-token')` returns 0 rows, no error; `pg_get_functiondef` confirms qualifier + aliases intact in live DB
+- [x] Decisions locked: D30 (language cookie), D31 (PII repos), D32 (visible_nationalities enum), D36 (Vault for pgcrypto key + versioned rotation), D37 (email-as-admin-id), D38 (`extensions.` qualifier + audit grep), D39 (RETURNS TABLE aliasing + audit grep)
 
-### Session 2 — Respondent Flow
-- [ ] `/r/{token}` route handler: validate token, set cookie, redirect
-- [ ] Token expiry + usage tracking
-- [ ] Landing → Consent → Questionnaire → Submitted flow with real persistence
-- [ ] Autosave (Server Action, debounced)
-- [ ] Required-answer validation (block Next button, lock question map)
-- [ ] EN/AR with RTL working end-to-end
-- [ ] Submission triggers thank-you email + admin notifications
-- **End state**: A real invitation link Sura can send to herself and complete
+## Next — Session 2b (encryption + public flow)
+
+Will be scoped in a planning pass before implementation. Candidate items:
+
+- [ ] `encrypt_pii` / `decrypt_pii` SECURITY DEFINER SQL helpers reading key from `vault.decrypted_secrets` (D36); versioned-secret rotation
+- [ ] `lib/encryption.ts` thin RPC wrapper over the SQL helpers
+- [ ] Questionnaire seed data — Pilot V1 · Officials questions (verbatim from mock's `lib/questions.ts`) + empty Draft entries for the other 6 variants
+- [ ] `/r/[token]` route handler: validate via RPC, set cookies (`invitation_id`, `response_id`, `lang`), redirect to `/`
+- [ ] Public flow pages: landing + language picker, consent (signature → encrypted), questionnaire (one-at-a-time, required-answer validation, autosave Server Action, question map), submitted
+- [ ] `opened` → `started` status transition on first answer insert (tracked task #10)
+- [ ] EN/AR + RTL working end-to-end
+- [ ] Submission triggers thank-you email + admin notifications (or defer to Session 3 with Resend wiring — TBD)
+
+**End state**: A real invitation link Sura can send to herself, click, complete in EN or AR, and see the response land in the DB.
+
+## After That (Sessions 3–7)
+
+_(Session 2 placeholder removed — folded into "Done" (Session 2a) above and "Next" (Session 2b) below.)_
 
 ### Session 3 — Admin Core
 - [ ] Magic-link auth via Supabase
