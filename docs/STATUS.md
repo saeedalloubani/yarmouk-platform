@@ -162,3 +162,40 @@ _(Session 2 placeholder removed — folded into "Done" (Session 2a) above and "N
 - **Supabase free tier** (500MB DB). Transcripts + audio metadata are the heaviest. Audio itself is in Storage (1GB free), but if many interviews are recorded we'll need to upgrade.
 - **Vercel build timeouts**. PDF generation can be slow; check Edge Function timeouts in Session 4.
 - **MaxMind license**. The free GeoLite2 dataset requires periodic re-download. Set a reminder to refresh quarterly.
+
+## Notes — end of Session 2a (for the 2b-1 planning pass)
+
+Three things that surfaced during 2a that future-me should keep in view when scoping 2b-1. None are blockers. None warrant their own decision entry. Just context.
+
+### Vault setup isn't migration-managed
+
+D36 commits us to storing the pgcrypto key in Supabase Vault, but Vault secrets are created via the Studio UI or the Vault API — there's no `INSERT INTO vault.secrets ...` we can write into a migration. The first key must exist *before* the migration that defines `encrypt_pii` / `decrypt_pii` runs, otherwise `vault.decrypted_secrets` returns no row and `pgp_sym_encrypt(plaintext, NULL)` will either error or produce garbage ciphertext (untested — worth checking which during 2b-1 planning).
+
+**Implication for 2b-1's runbook:**
+
+1. Owner creates `pii_key_v1` in Vault via Studio.
+2. `db push` applies the migration adding `encrypt_pii` / `decrypt_pii`.
+3. Smoke-test that each helper round-trips before any production write uses them.
+
+The Studio step deserves explicit documentation in a runbook (CONVENTIONS.md's Database Migrations section, or a new docs/RUNBOOK.md). Same goes for any future key rotation — it's a Studio action, not a migration.
+
+### SECURITY DEFINER bugs slip past `CREATE FUNCTION`; plan smoke tests upfront
+
+Two of three SECURITY DEFINER bugs in 2a (D38 pgcrypto qualifier, D39 RETURNS TABLE aliasing) shipped through `supabase db push` with no error, then failed at first invocation. The smoke-test discipline now in CONVENTIONS.md caught both — but only because we *ran* the smoke.
+
+For 2b-1's `encrypt_pii` / `decrypt_pii`: **write the smoke-test queries before the migration**, not after. Specific cases to plan:
+
+- Empty input (`encrypt_pii('')`) — does it return ciphertext, NULL, or error?
+- Known-good roundtrip — encrypt a sentinel, decrypt, assert equality.
+- Rotation fallback — encrypt under `v1`, add `v2`, confirm decrypt still succeeds via the previous-key fallback path.
+- NULL input handling — `encrypt_pii(NULL)` behavior should be deliberate, not accidental.
+
+If any of those test cases surface a design gap during planning, that's a planning-phase win. Catching the same gap by debugging a broken `INSERT INTO invitations` is more expensive.
+
+### `as DbRow` casts in the repo mappers are a code smell worth flagging
+
+The Session 2a-closing commit (`efb84b0`) added `const r = row as DbRow` casts in `lib/repos/{invitations,recordings,consent}.ts` to bridge the gap between generated view types (everything nullable, per PG view-metadata rules) and schema reality (non-null per the CREATE TABLE constraints). It's correct at runtime — the view returns base values for unredacted columns — but TypeScript is lying about the runtime shape inside the mapper body.
+
+The cleaner alternative we didn't take: split each mapper in two — `rowToInvitationFromBase(row: DbRow)` and `rowToInvitationFromView(row: DbViewRow)`. The reader functions already branch on role, so they'd call the right mapper. No cast required. Cost: 10–20 lines of duplicated mapping per repo.
+
+Not worth refactoring now. The current code is correct, and a refactor would mean a session of churn for zero observable behavior change. Worth knowing exists if a future contributor (or a future-me reading the mappers cold) wonders about the casts, or if we ever hit a bug where a view column's actual nullability disagrees with our assertion.
