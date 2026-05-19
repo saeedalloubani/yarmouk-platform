@@ -68,6 +68,31 @@ Shared components in `/components/`. Shared logic in `/lib/`.
 - **Enum values in DB**: `snake_case` (`'officials'`, `'main_officials_jordanian'`).
 - **Enum values in TS**: match the DB. Don't translate to PascalCase.
 
+## Supabase Clients
+
+Three factories live in `lib/supabase/`. Pick the right one:
+
+| Use case | Factory | RLS |
+|---|---|---|
+| Server Components, Server Actions, admin Route Handlers | `createSupabaseServerClient()` from `server.ts` | Applies — runs as the signed-in admin |
+| `"use client"` components | `createSupabaseBrowserClient()` from `client.ts` | Applies — runs as the signed-in admin |
+| `/api/public/*` handlers (anonymous respondents, post-token-validation) | `createSupabaseAdminClient()` from `admin.ts` | Bypassed |
+| Migrations, seed scripts, cron / background jobs | `createSupabaseAdminClient()` | Bypassed |
+
+Rules:
+
+- **Never import `admin.ts` from a `"use client"` file** — the service-role key would leak to the browser. The factory throws at import time if `typeof window !== "undefined"` as a guard.
+- **Use the server client for everything authenticated.** RLS gives defence in depth: even if a policy is wrong, the worst case is "Owner sees Read-only data," not "anyone sees everything."
+- **The admin (service-role) client is for two cases only**: (1) handlers that have already validated an anonymous-respondent invitation token via the `validate_invitation_token(...)` SQL function and need to write on their behalf, and (2) one-off scripts run from Node. If you find yourself reaching for it elsewhere, the request probably belongs in a Server Action with the server client.
+
+### Generating TypeScript types
+
+```bash
+npm run db:types
+```
+
+Writes `lib/supabase/database.types.ts`. Re-run after any migration that changes a table, enum, view, or function signature. While migrations are unapplied, the file is a hand-typed placeholder covering only the three PII tables — see the header comment in the file.
+
 ## API Conventions
 
 - Server Actions return:

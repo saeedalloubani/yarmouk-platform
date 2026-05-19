@@ -1,0 +1,262 @@
+// lib/repos/invitations.ts
+//
+// Data access for the `invitations` table.
+//   - Owner reads     → base table (full encrypted PII columns)
+//   - Read-only reads → `invitations_redacted` view (PII columns are NULL,
+//                       token_hash entirely omitted from the view)
+//   - All writes      → base table (RLS rejects from any non-Owner caller)
+//
+// Pages, Server Actions, and route handlers MUST go through this repo
+// instead of calling `supabase.from('invitations')` directly.
+// See lib/repos/README.md and docs/DECISIONS.md → D31.
+//
+// `token_hash` is never returned from this repo, even to Owner. We
+// `.select("*")` on the base for simplicity, but the mapper drops the
+// hash on the way out — the Invitation type doesn't have it, so callers
+// can't accidentally surface it.
+//
+// Implementation note: each read branches on the role inline and calls
+// `supabase.from(literal)` with a string literal. Passing a union string
+// to from() collapses the resulting row type (TS infers the intersection
+// of column names across all schema tables). Inline branching keeps each
+// query strongly typed.
+
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "../supabase/database.types";
+import { getCurrentAdminRole } from "../auth";
+
+type DbRow = Database["public"]["Tables"]["invitations"]["Row"];
+type DbViewRow = Database["public"]["Views"]["invitations_redacted"]["Row"];
+type DbInsert = Database["public"]["Tables"]["invitations"]["Insert"];
+type DbUpdate = Database["public"]["Tables"]["invitations"]["Update"];
+
+export type InvitationCategory = "officials" | "researchers" | "donors" | "ngos";
+export type InvitationNationality =
+  | "jordanian"
+  | "syrian"
+  | "not_applicable";
+export type InvitationStatusValue =
+  | "sent"
+  | "opened"
+  | "started"
+  | "submitted"
+  | "expired";
+
+export type Invitation = {
+  id: string;
+  refCode: string;
+  /** NULL when the caller is a read-only admin (view masks the column). */
+  recipientNameEncrypted: string | null;
+  /** NULL when the caller is a read-only admin (view masks the column). */
+  recipientEmailEncrypted: string | null;
+  category: InvitationCategory;
+  nationality: InvitationNationality | null;
+  preferredLanguage: "en" | "ar";
+  questionnaireVersionId: string;
+  status: InvitationStatusValue;
+  expiresAt: string;
+  useCount: number;
+  maxUses: number;
+  sentAt: string | null;
+  openedAt: string | null;
+  startedAt: string | null;
+  submittedAt: string | null;
+  createdAt: string;
+  createdBy: string | null;
+};
+
+function rowToInvitation(row: DbRow | DbViewRow): Invitation {
+  // token_hash exists on DbRow but is intentionally not surfaced here.
+  return {
+    id: row.id,
+    refCode: row.ref_code,
+    recipientNameEncrypted: row.recipient_name_encrypted,
+    recipientEmailEncrypted: row.recipient_email_encrypted,
+    category: row.category,
+    nationality: row.nationality,
+    preferredLanguage: row.preferred_language,
+    questionnaireVersionId: row.questionnaire_version_id,
+    status: row.status,
+    expiresAt: row.expires_at,
+    useCount: row.use_count,
+    maxUses: row.max_uses,
+    sentAt: row.sent_at,
+    openedAt: row.opened_at,
+    startedAt: row.started_at,
+    submittedAt: row.submitted_at,
+    createdAt: row.created_at,
+    createdBy: row.created_by,
+  };
+}
+
+// ---------- Reads ----------
+
+/** Get a single invitation by id. Returns null if not found. */
+export async function getInvitation(
+  supabase: SupabaseClient<Database>,
+  id: string
+): Promise<Invitation | null> {
+  const role = await getCurrentAdminRole(supabase);
+  if (role === "owner") {
+    const { data, error } = await supabase
+      .from("invitations")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+    if (error) throw error;
+    return data ? rowToInvitation(data) : null;
+  }
+  const { data, error } = await supabase
+    .from("invitations_redacted")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? rowToInvitation(data) : null;
+}
+
+export type ListInvitationsFilter = {
+  status?: InvitationStatusValue;
+  category?: InvitationCategory;
+  nationality?: InvitationNationality;
+  questionnaireVersionId?: string;
+  limit?: number;
+  offset?: number;
+};
+
+/** List invitations (newest first), with optional filters. */
+export async function listInvitations(
+  supabase: SupabaseClient<Database>,
+  filter: ListInvitationsFilter = {}
+): Promise<Invitation[]> {
+  const role = await getCurrentAdminRole(supabase);
+
+  const limit = filter.limit ?? undefined;
+  const offset = filter.offset ?? 0;
+  const rangeFrom = offset;
+  const rangeTo = limit !== undefined ? offset + limit - 1 : offset + 999;
+  const useRange = limit !== undefined || offset > 0;
+
+  if (role === "owner") {
+    let q = supabase
+      .from("invitations")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (filter.status) q = q.eq("status", filter.status);
+    if (filter.category) q = q.eq("category", filter.category);
+    if (filter.nationality !== undefined)
+      q = q.eq("nationality", filter.nationality);
+    if (filter.questionnaireVersionId)
+      q = q.eq("questionnaire_version_id", filter.questionnaireVersionId);
+    if (useRange) q = q.range(rangeFrom, rangeTo);
+    const { data, error } = await q;
+    if (error) throw error;
+    return (data ?? []).map(rowToInvitation);
+  }
+
+  let q = supabase
+    .from("invitations_redacted")
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (filter.status) q = q.eq("status", filter.status);
+  if (filter.category) q = q.eq("category", filter.category);
+  if (filter.nationality !== undefined)
+    q = q.eq("nationality", filter.nationality);
+  if (filter.questionnaireVersionId)
+    q = q.eq("questionnaire_version_id", filter.questionnaireVersionId);
+  if (useRange) q = q.range(rangeFrom, rangeTo);
+  const { data, error } = await q;
+  if (error) throw error;
+  return (data ?? []).map(rowToInvitation);
+}
+
+// ---------- Writes (Owner only — RLS rejects others) ----------
+
+export type CreateInvitationInput = {
+  /**
+   * SHA-256 hex hash of the plaintext URL token. The caller (typically a
+   * Session 3 Server Action) generates plaintext + hashes it; plaintext
+   * goes into the outbound email, only the hash is stored here.
+   */
+  tokenHash: string;
+  refCode: string;
+  /** Already pgcrypto-encrypted by lib/encryption.ts (Session 2b). */
+  recipientNameEncrypted: string;
+  /** Already pgcrypto-encrypted by lib/encryption.ts (Session 2b). */
+  recipientEmailEncrypted: string;
+  category: InvitationCategory;
+  nationality?: InvitationNationality | null;
+  preferredLanguage?: "en" | "ar";
+  questionnaireVersionId: string;
+  expiresAt: string;
+  maxUses?: number;
+  createdBy?: string | null;
+};
+
+/** Create an invitation. Writes always target the base table. */
+export async function createInvitation(
+  supabase: SupabaseClient<Database>,
+  input: CreateInvitationInput
+): Promise<Invitation> {
+  const insert: DbInsert = {
+    token_hash: input.tokenHash,
+    ref_code: input.refCode,
+    recipient_name_encrypted: input.recipientNameEncrypted,
+    recipient_email_encrypted: input.recipientEmailEncrypted,
+    category: input.category,
+    nationality: input.nationality ?? null,
+    preferred_language: input.preferredLanguage ?? "en",
+    questionnaire_version_id: input.questionnaireVersionId,
+    expires_at: input.expiresAt,
+    max_uses: input.maxUses ?? 1,
+    created_by: input.createdBy ?? null,
+  };
+  const { data, error } = await supabase
+    .from("invitations")
+    .insert(insert)
+    .select("*")
+    .single();
+  if (error) throw error;
+  return rowToInvitation(data);
+}
+
+export type UpdateInvitationInput = Partial<{
+  /** Use this to rotate the link (resend flow). New hash, old hash discarded. */
+  tokenHash: string;
+  status: InvitationStatusValue;
+  expiresAt: string;
+  maxUses: number;
+  sentAt: string | null;
+  openedAt: string | null;
+  startedAt: string | null;
+  submittedAt: string | null;
+  useCount: number;
+}>;
+
+/** Update an invitation. Owner only (enforced by RLS). */
+export async function updateInvitation(
+  supabase: SupabaseClient<Database>,
+  id: string,
+  input: UpdateInvitationInput
+): Promise<Invitation> {
+  const update: DbUpdate = {};
+  if (input.tokenHash !== undefined) update.token_hash = input.tokenHash;
+  if (input.status !== undefined) update.status = input.status;
+  if (input.expiresAt !== undefined) update.expires_at = input.expiresAt;
+  if (input.maxUses !== undefined) update.max_uses = input.maxUses;
+  if (input.sentAt !== undefined) update.sent_at = input.sentAt;
+  if (input.openedAt !== undefined) update.opened_at = input.openedAt;
+  if (input.startedAt !== undefined) update.started_at = input.startedAt;
+  if (input.submittedAt !== undefined)
+    update.submitted_at = input.submittedAt;
+  if (input.useCount !== undefined) update.use_count = input.useCount;
+
+  const { data, error } = await supabase
+    .from("invitations")
+    .update(update)
+    .eq("id", id)
+    .select("*")
+    .single();
+  if (error) throw error;
+  return rowToInvitation(data);
+}

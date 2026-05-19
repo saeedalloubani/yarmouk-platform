@@ -98,16 +98,17 @@ CREATE UNIQUE INDEX one_active_version_per_variant
 | Column | Type | Notes |
 |---|---|---|
 | id | UUID PK | |
-| token | TEXT UNIQUE | URL-safe ~12 chars (e.g., `8K2pXa9bRz`) |
+| token_hash | TEXT UNIQUE | SHA-256 hex of the plaintext URL token. Plaintext is **never stored** — generated at issue time, hashed for storage, and emailed to the recipient. To resend a link, Owner rotates: mint new plaintext, update hash, send new link. `validate_invitation_token()` hashes its input and compares. |
 | ref_code | TEXT UNIQUE | Anonymized display ID (e.g., `OFF-J-04`) |
 | recipient_name_encrypted | TEXT | pgcrypto-encrypted; Owner only |
 | recipient_email_encrypted | TEXT | pgcrypto-encrypted; Owner only |
 | category | category_type | |
 | nationality | nationality_type | NULL when not applicable |
+| preferred_language | TEXT | `'en'` or `'ar'`. Seeds the `lang` cookie on `/r/[token]` redirect (D30). Default `'en'`. |
 | questionnaire_version_id | UUID FK | |
 | status | invitation_status | |
 | expires_at | TIMESTAMPTZ | |
-| use_count | INT | Default 0 |
+| use_count | INT | Default 0. Atomically incremented inside `validate_invitation_token()` — each successful validation claims one use. |
 | max_uses | INT | 1 for personalized, >1 for shareable links |
 | sent_at, opened_at, started_at, submitted_at | TIMESTAMPTZ | Lifecycle timestamps |
 | created_at | TIMESTAMPTZ | |
@@ -346,7 +347,8 @@ CREATE VIEW invitations_redacted AS
 Read-only admins query the view; Owner queries the base table.
 
 Same approach for:
-- `recordings` (Read-only excludes `audio_storage_path`, `transcript_original`, `substitution_key`)
+- `recordings` (Read-only excludes `audio_storage_path`, `audio_filename`, `transcript_original`, `substitution_key`. `audio_filename` is masked because filenames can leak respondent PII — e.g., `interview-john-smith-2026.mp3`. Session 6 may switch to opaque on-upload rename; until then redaction is the line.)
+- `consent_records` (Read-only excludes `signed_name_encrypted`; everything else is exposed so supervisors can verify "consent was given for this response" without seeing the signed name)
 
 ### Shared tables (Owner + Read-only)
 
