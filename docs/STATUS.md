@@ -40,7 +40,7 @@ All 20 pages designed and clickable in the v3 mock:
 
 ## In Progress
 
-Nothing in flight. Session 2b will be planned in a dedicated pass before implementation begins.
+Nothing in flight. Session 2b-2 (token route + cookies + public flow) will be scoped in its own planning pass before implementation begins.
 
 ## Done
 
@@ -71,15 +71,29 @@ Nothing in flight. Session 2b will be planned in a dedicated pass before impleme
 - [x] Smoke tests passing: `SELECT * FROM public.validate_invitation_token('not-a-real-token')` returns 0 rows, no error; `pg_get_functiondef` confirms qualifier + aliases intact in live DB
 - [x] Decisions locked: D30 (language cookie), D31 (PII repos), D32 (visible_nationalities enum), D36 (Vault for pgcrypto key + versioned rotation), D37 (email-as-admin-id), D38 (`extensions.` qualifier + audit grep), D39 (RETURNS TABLE aliasing + audit grep)
 
-## Next — Session 2b (encryption + public flow)
+### Session 2b-1 — Encryption helpers + Pilot V1 seed
+- [x] **RUNBOOK.md** at repo root — manual Vault operations: first-time setup (`pii_key_v1`), key rotation (`pii_key_v(N+1)`), disaster recovery (backup-check-first ordering, concrete loss inventory grounded in D4)
+- [x] **encrypt_pii / decrypt_pii** helpers in migration `…010_pii_encryption_helpers.sql`:
+  - Key sourced from `vault.decrypted_secrets`, highest-version-first integer-sorted (not lexical — `pii_key_v10` outranks `pii_key_v2` only via INT cast)
+  - Rotation fallback in `decrypt_pii`: tries newest key first, falls back through older versions
+  - `EXCEPTION WHEN external_routine_invocation_exception OR invalid_parameter_value` — SQLSTATEs (39000 wrong-key/corrupt, 22023 bad base64) verified via Studio probe before coding the handler
+  - Smoke: 11-row Test A all passed; Test B (DO block) raised on corrupt ciphertext as designed
+- [x] **Pilot V1 Officials seed** in migration `…011_seed_pilot_v1_officials.sql`:
+  - 1 `active` `questionnaire_versions` row (`pilot_officials`, v1) + 6 Draft placeholders for the remaining variants
+  - 18 questions (14 main Q1–Q14 + 4 feedback F1–F4), verbatim EN + AR from `~/Downloads/yarmouk-mock/lib/questions.ts`
+  - Q10–Q13 carry `visible_nationalities = ARRAY['syrian']` per D32; rest are `NULL`
+  - Verified post-apply: 18 / 7 / 1 / 4 counts; visibility query confirms Q10–Q13 = `{syrian}`
+- [x] **Decisions locked in**: D38 grep refinement (excludes SQL line-comments — runs cleaner on subsequent audits), D39 (RETURNS TABLE aliasing, applied to encrypt/decrypt review), D40 (compound questions Q2/Q4 code as separate ATLAS.ti units)
+- [x] **SQLSTATE verify-probe pattern established** — see Notes section at bottom; caught a class-38 vs class-39 named-alias confusion that would have broken `decrypt_pii`'s rotation fallback in production
 
-Will be scoped in a planning pass before implementation. Candidate items:
+## Next — Session 2b-2 (token route + cookies + public flow)
 
-- [ ] `encrypt_pii` / `decrypt_pii` SECURITY DEFINER SQL helpers reading key from `vault.decrypted_secrets` (D36); versioned-secret rotation
-- [ ] `lib/encryption.ts` thin RPC wrapper over the SQL helpers
-- [ ] Questionnaire seed data — Pilot V1 · Officials questions (verbatim from mock's `lib/questions.ts`) + empty Draft entries for the other 6 variants
-- [ ] `/r/[token]` route handler: validate via RPC, set cookies (`invitation_id`, `response_id`, `lang`), redirect to `/`
-- [ ] Public flow pages: landing + language picker, consent (signature → encrypted), questionnaire (one-at-a-time, required-answer validation, autosave Server Action, question map), submitted
+To be scoped in its own planning pass before implementation. Candidate items (likely subject to revision in the planning pass):
+
+- [ ] `/r/[token]` route handler: call `validate_invitation_token` via RPC, branch on `response_id IS NULL` (fresh) vs not-null (resumption), set cookies (`invitation_id`, `response_id`, `lang`), redirect
+- [ ] Cookie helpers — typed get/set with secure flags, expiry aligned to invitation `expires_at`
+- [ ] `lib/encryption.ts` — thin RPC wrapper around `encrypt_pii` / `decrypt_pii`
+- [ ] Public flow pages: landing + language picker, consent (signature → `encrypt_pii` → `consent_records`), questionnaire (one-at-a-time, required-answer validation, autosave Server Action, question map), submitted
 - [ ] `opened` → `started` status transition on first answer insert (tracked task #10)
 - [ ] EN/AR + RTL working end-to-end
 - [ ] Submission triggers thank-you email + admin notifications (or defer to Session 3 with Resend wiring — TBD)
@@ -88,7 +102,7 @@ Will be scoped in a planning pass before implementation. Candidate items:
 
 ## After That (Sessions 3–7)
 
-_(Session 2 placeholder removed — folded into "Done" (Session 2a) above and "Next" (Session 2b) below.)_
+_(Session 2 placeholder removed — folded into "Done" (Sessions 2a + 2b-1) above and "Next" (Session 2b-2) below.)_
 
 ### Session 3 — Admin Core
 - [ ] Magic-link auth via Supabase
@@ -165,9 +179,9 @@ _(Session 2 placeholder removed — folded into "Done" (Session 2a) above and "N
 - **Vercel build timeouts**. PDF generation can be slow; check Edge Function timeouts in Session 4.
 - **MaxMind license**. The free GeoLite2 dataset requires periodic re-download. Set a reminder to refresh quarterly.
 
-## Notes — end of Session 2a (for the 2b-1 planning pass)
+## Notes — cross-session observations
 
-Three things that surfaced during 2a that future-me should keep in view when scoping 2b-1. None are blockers. None warrant their own decision entry. Just context.
+Things that surfaced during the build and would help future-me make better calls. None are blockers. None warrant their own decision entry. Just context.
 
 ### Vault setup isn't migration-managed
 
@@ -201,3 +215,11 @@ The Session 2a-closing commit (`efb84b0`) added `const r = row as DbRow` casts i
 The cleaner alternative we didn't take: split each mapper in two — `rowToInvitationFromBase(row: DbRow)` and `rowToInvitationFromView(row: DbViewRow)`. The reader functions already branch on role, so they'd call the right mapper. No cast required. Cost: 10–20 lines of duplicated mapping per repo.
 
 Not worth refactoring now. The current code is correct, and a refactor would mean a session of churn for zero observable behavior change. Worth knowing exists if a future contributor (or a future-me reading the mappers cold) wonders about the casts, or if we ever hit a bug where a view column's actual nullability disagrees with our assertion.
+
+### SQLSTATE verify-probe before writing EXCEPTION clauses (end of Session 2b-1)
+
+Session 2b-1: a SQLSTATE-verify probe before writing `decrypt_pii`'s EXCEPTION clause caught a class-38 vs class-39 named-alias confusion (`external_routine_exception` is 38000; pgcrypto raises 39000 = `external_routine_invocation_exception`). Without the probe, the wrong named alias would have shipped, the EXCEPTION clause wouldn't have matched what pgcrypto actually raises, and the rotation fallback in `decrypt_pii` would have been silently non-functional — wrong-key errors would propagate up instead of being caught and retried with the previous key.
+
+The verify-actual-error-codes-before-coding-the-handler pattern generalizes: any future EXCEPTION clause for an unfamiliar error family should be preceded by a DO block that probes SQLSTATE codes from the actual functions, not from documentation or memory. Documentation can be stale; memory is unreliable; the live database is authoritative.
+
+Concrete pattern: write a `DO $$ ... EXCEPTION WHEN OTHERS THEN GET STACKED DIAGNOSTICS ...` block that calls the function under each failure mode and reports the actual SQLSTATE via `RAISE NOTICE`. Then write the real handler using the verified codes.
