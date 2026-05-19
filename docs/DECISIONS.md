@@ -1,0 +1,268 @@
+# Design Decisions
+
+This document records *why* we made the calls we did. If something seems wrong, check here before changing it — it probably isn't a bug, it's a deliberate trade-off.
+
+## Identity & Access
+
+### D1. Respondents have no accounts; access via single-use tokens
+
+**Decision:** Each invitee receives a unique URL token (`/r/{token}`). No signup, no password.
+
+**Why:** Researchers in the target audience won't tolerate friction. Passwords are also a confidentiality risk (one leak exposes who participated). Tokens give us tracking, expiry, and revocation without identity friction.
+
+**Implication:** We trust the email channel to deliver the token to the right person. Owner can revoke or rotate a token anytime.
+
+### D2. Magic-link auth for admins (no passwords)
+
+**Decision:** Admins sign in by entering their email and clicking a one-time link.
+
+**Why:** Three admins total. Passwords add support burden, recovery friction, and breach risk. Magic links are simple, secure, and require no UX for "forgot password."
+
+**Trade-off:** If admin email is compromised, attacker has full access. We accept this because (a) admins are senior academics likely to have institutional 2FA on email, (b) failed-login auditing catches anomalies, (c) Owner can revoke at any time.
+
+### D3. Two roles only: Owner and Read-only
+
+**Decision:** No "Editor" or "Reviewer" middle tier.
+
+**Why:** The team is 3 people. More roles = more permission logic = more bugs. Sura is the sole researcher; supervisors review without modifying.
+
+**Trade-off:** If Sura ever needs another full Owner, we add one. The role enum allows for extension.
+
+### D4. Anonymization is enforced at the database, not just the UI
+
+**Decision:** Read-only admins literally cannot read encrypted name/email columns via RLS — even if a UI bug tried to show them.
+
+**Why:** Defence in depth. UI bugs happen. Database-level enforcement means a leak requires both an RLS bypass *and* a UI bug.
+
+**Implication:** Use SQL views to expose redacted versions of tables to Read-only admins. Slightly more schema complexity, but worth it.
+
+## Data & Schema
+
+### D5. Pseudonymous reference codes, not UUIDs, in the admin UI
+
+**Decision:** Display `OFF-J-04` everywhere, not `f8a92e1c-…`.
+
+**Why:** Codes are scannable by humans. They encode category and nationality at a glance, so when reviewing responses Sura can tell who's who without needing to look up identity. Pattern is `{CAT}-{NAT?}-{SEQ}` (see `CONVENTIONS.md`).
+
+### D6. Encrypt name/email at the column level, not whole-row
+
+**Decision:** Only PII fields encrypted; other invitation/response data is plaintext.
+
+**Why:** Whole-row encryption breaks indexing and query performance. Column encryption with pgcrypto + Vault-stored key meets the threat model — anonymized analytics work fast, decryption only happens when Owner explicitly views names.
+
+### D7. Generated word_count column
+
+**Decision:** `word_count` on `answers` is a stored generated column (computed from `answer_text`).
+
+**Why:** Word counts are queried constantly (dashboards, stats). Computing in SQL avoids re-counting on read. Storage cost is negligible vs query speedup.
+
+## Questionnaires
+
+### D8. 7 variants (2 pilot + 5 main), not "one questionnaire with conditions"
+
+**Decision:** Each respondent category gets its own questionnaire entity. Officials further splits by nationality at the Main stage.
+
+**Why:** Originally tried "one questionnaire with category-based question visibility." Got messy fast: hard to version, hard to edit per-category wording, hard to show different sets of feedback questions. Treating each variant as a first-class entity with its own version history is cleaner.
+
+**Trade-off:** A bit of duplication when categories share questions. Worth it.
+
+### D9. Pilot has a built-in F1–F4 feedback block; Main does not
+
+**Decision:** Pilot questionnaires include 4 meta-questions at the end about clarity, length, missing topics, time taken.
+
+**Why:** Validates the instrument before full data collection. The Pilot Feedback Hub aggregates these into a "Plan V2" workflow that suggests revisions.
+
+**Implication:** `questionnaire_versions.includes_feedback_block` flag controls rendering.
+
+### D10. Strict version freezing on first response
+
+**Decision:** Once any response is submitted against an active version, direct question editing is blocked. The only way forward is "Publish V2".
+
+**Why:** Methodological defensibility. Ethics committees and thesis defenses will (rightly) ask whether a question was silently edited mid-study. Hard "no" is the only defensible answer.
+
+**Edit windows:**
+- `status = draft` → fully editable
+- `status = active` AND zero submitted responses → editable (oops window)
+- `status = active` AND any submitted response → frozen; clone to V2 to change
+
+### D11. Publishing V2 atomically migrates non-submitted invitees
+
+**Decision:** On publish: close V1, activate V2, regenerate fresh V2 tokens for invitations whose status ≠ submitted, send V2 migration emails.
+
+**Why:** Forces a single canonical version per variant at any time. Prevents mixing V1 and V2 data in the same analytical bucket.
+
+**Implication:** Anyone in the middle of filling V1 loses their progress. This is acceptable because pilot V1→V2 transitions are infrequent and well-signposted; the migration email tells them what happened.
+
+## Questionnaire Behavior
+
+### D12. Required-answer validation: cannot skip
+
+**Decision:** "Next" disabled until current answer has ≥2 trimmed characters. Question map locks questions beyond `furthestReachable`.
+
+**Why:** Originally the questionnaire let respondents skip. Sura tested it and found empty submissions. Required-answer enforcement protects data quality. If a respondent truly has nothing to say, they're prompted to write "N/A" or a brief note — this is intentional friction that produces better data.
+
+### D13. Autosave on every keystroke (debounced)
+
+**Decision:** Every answer is upserted server-side ~600ms after the user stops typing.
+
+**Why:** 35–50 minute questionnaires. People close laptops. People lose wifi. Server-side autosave + token-based resumption means they can come back tomorrow and pick up where they left off.
+
+### D14. Language picker on first screen; persists in localStorage
+
+**Decision:** No auto-detect. Show picker on landing, save choice for that browser.
+
+**Why:** Auto-detect for EN/AR is unreliable. Asking is one click. Persisting means switching is rare.
+
+## Recordings & Transcripts
+
+### D15. Audio is storage only; the *transcript* is the data
+
+**Decision:** Audio files are stored encrypted, Owner-only, never exported. The *published anonymized transcript* counts toward stats and ATLAS.ti export.
+
+**Why:** Audio is unanalyzable in a thesis context — you can't code an mp3. The published transcript is the analytical artifact. Audio is kept for verification only.
+
+**Trade-off:** Two-step process (transcribe → anonymize → publish) before transcript data enters the dataset. Slight friction, but methodologically necessary.
+
+### D16. Anonymization happens *before* publication
+
+**Decision:** Transcript pipeline: `audio_only → transcribing → transcribed → anonymizing → published`. Only `published` transcripts count.
+
+**Why:** Real names, places, identifying details are common in interview transcripts. They must be replaced with tokens (`[PERSON_1]`, `[ORG_1]`) before the transcript enters analytics or exports. The substitution key is kept Owner-only.
+
+### D17. Bulk import supports both Q-by-Q answers and free-form transcripts
+
+**Decision:** Excel template has both `Q1`…`Q14` columns and a `transcript_full` column. Rows can use either, both, or neither.
+
+**Why:** Some interviews were transcribed externally (Word doc). Some have clean Q&A structure. Both must be importable. Each goes to ATLAS.ti as a separate document linked by ref_code.
+
+## ATLAS.ti Integration
+
+### D18. Use ATLAS.ti's Survey Import format (`.xlsx`), not REFI-QDA, as primary export
+
+**Decision:** Featured "Export to ATLAS.ti" generates a Survey-Import-formatted `.xlsx`. REFI-QDA is offered as a secondary "advanced" option.
+
+**Why:** Survey Import is simpler, well-documented, and gives instant value — one row per respondent becomes one document with pre-applied codes and document groups. REFI-QDA is more flexible but more complex; offer it but don't push it.
+
+### D19. Tags applied in the platform become starter codes in ATLAS.ti
+
+**Decision:** When exporting, applied tags map to ATLAS.ti codes via `:code:tag:tag_name` columns.
+
+**Why:** Lets Sura do lightweight provisional tagging in the platform without committing to a final coding scheme. ATLAS.ti is where formal coding happens; platform tags are hints.
+
+### D20. Audio files are NOT exported to ATLAS.ti
+
+**Decision:** Only published anonymized transcripts go in the export.
+
+**Why:** ATLAS.ti can handle audio, but our anonymization controls don't apply to it. Including audio would leak identifying voice. The text transcript is sufficient for analysis.
+
+## Communications
+
+### D21. Resend for email, not Postmark or custom SMTP
+
+**Decision:** Use Resend.
+
+**Why:** Generous free tier (~3,000/mo, plenty for a thesis), clean DX, good deliverability. Postmark is comparable but paid-only. Custom SMTP is fragile.
+
+### D22. BCC owner toggle per template + global override
+
+**Decision:** Each email template has its own `bcc_owner` flag; a global setting can force BCC on everything.
+
+**Why:** Sura wants audit copies of invitations and thank-yous, but not necessarily of every reminder. Per-template control gives flexibility; global toggle is the emergency "I want to see everything" switch.
+
+### D23. Notifications: in-app bell + email, separately toggleable
+
+**Decision:** 6 events × 2 channels = 12 toggles per admin.
+
+**Why:** Notification fatigue is real. Some events warrant email (new submission, security alert). Others are just in-app (invitation opened). Default sensible, let users tune.
+
+## Security & Auditing
+
+### D24. Audit log retained 2 years; older events archived
+
+**Decision:** Match the response retention period (also 2 years from thesis defense).
+
+**Why:** Symmetric retention is simpler legally and operationally. If responses are gone, the audit trail of who viewed them is less useful.
+
+### D25. Security Log is Owner-only, hidden from Read-only
+
+**Decision:** The Security Log page literally doesn't appear in the Read-only sidebar. Middleware enforces 403 if a Read-only admin tries to access `/admin/security` directly.
+
+**Why:** The log contains failed login attempts (IPs, countries) and patterns that could be used to game the system. Supervisors don't need it for thesis review.
+
+### D26. IP + geo + device captured for every admin action
+
+**Decision:** Every audit log entry includes IP, resolved country/city via MaxMind GeoLite2, and parsed user agent.
+
+**Why:** Anomaly detection. If "Sura" suddenly logs in from a country she's never been to, the alert is obvious. Free MaxMind dataset is good enough — we don't need IP precision, just country-level signal.
+
+## Operations
+
+### D27. Daily automated backups, 30-day retention, with pinning
+
+**Decision:** Schedule a daily backup at 03:00 UTC. Keep 30 days. Allow Owner to pin specific backups indefinitely.
+
+**Why:** 30 days covers most "oh no I deleted something" scenarios. Pinning protects critical milestones (before V2 publish, before thesis submission). Owner can also generate manual backups anytime.
+
+### D28. Backup format is one encrypted file (`.yarmoukbackup`)
+
+**Decision:** Backup = ZIP archive of (a) Postgres dump as JSON, (b) audio files, (c) generated reports, (d) audit log. Encrypted at rest with a key derived from Owner's passphrase.
+
+**Why:** Single file is easy to email, store on a USB, copy to Dropbox. Encryption means it can be transported safely.
+
+**Trade-off:** If Owner forgets the passphrase, the backup is unrecoverable. Documentation warns clearly; encourage writing it down somewhere safe.
+
+### D29. Vercel + Supabase free tiers chosen deliberately
+
+**Decision:** Stay within free tiers for the duration of the thesis.
+
+**Why:** Thesis project. No revenue. Free tiers cover: Vercel hosting + analytics, Supabase 500MB DB + 1GB Storage + 50k MAU auth, Resend 3k emails/mo. We'll watch usage; if a tier gets close, decide then.
+
+## Architecture (Session 1)
+
+### D30. Language: cookie-based, with token-entry fallback
+
+**Decision:** A `lang` cookie carries the user's language. A server helper reads it; pages stay Server Components. When a respondent enters via `/r/{token}`, the route handler reads `invitations.preferred_language` and sets the cookie before redirecting to `/`. The landing-page language switcher is the only client component in the public flow.
+
+**Why:** The mock's React-context approach forced `"use client"` on every page that touched language — which is every page. That would have violated the Server-Components-by-default convention from day one. A cookie can be read from Server Components, set from a small client switcher, and seeded from invitation data, all without making pages client-rendered.
+
+**Implication:** `LanguageProvider` from the mock is not ported. Replace with a `getLang()` server helper plus a `<LanguageSwitcher />` client island.
+
+### D31. PII tables accessed only via `lib/repos/*` helpers
+
+**Decision:** Reads of `invitations`, `recordings`, and `consent_records` go through repo functions that pick the base table or its redacted view based on `current_admin_role()`. Pages and Server Actions never call `supabase.from()` directly on these tables.
+
+**Why:** Defence in depth on top of RLS. RLS protects rows but column-level redaction relies on views; if a developer reaches for the base table directly, they bypass the view and Read-only admins could see encrypted PII columns. The repo layer makes the role-aware choice automatic.
+
+**Trade-off:** One extra indirection. Worth it — D4 (DB-enforced anonymization) is methodologically load-bearing.
+
+**Implication:** Non-PII tables (`questions`, `tags`, `settings`, etc.) may call Supabase directly. Full list in `CONVENTIONS.md` under "Data Access (Repos) — PII Tables".
+
+### D32. Nationality-conditional questions use `visible_nationalities`, not parallel variants
+
+**Decision:** A `nationality_type[]` column on `questions` (`visible_nationalities`) gates question visibility per respondent nationality. NULL or empty array = visible to everyone. A separate `pilot_officials_syrian` variant is **not** created.
+
+**Why:** The mock's Officials pilot mixes shared questions (Q1–Q9, Q14) with Syria-only ones (Q10–Q13). Splitting into two parallel variants would duplicate the shared questions, make wording drift inevitable, and complicate cross-nationality analysis. Per-question gating keeps a single source of truth.
+
+**Trade-off:** The questionnaire engine has to filter questions at render and validation time based on `invitations.nationality`. A small amount of extra logic, far less than maintaining two parallel variants in sync.
+
+**Type choice:** `nationality_type[]` (enum array), not `TEXT[]`. The respondent population is fixed by methodology; type safety prevents silent analysis bugs from typos. If the nationality set ever needs to grow, the enum is altered via migration — that's the moment we want the type system to surface every call site.
+
+## Out of Scope (Explicitly)
+
+- **AI translation** between EN/AR. Button exists in mock as placeholder; clicking does nothing. Real translation would require GPT-4 or DeepL API; deferred.
+- **Word clouds / sentiment analysis**. ATLAS.ti does this; no need to duplicate.
+- **Multi-tenancy**. Only one study runs here.
+- **Mobile-first design**. Desktop-first; pages are responsive but not optimized for phones.
+- **Public results page**. Responses are private forever.
+
+## Methodological Defensibility
+
+Several decisions are driven by what Sura's supervisor and ethics committee will want to see:
+
+- Version freezing (D10, D11) → "we can prove no question was silently changed mid-study"
+- Audit log retention (D24) → "we can prove who accessed what and when"
+- Anonymization at the DB level (D4) → "read-only reviewers literally cannot see names"
+- Transcript anonymization before publication (D16) → "no respondent can be identified from the analytical dataset"
+- ATLAS.ti as the canonical coding tool (D18) → "qualitative analysis follows established CAQDAS methodology"
+
+When tempted to simplify any of these, remember: the defense of the thesis depends on them.

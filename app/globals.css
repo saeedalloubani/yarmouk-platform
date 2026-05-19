@@ -1,0 +1,237 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body {
+  background: #ffffff;
+  color: #0a0a0a;
+  font-family: var(--font-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+[dir="rtl"] body {
+  font-family: var(--font-arabic), var(--font-sans), sans-serif;
+}
+
+/* Form fields ---------------------------------------------------------------- */
+.field {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 0.625rem 0.875rem;
+  font-size: 0.9375rem;
+  color: #0a0a0a;
+  width: 100%;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  font-family: inherit;
+  line-height: 1.5;
+}
+
+.field::placeholder {
+  color: #9ca3af;
+}
+
+.field:focus {
+  outline: none;
+  border-color: #1e5b8f;
+  box-shadow: 0 0 0 3px rgba(30, 91, 143, 0.18);
+}
+
+.field:disabled {
+  background: #f7f8fa;
+  color: #6b7280;
+  cursor: not-allowed;
+}
+
+textarea.field {
+  resize: vertical;
+  min-height: 120px;
+  line-height: 1.6;
+}
+
+/* Buttons -------------------------------------------------------------------- */
+.btn-primary {
+  background: #1e5b8f;
+  color: #ffffff;
+  padding: 0.625rem 1.25rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  border-radius: 8px;
+  transition: background 0.15s, transform 0.05s;
+  border: 1px solid #1e5b8f;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #194a75;
+  border-color: #194a75;
+}
+
+.btn-primary:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.btn-primary:disabled {
+  background: #d1d5db;
+  border-color: #d1d5db;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background: #ffffff;
+  color: #0a0a0a;
+  padding: 0.625rem 1.25rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  border-radius: 8px;
+  transition: background 0.15s, border-color 0.15s;
+  border: 1px solid #e5e7eb;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.btn-secondary:hover {
+  background: #f7f8fa;
+  border-color: #d1d5db;
+}
+
+.btn-ghost {
+  background: transparent;
+  color: #4b5563;
+  padding: 0.5rem 0.875rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  border-radius: 6px;
+  transition: background 0.15s, color 0.15s;
+  cursor: pointer;
+  border: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.btn-ghost:hover {
+  background: #f7f8fa;
+  color: #0a0a0a;
+}
+
+/* Cards ---------------------------------------------------------------------- */
+.card {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+}
+
+.card-elevated {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(10, 10, 10, 0.04);
+}
+
+/* Chips / badges ------------------------------------------------------------- */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 0.2rem 0.55rem;
+  border-radius: 4px;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+}
+
+.chip-solid {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.25rem 0.6rem;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+/* Labels --------------------------------------------------------------------- */
+.label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #4b5563;
+  letter-spacing: 0;
+  display: block;
+  margin-bottom: 0.4rem;
+}
+
+/* Subtle eyebrow text — primary brand blue */
+.eyebrow {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #1e5b8f;
+}
+
+/* Scrollbar refinement ------------------------------------------------------- */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #e5e7eb; border-radius: 8px; border: 2px solid #ffffff; }
+::-webkit-scrollbar-thumb:hover { background: #d1d5db; }
+
+/* Toast / inline notice ------------------------------------------------------ */
+.notice-warn {
+  background: #fef3c7;
+  border: 1px solid #fde68a;
+  color: #92400e;
+  padding: 0.625rem 0.875rem;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.notice-info {
+  background: #eff6fb;
+  border: 1px solid #aecfe3;
+  color: #143b5e;
+  padding: 0.625rem 0.875rem;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.notice-success {
+  background: #f1f6f3;
+  border: 1px solid #bdd2c4;
+  color: #294438;
+  padding: 0.625rem 0.875rem;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+/* Animation for hint pulse */
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-3px); }
+  40% { transform: translateX(3px); }
+  60% { transform: translateX(-2px); }
+  80% { transform: translateX(2px); }
+}
+
+.shake {
+  animation: shake 0.3s ease-in-out;
+}
+
+/* Mono / code */
+.mono { font-family: "JetBrains Mono", ui-monospace, monospace; }
