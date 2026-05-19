@@ -19,6 +19,12 @@
 --          OUT-parameter names (id, expires_at, response_id, ref_code).
 -- Per D44: token plaintext format (32 bytes b64url) is enforced at
 --          mint-time, not in this function — we hash whatever arrives.
+-- Per D45: this migration adds ref_code to the RETURNS TABLE shape,
+--          which is a return-type change. CREATE OR REPLACE FUNCTION
+--          rejects this with SQLSTATE 42P13. We DROP then CREATE.
+--          Dependency check on pg_depend confirmed no dependents
+--          before drop. REVOKE/GRANT restated post-CREATE since DROP
+--          removes prior grants.
 --
 -- Smoke tests for this migration: three scenarios (A: fresh claim
 -- creates response, B: resumption returns same response_id, C:
@@ -26,7 +32,9 @@
 -- nothing persists. Provided in the Session 2b-2 chat transcript for
 -- paste-into-Studio after `supabase db push`.
 
-CREATE OR REPLACE FUNCTION public.validate_invitation_token(p_token TEXT)
+DROP FUNCTION IF EXISTS public.validate_invitation_token(TEXT);
+
+CREATE FUNCTION public.validate_invitation_token(p_token TEXT)
 RETURNS TABLE (
   id                       UUID,
   language                 TEXT,
@@ -125,7 +133,7 @@ BEGIN
 END;
 $$;
 
--- Grants unchanged from 0009; re-stated for completeness.
+-- DROP removed prior grants; restate per D45.
 REVOKE EXECUTE ON FUNCTION public.validate_invitation_token(TEXT) FROM PUBLIC;
 GRANT  EXECUTE ON FUNCTION public.validate_invitation_token(TEXT)
   TO anon, authenticated;
