@@ -997,6 +997,8 @@ export type Database = {
         Args: never
         Returns: Database["public"]["Enums"]["admin_role"]
       }
+      decrypt_pii: { Args: { p_ciphertext: string }; Returns: string }
+      encrypt_pii: { Args: { p_plaintext: string }; Returns: string }
       validate_invitation_token: {
         Args: { p_token: string }
         Returns: {
@@ -1006,6 +1008,7 @@ export type Database = {
           language: string
           nationality: Database["public"]["Enums"]["nationality_type"]
           questionnaire_version_id: string
+          ref_code: string
           response_id: string
         }[]
       }
