@@ -215,11 +215,12 @@ Full text in `docs/DECISIONS.md`. One-line summaries grouped by topic:
 **Analysis, Session 2b-1 (D40)**
 - D40: Compound questions (Q2, Q4 in Pilot V1) code as separate units in ATLAS.ti
 
-**Session 2b-2 (D41-D44)**
+**Session 2b-2 (D41-D45)**
 - D41: Respondent session cookie is unsigned; DB validation is the integrity check
 - D42: Response row is created inside `validate_invitation_token`, not by the caller
 - D43: Language resolution — invitation overrides on entry; cookie everywhere else; Accept-Language ignored
 - D44: Invitation token plaintext format — 32 random bytes, base64url, no padding
+- D45: `CREATE OR REPLACE FUNCTION` cannot change return type — use DROP + CREATE for signature changes (SQLSTATE 42P13)
 
 ---
 

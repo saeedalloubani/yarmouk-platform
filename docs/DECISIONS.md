@@ -447,6 +447,59 @@ const hash = createHash("sha256").update(plaintext).digest("hex");
 
 **Not relitigated when:** considering shorter tokens for "nicer URLs." Tokens are clicked from email, never typed. 43 chars is fine. Also not relitigated when considering UUIDs as tokens — UUIDs leak generator state, have only 122 bits of entropy, and don't match the SHA-256 hash size.
 
+### D45. `CREATE OR REPLACE FUNCTION` cannot change a function's return type — use DROP + CREATE for signature changes
+
+**Decision:** When a migration changes the return type of an existing function — `RETURNS` scalar type swap, or `RETURNS TABLE` column addition/removal/reorder/type-change — the migration uses `DROP FUNCTION IF EXISTS <fn>(<exact-arg-types>); CREATE FUNCTION ...` rather than `CREATE OR REPLACE FUNCTION`. Body-only changes can continue to use `CREATE OR REPLACE`.
+
+**Why:** Postgres rejects `CREATE OR REPLACE FUNCTION` with SQLSTATE 42P13 (`cannot change return type of existing function`) if the new declaration's return type differs from the existing function. This is a safety measure — silently changing the return type could break callers (cached plans, application code reading specific columns, downstream views). Postgres makes you opt in to the breaking change by explicitly dropping the function first.
+
+**Failure mode:** `supabase db push` rejects the migration at parse time. Nothing applies. `schema_migrations` is unaffected — retry path is clean. The error is loud (SQLSTATE 42P13, "cannot change return type"), not silent.
+
+**Convention:**
+
+1. **In SQL code.** Identify return-type-affecting changes before writing:
+   - Adding, removing, reordering, or changing the type of any `RETURNS TABLE` column
+   - Changing `RETURNS x` to `RETURNS y`
+   - Changing `RETURNS SETOF x` to `RETURNS SETOF y` or to `RETURNS TABLE`
+
+   For any of these, use:
+
+   ```sql
+   DROP FUNCTION IF EXISTS public.foo(arg1_type, arg2_type, ...);
+
+   CREATE FUNCTION public.foo(arg1_type, arg2_type, ...)
+   RETURNS ...
+   ...;
+
+   -- Restate REVOKE/GRANT — DROP removes prior grants.
+   REVOKE EXECUTE ON FUNCTION public.foo(...) FROM PUBLIC;
+   GRANT  EXECUTE ON FUNCTION public.foo(...) TO ...;
+   ```
+
+   `IF EXISTS` keeps the migration idempotent on fresh DBs. Exact arg signature on `DROP` is required when the function is overloaded — bare name fails.
+
+2. **Dependency check.** Before applying a DROP-then-CREATE migration on an existing function, query `pg_depend` to verify no view, trigger, or other function depends on the one being dropped:
+
+   ```sql
+   SELECT pg_describe_object(classid, objid, objsubid)
+     FROM pg_depend
+    WHERE refobjid = 'public.foo(arg_types)'::regprocedure;
+   ```
+
+   Empty result = safe to drop. Non-empty = the dependents will be dropped too by `CASCADE` (or refuse to drop without it), and the migration must recreate them.
+
+3. **In migration review.** When modifying an existing function, compare the function's `RETURNS` clause against the prior migration. If it changed, the migration must be DROP-then-CREATE, not `CREATE OR REPLACE`. Add this as the third grep in the SECURITY DEFINER review checklist:
+
+   ```
+   grep -nE 'CREATE OR REPLACE FUNCTION|RETURNS TABLE' supabase/migrations/*.sql
+   ```
+
+   For each CREATE-OR-REPLACE match, verify the corresponding `RETURNS` clause is byte-identical to the latest prior definition.
+
+**Not relitigated when:** body changes only. `CREATE OR REPLACE FUNCTION` is still the right tool for body edits, security context changes, search_path changes, grants — anything that doesn't touch the `RETURNS` clause or the argument list.
+
+**Sibling lesson to D38, D39, and the SQLSTATE-verify pattern:** all of these are "Postgres compiles lazily and forgives a lot at CREATE time; the failure mode is execution-time or push-time, not parse-time." The defense is reviewer discipline + targeted greps + early probes, not relying on Postgres to catch our mistakes upfront.
+
 ## Out of Scope (Explicitly)
 
 - **AI translation** between EN/AR. Button exists in mock as placeholder; clicking does nothing. Real translation would require GPT-4 or DeepL API; deferred.
