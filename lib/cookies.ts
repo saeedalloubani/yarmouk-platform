@@ -34,8 +34,13 @@ import type {
   InvitationCategory,
   InvitationNationality,
 } from "./repos/invitations";
+import type { Lang } from "./i18n";
 
-export type Lang = "en" | "ar";
+// Re-export so existing consumers can continue importing `type Lang`
+// from "@/lib/cookies". Canonical home is "./i18n" (server- and
+// client-safe; cookies.ts can't be the canonical home because of
+// next/headers).
+export type { Lang };
 
 export type Session = {
   responseId: string;
