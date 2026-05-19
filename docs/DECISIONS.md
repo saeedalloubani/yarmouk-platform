@@ -365,6 +365,18 @@ Application code calls these via `supabase.rpc(...)`. One RPC round-trip per PII
 
    Then for each match, read the function body and verify every `SELECT` / `UPDATE` / `RETURNING` uses table aliases on every table-column reference. Add this to the same review checklist as D38's pgcrypto grep — both are "after CREATE, before considering applied" checks.
 
+### D40. Compound questions are coded as separate units in ATLAS.ti
+
+**Decision:** Compound questions in any questionnaire variant (currently Q2 "decline causes + impacts" and Q4 "absence's effect + future provisions" in Pilot V1 Officials; future variants may add more) get separate coding passes in ATLAS.ti. Each sub-question is its own coding unit; the full answer text is not treated as monolithic.
+
+**Why:** Respondents to compound questions frequently answer one half and skip the other. Coding the full response as a single unit collapses two analytical dimensions into one and loses methodological resolution. Coding separately preserves the signal — including the signal that "Q2 had a higher response rate on causes than on impacts," which is itself a finding worth reporting.
+
+**Applies to:** Any compound question across all variants. Identifiable by multiple question marks within a single Q-text, or "and" / em-dash connectors separating distinct asks. When a new variant adds compound questions, the same convention applies — no per-variant re-derivation.
+
+**Implication:** ATLAS.ti document group / code naming reflects this. For Q2, two codes: `Q2a_decline_causes` and `Q2b_decline_impact`. Coding workflow documented in the Session 4 ATLAS.ti export pipeline.
+
+**Methodological grounding:** Compound questions are called "double-barrelled" in survey methodology literature (Bradburn et al., *Asking Questions*, 2004). The recommendation to either split them pre-fielding *or* code their answers separately post-fielding is established practice. Pilot V1 ships with compound Q2/Q4 intentionally — F1-F3 feedback will tell us whether respondents found them confusing enough to split for V2.
+
 ## Out of Scope (Explicitly)
 
 - **AI translation** between EN/AR. Button exists in mock as placeholder; clicking does nothing. Real translation would require GPT-4 or DeepL API; deferred.

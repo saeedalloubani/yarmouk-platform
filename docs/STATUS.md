@@ -142,6 +142,7 @@ _(Session 2 placeholder removed — folded into "Done" (Session 2a) above and "N
 - [ ] Verify HTTPS + email delivery
 - [ ] Smoke test every flow end-to-end
 - [ ] Final ethics committee review checklist
+- [ ] **Native-speaker Arabic review of all questionnaire text** before first real invitation goes out. Especially Q10-Q13 (political wording: dam estimates, post-conflict water management, Syria's new phase). Reviewer should not be Sura herself — she's too close to the source. Outcome: either greenlight, or list of wording amendments for V2 of pilot questionnaire before pilot launches.
 - **Open questions**:
   - Dashboard export tooling: `@vercel/og` for PNG snapshots, `puppeteer-core` + `@sparticuz/chromium` (Vercel-compatible Chromium build) for PDF, `docx` library for Word documents built programmatically from response data (not HTML capture). Confirm before final integration.
 - **End state**: Live site, ready for real invitations to be sent
@@ -155,6 +156,7 @@ _(Session 2 placeholder removed — folded into "Done" (Session 2a) above and "N
 | Ethics approval reference number | Pending | Field empty for now; fill via Settings when approval comes through |
 | OpenAI Whisper API key | Optional | Owner decides in Session 6 whether to enable auto-transcription |
 | Backup passphrase | Decided but not stored | Owner has chosen one; will enter in Session 6 |
+| Pilot V1 → V2 wording review | After pilot V1 closes | Read all F1-F3 responses. Specifically look for respondent flags on: Q4 "in any form" absolutism, Q6 "recently" staleness, Q7 unspecified impact list, Q12 "new phase of development" framing. If multiple respondents flag the same issue, incorporate into V2 of pilot questionnaire (D10/D11 atomic-publish flow). |
 
 ## Risks to Watch
 
