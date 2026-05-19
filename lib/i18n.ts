@@ -17,14 +17,16 @@
 // nested t.consent.intro) — premature for ~40 strings; revisit if
 // we cross ~150.
 //
-// Three keys are deferred for pre-launch Arabic translation:
-// ethicsFooter (landing footer), invalidTitle and invalidBody
-// (/invitation-invalid page). Tracked as a row in docs/STATUS.md
-// "Known Open Items" — Sura supplies Arabic before first real
-// invitation goes out. Landing renders the ethics footer in
-// English-only with a code comment; /invitation-invalid renders a
-// visible Arabic placeholder so the gap is obvious to anyone
-// testing.
+// Five keys deferred for pre-launch Arabic translation. Two are in
+// this file with sentinel Arabic values that render an amber-dashed
+// visible-placeholder box on the no-session landing variant:
+// `byInvitationOnly` and `contactResearcher`. Three are NOT in this
+// file: `ethicsFooter` (rendered English-only inline on landing
+// variants), `invalidTitle` and `invalidBody` (rendered as a literal
+// amber-dashed placeholder on `/invitation-invalid`). Tracked as a
+// row in docs/STATUS.md "Known Open Items" — Sura supplies Arabic
+// before first real invitation goes out. All Arabic gaps render
+// visibly during testing — no silent English fallbacks.
 //
 // `Lang` is the canonical literal-union home (server- and client-
 // safe; this file imports nothing from next/headers). lib/cookies.ts
@@ -71,6 +73,16 @@ export const translations = {
   estimatedTime: {
     en: "Approx. 35–50 minutes",
     ar: "حوالي ٣٥ إلى ٥٠ دقيقة",
+  },
+
+  // ---- landing page (no-session variant) ----
+  byInvitationOnly: {
+    en: "This study is conducted by invitation only. If you received an invitation, please use the link in your email. Otherwise, please contact the researcher.",
+    ar: "[Arabic text — to be added before launch]",
+  },
+  contactResearcher: {
+    en: "Contact the researcher:",
+    ar: "[Arabic text — to be added before launch]",
   },
 
   // ---- consent ----
