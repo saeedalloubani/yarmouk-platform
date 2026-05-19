@@ -332,8 +332,12 @@ Application code calls these via `supabase.rpc(...)`. One RPC round-trip per PII
 
    ```
    grep -nE '\b(digest|pgp_sym_(encrypt|decrypt)|crypt|gen_salt|hmac)\b' \
-     supabase/migrations/*.sql | grep -v 'extensions\.'
+     supabase/migrations/*.sql \
+     | grep -v 'extensions\.' \
+     | grep -vE '^[^:]+:[0-9]+:[[:space:]]*--'
    ```
+
+   The third pipe excludes SQL line-comments (`-- ...`); without it the grep reports comment mentions of pgcrypto function names as false positives (e.g., header comments documenting a prior fix).
 
    Extend the alternation when adding calls to other pgcrypto functions (`armor`, `dearmor`, `pgp_pub_encrypt`, `encrypt_iv`, etc.). The point is the grep is part of the review checklist for any crypto-touching migration — not a one-time audit.
 

@@ -193,9 +193,11 @@ Migrations live in `supabase/migrations/` and are applied via `supabase db push`
 1. **D38 — pgcrypto qualification.** If the function uses any pgcrypto symbol, every call is qualified `extensions.digest`, `extensions.pgp_sym_encrypt`, etc. Grep:
    ```
    grep -nE '\b(digest|pgp_sym_(encrypt|decrypt)|crypt|gen_salt|hmac)\b' \
-     supabase/migrations/*.sql | grep -v 'extensions\.'
+     supabase/migrations/*.sql \
+     | grep -v 'extensions\.' \
+     | grep -vE '^[^:]+:[0-9]+:[[:space:]]*--'
    ```
-   Empty output = clean.
+   The third pipe excludes SQL line-comments (`-- ...`). Empty output = clean.
 
 2. **D39 — `RETURNS TABLE` aliasing.** If the function has `RETURNS TABLE`, every table reference in the body has an alias and every column reference is qualified. Grep for the affected files:
    ```
