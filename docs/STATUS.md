@@ -40,7 +40,7 @@ All 20 pages designed and clickable in the v3 mock:
 
 ## In Progress
 
-Nothing in flight. Session 2b-3 (consent + questionnaire + autosave) will be scoped in its own planning pass before implementation begins.
+Nothing in flight. **Session 2b is complete** — the full public respondent flow (landing → consent → questionnaire → autosave → submit) is operational and verified live. Session 3 (admin UI: auth, invitation minting, question editor) will be scoped in its own planning pass before implementation begins.
 
 ## Done
 
@@ -97,23 +97,25 @@ Nothing in flight. Session 2b-3 (consent + questionnaire + autosave) will be sco
 - [x] **End-to-end smoke passed 6/6** (2026-05-20): token claim, response creation, language switch, D43 resumption override, garbage-token terminal page, no-session landing. Test invitation cleaned up (`inv_left=0`, `resp_left=0`).
 - [x] **Decisions locked**: D41 (unsigned session cookie), D42 (response created inside the RPC), D43 (language resolution + resumption trade-off addendum), D44 (token format), D45 (DROP-then-CREATE for return-type changes).
 
-## Next — Session 2b-3 (consent + questionnaire + autosave)
+### Session 2b-3 — Consent + questionnaire + autosave + submit (respondent flow complete)
+- [x] **Consent flow** — `app/(public)/consent/page.tsx` (session guard + consent re-entry guard) + `components/ConsentForm.tsx` (required audio radio with no default, two required checkboxes, name) + `lib/actions/consent.ts` (`submitConsent`). Signed name encrypted via `encrypt_pii` through the service-role admin client — **first live exercise of the encryption boundary in the application** (smoke C confirmed encrypt→decrypt roundtrip = "Smoke Jordan").
+- [x] **Questionnaire wizard** — `components/QuestionnaireWizard.tsx`: one question per page (D46), debounced autosave with flush-on-every-boundary (Edge 1), forward-lock + question map over the filtered set (D12 / Edge 3), mid-flow language switch with flush-before-refresh (Edge 1.5). Server page `app/(public)/questionnaire/page.tsx` filters by nationality once and derives `initialIdx` = first-unanswered-visible (Edge 2).
+- [x] **Submit gate** (D47) — `submitQuestionnaire` re-derives the visible required set server-side and confirms each non-empty before finalizing; client gate is UX-only.
+- [x] **Public-flow data access via admin client** (D48) — `lib/repos/questions.ts`, `lib/repos/answers.ts`, public-flow helpers in `lib/repos/consent.ts`; no anon RLS, scoped to the session's `response_id`.
+- [x] **Submitted page** — `app/(public)/submitted/page.tsx`: terminal thank-you, session-only cookie clear (`clearSessionCookie`) preserving lang so it renders in the respondent's language.
+- [x] **`opened` → `started` transition** on first answer save (idempotent, guarded) — **Task #10 CLOSED**.
+- [x] **All 12 smoke tests passed against the live DB** (2026-05-20): token→consent→eager-response (A), consent gate (B), encryption roundtrip (C), Jordanian 14-q map without Q10–Q13 (D), autosave + status flip (E), EDGE-1 flush (F), resumption at first-unanswered (G), incomplete-blocked (H), finalize (I), post-submit re-entry blocked (J), Syrian 18-q map with Q10–Q13 (K), language-switch-position + EDGE-1.5 flush (L). Test invitations cleaned up, cascade confirmed 0 leftover.
+- [x] **Decisions locked**: D46 (one-per-page wizard, derived position), D47 (server-side submit gate), D48 (admin-client public-flow access).
 
-To be scoped in its own planning pass before implementation. Candidate items (likely subject to revision in the planning pass):
+## Next — Session 3 (Admin Core)
 
-- [ ] `lib/encryption.ts` — thin RPC wrapper around `encrypt_pii` / `decrypt_pii`
-- [ ] Consent page (`app/(public)/consent/page.tsx`) — 5 sections, signature → `encrypt_pii` → `consent_records` via Server Action
-- [ ] Questionnaire page (`app/(public)/questionnaire/page.tsx`) — one-at-a-time, required-answer validation, autosave Server Action (debounced), question map, `visible_nationalities` gating for Q10–Q13
-- [ ] Submitted page (`app/(public)/submitted/page.tsx`) — thank-you + `clearSession()`
-- [ ] `opened` → `started` status transition on first answer insert (tracked task #10)
-- [ ] EN/AR + RTL working end-to-end through the full flow
-- [ ] Submission marks `responses.submitted_at`, transitions status to `submitted`; thank-you email + admin notifications deferred to Session 3 (Resend wiring) — TBD
+**Session 2b is COMPLETE** (2a + 2b-1 + 2b-2 + 2b-3). The full public respondent flow works end to end: a real invitation link → landing → consent → paginated questionnaire (EN/AR, autosave, resumption, nationality-gated) → submit → terminal thank-you, with re-entry correctly blocked after submission. Verified live.
 
-**End state**: A real invitation link Sura can send to herself, click, complete in EN or AR, and see the response land in the DB.
+Next is the **admin side** — see the Session 3 subsection below. Headline items: magic-link auth, admin route protection, invitation minting (`lib/tokens.ts` per D44 — 32 random bytes base64url, SHA-256 hashed), the question editor, and the responses list/detail with tagging. Will be scoped in its own planning pass before implementation.
 
 ## After That (Sessions 3–7)
 
-_(Session 2 placeholder removed — folded into "Done" (Sessions 2a + 2b-1) above and "Next" (Session 2b-2) below.)_
+_(All of Session 2 — 2a, 2b-1, 2b-2, 2b-3 — is now in "Done" above. The public respondent flow is complete; what follows is the admin side and operations.)_
 
 ### Session 3 — Admin Core
 - [ ] Magic-link auth via Supabase
@@ -240,3 +242,7 @@ Concrete pattern: write a `DO $$ ... EXCEPTION WHEN OTHERS THEN GET STACKED DIAG
 ### Return-type changes need DROP-then-CREATE, not REPLACE (Session 2b-2, Migration 012)
 
 Session 2b-2 (Migration 012, 42P13 catch): Adding `ref_code` to `validate_invitation_token`'s `RETURNS TABLE` was rejected by `CREATE OR REPLACE FUNCTION` because Postgres doesn't allow return-type changes via REPLACE. Caught at `supabase db push` time, not at function authoring. The pattern: before writing `CREATE OR REPLACE FUNCTION` for any existing function, diff the new `RETURNS` clause against the prior migration's; if they differ, use DROP + CREATE per D45. Same family of lazy-evaluation-trap lessons as D38 (extension qualification) and D39 (RETURNS TABLE shadowing). Defense is reviewer discipline; Postgres won't catch these at write time.
+
+### Probe before migrating: service_role function grants (Session 2b-3)
+
+Session 2b-3: probe-before-migration overturned a second confident static read — `service_role` already had EXECUTE on `encrypt_pii`/`decrypt_pii` despite migration 010's bare `GRANT … TO authenticated`, because Supabase grants `service_role` broader function privileges than the migration text implies. Reinforces: the live DB is the authority; `supabase db query --linked` is the probe tool. Avoided shipping a no-op migration 013. Same lesson family as the SQLSTATE probe (2b-1) — verify against the running database before encoding an assumption into a migration.
