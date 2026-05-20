@@ -502,6 +502,32 @@ const hash = createHash("sha256").update(plaintext).digest("hex");
 
 **Sibling lesson to D38, D39, and the SQLSTATE-verify pattern:** all of these are "Postgres compiles lazily and forgives a lot at CREATE time; the failure mode is execution-time or push-time, not parse-time." The defense is reviewer discipline + targeted greps + early probes, not relying on Postgres to catch our mistakes upfront.
 
+### D46. Questionnaire is a one-question-per-page wizard; current position is derived, not stored
+
+**Decision:** The respondent questionnaire renders one question per page (Next/Back wizard). The respondent's current position is derived on entry as the first visible question with no saved answer (empty if none) — there is no `current_position` column. If every visible question is answered, entry lands on the last question (submit available).
+
+**Why:** Position is a pure function of saved answers; storing it would be redundant state that can drift from the answers themselves. Derivation keeps responses single-sourced (the answers table) and makes resumption automatic — a respondent who answered Q1–Q5 and left re-enters at Q6 with no bookkeeping. Consistent with the status-denormalization convention (read underlying state, don't store a convenience copy that can lag).
+
+**Scope:** "visible" = after `visible_nationalities` filtering (D32). A Jordanian respondent's first-unanswered is computed over Q1–Q9, Q14, F1–F4 only.
+
+### D47. Submit gate is enforced server-side over the respondent's visible required set
+
+**Decision:** A questionnaire submission is accepted only if every REQUIRED question VISIBLE to that respondent (after `visible_nationalities` filtering) has a non-empty answer. This check runs server-side in the submit Server Action, re-reading the answers from the DB. The client-side gate (disabled submit button, per-step Next block) is UX only and is never trusted.
+
+**Why:** The client can be bypassed (devtools, crafted Server Action calls). Data integrity for the analytical dataset depends on the server being the sole authority on "complete." Visible-set scoping means a Jordanian respondent is never blocked for the Syria-only Q10–Q13 they never saw (D32).
+
+**Implication:** Submit re-derives the visible required set from the active version's questions + the respondent's nationality, then confirms each has a non-empty answer row, before setting `responses.submitted_at`. The "non-empty" definition is `trim(answer_text).length > 0` — character-count niceties are UX only. The `saveAnswer` path carries the inverse authority: it rejects writes to a response that is already submitted or locked, so submission is genuinely terminal.
+
+### D48. Public respondent-flow data access uses the service-role admin client (or SECURITY DEFINER), never anon RLS
+
+**Decision:** All database access in the public respondent flow (reading questions, reading/writing answers, writing consent, reading/updating responses) runs server-side through the service-role admin client or through SECURITY DEFINER functions. The anon Supabase client is never used for respondent data, because the schema has no anon RLS policies — every policy is `TO authenticated` and owner-gated for writes.
+
+**Why:** Respondents have no JWT and no admin role; RLS would reject every operation. Rather than open a permissive anon RLS surface (which would have to re-prove, in policy logic, the same token/session validity the flow already establishes), the flow escalates explicitly at the server-side call site. Integrity comes from session/token validation gating WHICH `response_id` the flow may touch — not from RLS. Generalizes the 2b-2 precedents: `getSession`'s admin client (D41) and `validate_invitation_token`'s SECURITY DEFINER (D42).
+
+**Boundary:** admin-client access is confined to Server Components and Server Actions (never a `"use client"` module; `lib/supabase/admin.ts` throws on browser import). Public-flow helpers do NOT call `getCurrentAdminRole` — that's for admin-context repos. Public-flow read/write helpers take the admin client and scope every query to the session's `response_id`. They live in `lib/repos/*` (questions, answers, plus the public-flow section of consent) so PII access stays inside the repo layer (D31) even when the caller is anonymous.
+
+**Verified, not assumed:** 2b-3's consent flow is the first code to call `encrypt_pii` via the service-role client. A `has_function_privilege` probe (`supabase db query --linked`) confirmed `service_role` already holds EXECUTE on `encrypt_pii`/`decrypt_pii` despite migration 010's bare `GRANT … TO authenticated` — Supabase grants `service_role` broader function privileges than the migration text implies. No grant migration was needed; the probe overturned a confident static read.
+
 ## Out of Scope (Explicitly)
 
 - **AI translation** between EN/AR. Button exists in mock as placeholder; clicking does nothing. Real translation would require GPT-4 or DeepL API; deferred.
