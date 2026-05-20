@@ -1,6 +1,6 @@
 # Task State — Handoff Snapshot
 
-Last updated: end of Session 2b-1 (2026-05-19).
+Last updated: end of Session 2b-2 (2026-05-20).
 
 Read this first if you're picking up the project cold. It's a synthesis of where we are, what's been decided, and what's next. The canonical docs for each topic are linked inline — when this doc and a canonical doc disagree, the canonical doc wins.
 
@@ -21,9 +21,9 @@ See `CLAUDE.md` for the framing, `docs/STATUS.md` for build status, `docs/DECISI
 
 ## 2. Where we are right now
 
-**Session 2b-1 is complete.** Database schema, RLS, repo pattern, PII encryption helpers (pgcrypto + Vault), and Pilot V1 Officials seed data are all applied to the live Supabase project and verified. The codebase has typed Supabase clients + repos but no public-facing pages or route handlers yet.
+**Session 2b-2 is complete.** On top of the 2b-1 foundation (schema, RLS, repos, PII encryption, Pilot V1 seed), the respondent entry flow is now live: `/r/[token]` route handler, cookie helpers, bilingual i18n, the no-session + invited landing variants, the terminal `/invitation-invalid` page, and the Server-Action-backed LanguageSwitcher. Migration 012 makes `validate_invitation_token` create the response row atomically. End-to-end smoke passed 6/6 (2026-05-20): token claim, response creation, language switch, D43 resumption override, garbage-token terminal page, no-session landing.
 
-**Next: Session 2b-2** — `/r/[token]` route handler, cookie helpers, `lib/encryption.ts`, public flow pages (landing/consent/questionnaire/submitted). Not yet scoped; user wants a deliberate planning pass before implementation.
+**Next: Session 2b-3** — `lib/encryption.ts` (RPC wrapper over encrypt/decrypt_pii), consent page (signature → `encrypt_pii` → `consent_records`), questionnaire (one-at-a-time, required-answer validation, autosave, `visible_nationalities` gating for Q10–Q13), submitted page (`clearSession()`), and the `opened`→`started` transition (task #10). Not yet scoped; user wants a deliberate planning pass before implementation.
 
 **Nothing is in flight.** No background processes, no timers, no scheduled work. The repo is in a clean state: working tree matches `origin/main`.
 
@@ -36,9 +36,9 @@ See `CLAUDE.md` for the framing, `docs/STATUS.md` for build status, `docs/DECISI
 - **Supabase region / tier**: free tier (default Supabase placement)
 - **Branch protection** on `main`: force-push blocked, deletion blocked. Direct pushes still allowed (solo phase).
 - **Vault state**: `pii_key_v1` exists. Verified `decryptable=true`. Backed up in Owner's password manager as `Yarmouk — pii_key_v1 (active)`.
-- **Migrations applied**: all 11 (see §5).
+- **Migrations applied**: all 12 (see §5).
 - **RLS**: enabled on every table. Helpers `current_admin_role()` and `current_admin_id()` resolve admin identity via JWT email lookup (D37).
-- **PII columns ciphertext**: helpers exist (`encrypt_pii` / `decrypt_pii`) but no real PII has been written yet — the only data in user tables is the seed questionnaire content.
+- **PII columns ciphertext**: helpers exist (`encrypt_pii` / `decrypt_pii`) but no real PII has been written yet — the only data in user tables is the seed questionnaire content. (2b-2 smoke wrote + cleaned up a test invitation; `inv_left=0`, `resp_left=0`.)
 - **Branch protection on Vault**: Studio access is Owner-only; CLI access via `SUPABASE_DB_PASSWORD` (in Owner's env, not in repo).
 
 ---
@@ -73,7 +73,7 @@ For full architecture, read in this order:
 
 ---
 
-## 5. Migrations applied (11 total)
+## 5. Migrations applied (12 total)
 
 All in `supabase/migrations/`, timestamped `YYYYMMDDHHMMSS_name.sql` (per Supabase CLI requirement — `0001_*` naming would be silently skipped). Applied to live DB in order.
 
@@ -90,6 +90,7 @@ All in `supabase/migrations/`, timestamped `YYYYMMDDHHMMSS_name.sql` (per Supaba
 | `…009_alias_validate_token_columns.sql` | Forward fix: alias every table reference + qualify every column inside `validate_invitation_token` (D39 caught at smoke test) |
 | `…010_pii_encryption_helpers.sql` | `encrypt_pii` / `decrypt_pii` — pgcrypto + Vault, rotation fallback, narrow EXCEPTION clauses (verified SQLSTATEs) |
 | `…011_seed_pilot_v1_officials.sql` | 1 active `pilot_officials` v1 questionnaire + 6 Draft variants + 18 questions (14 main Q1-Q14 + 4 feedback F1-F4) |
+| `…012_validate_token_creates_response.sql` | Extends `validate_invitation_token` to atomically INSERT the response row on fresh claim + return `response_id` + `ref_code` (D42). DROP-then-CREATE because the return-type change tripped SQLSTATE 42P13 on `CREATE OR REPLACE` (D45). |
 
 Migrations are forward-only. Don't edit applied migrations; write a new migration that fixes forward.
 
@@ -112,40 +113,51 @@ Migrations are forward-only. Don't edit applied migrations; write a new migratio
 ├── postcss.config.js                  v3-style (autoprefixer + tailwindcss)
 ├── app/
 │   ├── (public)/                      Respondent-facing routes (no auth)
-│   │   └── page.tsx                   Placeholder landing — verifies design tokens
+│   │   ├── page.tsx                   Landing — variant chooser on getSession() (2b-2)
+│   │   ├── invitation-invalid/        Terminal page for bad/expired tokens (2b-2)
+│   │   ├── consent/                   (empty; Session 2b-3)
+│   │   ├── questionnaire/             (empty; Session 2b-3)
+│   │   └── submitted/                 (empty; Session 2b-3)
 │   ├── admin/                         (empty; Session 3+)
 │   ├── api/                           (empty; route handlers go here)
-│   ├── r/                             [token]/ — public token redirect (Session 2b-2)
+│   ├── r/[token]/route.ts            Public token entry: RPC → cookies → redirect (2b-2)
 │   ├── globals.css                    Tailwind base + design tokens
 │   ├── layout.tsx                     next/font (Plus Jakarta, IBM Plex Arabic, JetBrains)
 │   └── favicon.ico
-├── components/                        (empty; shared components)
+├── components/
+│   ├── LandingNoSession.tsx           Bilingual courtesy page (no session cookie) (2b-2)
+│   ├── LandingInvited.tsx             Single-language invited landing (2b-2)
+│   └── LanguageSwitcher.tsx           Client: optimistic lang toggle via Server Action (2b-2)
 ├── lib/
 │   ├── auth.ts                        getCurrentAdminRole(supabase) — RPC wrapper
+│   ├── cookies.ts                     getLang/setLang + getSession/setSession/clearSession (2b-2; D41)
+│   ├── i18n.ts                        Canonical Lang + translations + LANG_PICKER_LABELS (2b-2)
+│   ├── actions/
+│   │   └── setLang.ts                 Server Action wrapping setLang for client use (2b-2)
 │   ├── supabase/
 │   │   ├── server.ts                  createSupabaseServerClient (RSC + Server Actions + admin route handlers)
 │   │   ├── client.ts                  createSupabaseBrowserClient (use client)
 │   │   ├── admin.ts                   createSupabaseAdminClient (service role; throws on browser import)
-│   │   └── database.types.ts          Generated by `npm run db:types` from live schema (1192 lines)
+│   │   └── database.types.ts          Generated by `npm run db:types` from live schema
 │   ├── repos/
 │   │   ├── README.md                  Repo pattern doc + PII-required allow-list
 │   │   ├── invitations.ts             Owner→base, Readonly→invitations_redacted
 │   │   ├── recordings.ts              Owner→base, Readonly→recordings_redacted
 │   │   └── consent.ts                 Owner→base, Readonly→consent_records_redacted
 │   ├── exports/                       (empty; Session 4 export tooling)
-│   └── encryption.ts                  Does NOT EXIST YET (Session 2b-2 — wraps encrypt_pii/decrypt_pii RPC)
+│   └── encryption.ts                  Does NOT EXIST YET (Session 2b-3 — wraps encrypt_pii/decrypt_pii RPC)
 ├── supabase/
-│   └── migrations/                    11 timestamped migration files (see §5)
+│   └── migrations/                    12 timestamped migration files (see §5)
 └── docs/
     ├── SCHEMA.md                      Canonical data model
-    ├── DECISIONS.md                   D1-D40 decision history with rationale
+    ├── DECISIONS.md                   D1-D45 decision history with rationale
     ├── CONVENTIONS.md                 TypeScript/SQL/Git/migration conventions
     └── STATUS.md                      Session-by-session build status + Notes
 ```
 
 ---
 
-## 7. Decisions register (D1-D40)
+## 7. Decisions register (D1-D45)
 
 Full text in `docs/DECISIONS.md`. One-line summaries grouped by topic:
 
@@ -264,19 +276,20 @@ Full text in `docs/CONVENTIONS.md`. Load-bearing ones the next session needs to 
 - `NEXT_PUBLIC_SITE_URL` — `http://localhost:3000` for dev, `https://karasneh-research.org` for prod
 
 **Naming conventions**
-- Migration files: `YYYYMMDDHHMMSS_name.sql`. Current latest timestamp range: `2026051917000{1..11}`. Next migration would be `…012_*` or later.
+- Migration files: `YYYYMMDDHHMMSS_name.sql`. Current latest timestamp range: `2026051917000{1..12}`. Next migration would be `…013_*` or later.
 - Vault secrets for PII keys: `pii_key_v<N>`, integer suffix (do not use leading zeros — sort is integer-cast).
 - Question codes: `Q1`-`Q14` for main, `F1`-`F4` for feedback.
 - Ref codes (anonymized display IDs): `{CAT_PREFIX}-{NAT_PREFIX}-{SEQ}` (e.g., `OFF-J-04`). Per CONVENTIONS.md "Reference Code Pattern".
 
-**Routes (planned, not yet implemented)**
-- `/` — landing + language picker
-- `/consent` — consent screen
-- `/questionnaire` — paginated one-at-a-time questions
-- `/submitted` — thank-you
-- `/r/[token]` — public route handler (Session 2b-2)
+**Routes**
+- `/` — landing, variant chooser on getSession() (LIVE, 2b-2)
+- `/r/[token]` — public token entry route handler (LIVE, 2b-2)
+- `/invitation-invalid` — terminal page for bad/expired tokens (LIVE, 2b-2)
+- `/consent` — consent screen (Session 2b-3)
+- `/questionnaire` — paginated one-at-a-time questions (Session 2b-3)
+- `/submitted` — thank-you (Session 2b-3)
 - `/admin/*` — all admin routes (Session 3+)
-- `/api/public/consent`, `/api/public/answer`, `/api/public/submit` — public route handlers (Session 2b-2)
+- `/api/public/*` — any public route handlers not better expressed as Server Actions (TBD per 2b-3 scoping)
 
 ---
 
@@ -332,24 +345,27 @@ These are in `docs/STATUS.md` Notes section and `docs/DECISIONS.md` D38-D39, but
 8. **`encrypt_pii('')` produces non-NULL ciphertext.** Empty string is distinct from NULL. Don't compress them in app code.
 9. **`validate_invitation_token` is resumption-aware.** Don't assume a successful call means "fresh response" — check the returned `response_id`. Null = fresh, non-null = resume.
 10. **Email resend requires token rotation** (since plaintext is never stored). Mint new plaintext, hash it, UPDATE `invitations.token_hash`. The old link stops working — intentional, documented in Task #11 reminder.
+11. **`CREATE OR REPLACE FUNCTION` can't change return type.** Adding/removing/reordering a `RETURNS TABLE` column (or changing a scalar return type) is rejected at push time with SQLSTATE 42P13. Use `DROP FUNCTION IF EXISTS …(exact-arg-types); CREATE FUNCTION …` + restate REVOKE/GRANT. Check `pg_depend` first to confirm no dependents. Body-only changes still use `CREATE OR REPLACE`. (D45, caught on migration 012.)
 
 ---
 
-## 12. What's next: Session 2b-2 (token route + cookies + public flow)
+## 12. What's next: Session 2b-3 (consent + questionnaire + autosave)
 
-**Not yet scoped.** User wants a deliberate planning pass before implementation. Candidate scope (from `docs/STATUS.md`):
+**Not yet scoped.** User wants a deliberate planning pass before implementation. Candidate scope (from `docs/STATUS.md` "Next — Session 2b-3"):
 
-- `/r/[token]` route handler — calls `validate_invitation_token` via RPC, branches on `response_id IS NULL` (fresh) vs not (resumption), sets cookies, redirects
-- Cookie helpers — typed get/set, secure flags, expiry aligned to invitation `expires_at`
-- `lib/encryption.ts` — thin RPC wrapper around `encrypt_pii` / `decrypt_pii`
-- Public flow pages: landing + language picker, consent (signature → encrypted), questionnaire (one-at-a-time, required validation, autosave, question map), submitted
-- `opened` → `started` status transition on first answer (Task #10)
-- EN/AR + RTL end-to-end
-- Submission triggers thank-you email + admin notifications (or defer to Session 3 with Resend wiring)
+- `lib/encryption.ts` — thin RPC wrapper around `encrypt_pii` / `decrypt_pii` (first real consumer of the 0010 helpers)
+- Consent page (`app/(public)/consent/page.tsx`) — 5 sections, signature → `encrypt_pii` → `consent_records` via Server Action
+- Questionnaire page (`app/(public)/questionnaire/page.tsx`) — one-at-a-time, required-answer validation, autosave Server Action (debounced), question map, `visible_nationalities` gating for Q10–Q13
+- Submitted page (`app/(public)/submitted/page.tsx`) — thank-you + `clearSession()`
+- `opened` → `started` status transition on first answer insert (Task #10)
+- EN/AR + RTL end-to-end through the full flow
+- Submission marks `responses.submitted_at`, transitions status to `submitted`; thank-you email + admin notifications deferred to Session 3 (Resend wiring)
 
 **End state**: A real invitation link Sura can send to herself, click, complete in EN or AR, and see the response land in the DB.
 
-When starting 2b-2, expect the user to first ask for a scope-narrowing pass (like they did for 2b-1 and 2a). Don't dive into implementation without explicit scope agreement.
+**What 2b-2 already delivered (the entry half of that end state):** token claim → atomic response creation → session-aware bilingual landing → language switch all work end-to-end (smoke 6/6). 2b-3 builds the consent + questionnaire + submission half on top.
+
+When starting 2b-3, expect the user to first ask for a scope-narrowing pass (like they did for 2b-2, 2b-1, and 2a). Don't dive into implementation without explicit scope agreement. The established per-file rhythm: decisions surfaced → draft shown → user redlines → save → typecheck → commit; separate commits for separate concerns; deferred doc items batched.
 
 ---
 
@@ -358,7 +374,7 @@ When starting 2b-2, expect the user to first ask for a scope-narrowing pass (lik
 These exist in the task list and are scoped for future sessions:
 
 - **Task #9** — Remind Owner to connect Vercel + set Node 24 in project settings before any deploy. Not yet wired to Vercel; will surface when we approach Session 7 (or earlier if Owner wants preview deploys).
-- **Task #10** — Session 2b-2: `opened` → `started` status transition on first answer insert. Likely a BEFORE INSERT trigger on `answers` or part of the autosave Server Action.
+- **Task #10** — Session 2b-3: `opened` → `started` status transition on first answer insert. Likely a BEFORE INSERT trigger on `answers` or part of the autosave Server Action. (Carried from 2b-2 — the entry flow stops at `opened`; `started` belongs with the first answer.)
 - **Task #11** — Session 4 admin docs: "Resend invitation" requires token rotation. Document in the Invitations admin UI as user-facing notice.
 
 Tasks #12 (SQLSTATE-verify pattern note) was completed during 2b-1 close-out — note lives in `docs/STATUS.md` Notes section.
