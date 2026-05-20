@@ -992,6 +992,14 @@ export type Database = {
       }
     }
     Functions: {
+      current_admin: {
+        Args: never
+        Returns: {
+          id: string
+          name: string
+          role: Database["public"]["Enums"]["admin_role"]
+        }[]
+      }
       current_admin_id: { Args: never; Returns: string }
       current_admin_role: {
         Args: never
