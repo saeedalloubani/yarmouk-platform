@@ -107,3 +107,54 @@ export async function createConsentRecord(
   if (error) throw error;
   return rowToConsent(data);
 }
+
+// ---------------------------------------------------------------------------
+// Public-flow helpers (D48): the respondent flow has no admin role, so these
+// take the service-role admin client and never call getCurrentAdminRole.
+// They keep consent (a PII table) access inside this repo per D31, while the
+// caller (lib/actions/consent.ts) owns validation, encryption, and redirects.
+// ---------------------------------------------------------------------------
+
+/** Existence check for the consent gate (re-entry guard + questionnaire gate). */
+export async function consentExistsForResponse(
+  admin: SupabaseClient<Database>,
+  responseId: string
+): Promise<boolean> {
+  const { data, error } = await admin
+    .from("consent_records")
+    .select("response_id")
+    .eq("response_id", responseId)
+    .maybeSingle();
+  if (error) throw error;
+  return data !== null;
+}
+
+export type InsertConsentInput = {
+  responseId: string;
+  /** Already pgcrypto-encrypted (encrypt_pii) by the caller. */
+  signedNameEncrypted: string;
+  audioConsent: boolean;
+  agreedToRead: boolean;
+  agreedToParticipate: boolean;
+  language: "en" | "ar";
+  consentTextVersion?: string;
+};
+
+/** Public-flow insert. Returns the PostgrestError (if any) instead of
+ *  throwing, so the caller can detect unique_violation (23505) — a
+ *  concurrent double-submit on the UNIQUE response_id. */
+export async function insertConsentRecord(
+  admin: SupabaseClient<Database>,
+  input: InsertConsentInput
+): Promise<{ error: { code?: string } | null }> {
+  const { error } = await admin.from("consent_records").insert({
+    response_id: input.responseId,
+    signed_name_encrypted: input.signedNameEncrypted,
+    audio_consent: input.audioConsent,
+    agreed_to_read: input.agreedToRead,
+    agreed_to_participate: input.agreedToParticipate,
+    language: input.language,
+    consent_text_version: input.consentTextVersion ?? "v1.0",
+  });
+  return { error };
+}
