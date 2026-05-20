@@ -1,6 +1,6 @@
 # Task State — Handoff Snapshot
 
-Last updated: end of Session 2b-3 (2026-05-20) — Session 2b complete.
+Last updated: end of Session 3a (2026-05-20) — admin auth live.
 
 Read this first if you're picking up the project cold. It's a synthesis of where we are, what's been decided, and what's next. The canonical docs for each topic are linked inline — when this doc and a canonical doc disagree, the canonical doc wins.
 
@@ -21,9 +21,11 @@ See `CLAUDE.md` for the framing, `docs/STATUS.md` for build status, `docs/DECISI
 
 ## 2. Where we are right now
 
-**Session 2b is COMPLETE (2a + 2b-1 + 2b-2 + 2b-3).** The entire public respondent flow works end to end and is verified live: invitation link → `/r/[token]` → landing → consent (signature encrypted via `encrypt_pii`) → paginated questionnaire (one-per-page wizard, EN/AR, debounced autosave, resumption, nationality-gated visibility, forward-lock + question map) → server-side submit gate → terminal thank-you, with re-entry blocked after submission. Session 2b-3 added: consent flow, the questionnaire wizard, the autosave + submit Server Actions, the public-flow repos (questions/answers + consent helpers), and the `opened`→`started` transition (Task #10 closed). All 12 2b-3 smoke tests passed against the live DB (2026-05-20); 2b-3 shipped **zero migrations** (a `service_role` grant probe confirmed `encrypt_pii`/`decrypt_pii` EXECUTE was already in place — no migration 013).
+**Session 2b is COMPLETE** (full public respondent flow, verified live) **and Session 3a is COMPLETE** (admin auth + route protection, verified live). 2b: invitation link → `/r/[token]` → landing → consent (name encrypted) → paginated questionnaire (EN/AR, autosave, resumption, nationality-gated, forward-lock + map) → server-side submit gate → terminal thank-you, re-entry blocked post-submit. 3a: magic-link/OTP sign-in via Supabase built-in email (signup locked down, D49), `(protected)` layout authorization guard + `/admin/*` session-refresh middleware (D50), case-insensitive email matching (D51), `current_admin()` helper, and the Sura owner seed. 8/8 admin-auth smoke tests passed against the live DB (2026-05-20). Migrations 013 + 014 applied (count → 14).
 
-**Next: Session 3 (Admin Core)** — magic-link auth, admin route protection, invitation minting (`lib/tokens.ts` per D44 — 32 random bytes base64url, SHA-256 hashed), question editor, responses list/detail with tagging + notes. Not yet scoped; user wants a deliberate planning pass before implementation.
+**Dev-admin note:** `salloubani@cybercorrelate.com` is seeded live as a SECOND `owner` for the build (out-of-band, not in any migration). Pre-launch removal blocker — tracked in `docs/STATUS.md` "Known Open Items".
+
+**Next: Session 3b (Invitation management)** — `lib/tokens.ts` (D44: 32 random bytes base64url, SHA-256 hashed), invitation list + create UI, resend/rotate flow, Resend wiring for respondent invitation emails (with the sender-domain pre-launch item in view), and seeding the two supervisor admins (readonly) once their emails are known. Not yet scoped; user wants a deliberate planning pass before implementation.
 
 **Nothing is in flight.** No background processes, no timers, no scheduled work. The repo is in a clean state: working tree matches `origin/main`.
 
@@ -36,7 +38,7 @@ See `CLAUDE.md` for the framing, `docs/STATUS.md` for build status, `docs/DECISI
 - **Supabase region / tier**: free tier (default Supabase placement)
 - **Branch protection** on `main`: force-push blocked, deletion blocked. Direct pushes still allowed (solo phase).
 - **Vault state**: `pii_key_v1` exists. Verified `decryptable=true`. Backed up in Owner's password manager as `Yarmouk — pii_key_v1 (active)`.
-- **Migrations applied**: all 12 (see §5).
+- **Migrations applied**: all 14 (see §5).
 - **RLS**: enabled on every table. Helpers `current_admin_role()` and `current_admin_id()` resolve admin identity via JWT email lookup (D37).
 - **PII columns ciphertext**: helpers exist (`encrypt_pii` / `decrypt_pii`) but no real PII has been written yet — the only data in user tables is the seed questionnaire content. (2b-2 smoke wrote + cleaned up a test invitation; `inv_left=0`, `resp_left=0`.)
 - **Branch protection on Vault**: Studio access is Owner-only; CLI access via `SUPABASE_DB_PASSWORD` (in Owner's env, not in repo).
@@ -73,7 +75,7 @@ For full architecture, read in this order:
 
 ---
 
-## 5. Migrations applied (12 total)
+## 5. Migrations applied (14 total)
 
 All in `supabase/migrations/`, timestamped `YYYYMMDDHHMMSS_name.sql` (per Supabase CLI requirement — `0001_*` naming would be silently skipped). Applied to live DB in order.
 
@@ -91,6 +93,8 @@ All in `supabase/migrations/`, timestamped `YYYYMMDDHHMMSS_name.sql` (per Supaba
 | `…010_pii_encryption_helpers.sql` | `encrypt_pii` / `decrypt_pii` — pgcrypto + Vault, rotation fallback, narrow EXCEPTION clauses (verified SQLSTATEs) |
 | `…011_seed_pilot_v1_officials.sql` | 1 active `pilot_officials` v1 questionnaire + 6 Draft variants + 18 questions (14 main Q1-Q14 + 4 feedback F1-F4) |
 | `…012_validate_token_creates_response.sql` | Extends `validate_invitation_token` to atomically INSERT the response row on fresh claim + return `response_id` + `ref_code` (D42). DROP-then-CREATE because the return-type change tripped SQLSTATE 42P13 on `CREATE OR REPLACE` (D45). |
+| `…013_admin_auth_functions.sql` | Admin auth (3a): CHECK (email = lower(email)) on admins; case-insensitive `current_admin_role`/`current_admin_id`; new `current_admin()` RETURNS TABLE(id,name,role) (D51). |
+| `…014_seed_admin_sura.sql` | Seed Sura (owner, active) — app-level role row; auth.users identity hand-provisioned in dashboard (D37/D49). |
 
 Migrations are forward-only. Don't edit applied migrations; write a new migration that fixes forward.
 
@@ -111,6 +115,7 @@ Migrations are forward-only. Don't edit applied migrations; write a new migratio
 ├── tsconfig.json                      strict TS
 ├── eslint.config.mjs                  Next-recommended config
 ├── postcss.config.js                  v3-style (autoprefixer + tailwindcss)
+├── middleware.ts                       @supabase/ssr session refresh on /admin/* (3a; D50)
 ├── app/
 │   ├── (public)/                      Respondent-facing routes (no auth)
 │   │   ├── page.tsx                   Landing — variant chooser on getSession() (2b-2)
@@ -118,7 +123,13 @@ Migrations are forward-only. Don't edit applied migrations; write a new migratio
 │   │   ├── consent/page.tsx           Consent screen — guards + ConsentForm (2b-3)
 │   │   ├── questionnaire/page.tsx     Wizard host — filter + initialIdx derivation (2b-3)
 │   │   └── submitted/page.tsx         Terminal thank-you (2b-3)
-│   ├── admin/                         (empty; Session 3+)
+│   ├── admin/                         Admin area (auth required, 3a)
+│   │   ├── login/page.tsx             Magic-link login (client; shouldCreateUser:false) (3a)
+│   │   ├── callback/route.ts          PKCE code exchange → /admin (3a)
+│   │   ├── unauthorized/page.tsx      Authenticated-non-admin notice + sign out (3a)
+│   │   └── (protected)/               Guarded subtree (login/callback/unauthorized sit OUTSIDE)
+│   │       ├── layout.tsx             Auth guard: getUser → getCurrentAdmin → redirect tree (3a; D50)
+│   │       └── page.tsx               Auth-proof landing ("Signed in as {name} ({role})") (3a)
 │   ├── api/                           (empty; route handlers go here)
 │   ├── r/[token]/route.ts            Public token entry: RPC → cookies → redirect (2b-2)
 │   ├── globals.css                    Tailwind base + design tokens
@@ -131,17 +142,19 @@ Migrations are forward-only. Don't edit applied migrations; write a new migratio
 │   ├── ConsentForm.tsx                Client consent form — required audio radio (2b-3)
 │   └── QuestionnaireWizard.tsx        Client wizard — autosave, flush-on-boundary, map (2b-3)
 ├── lib/
-│   ├── auth.ts                        getCurrentAdminRole(supabase) — RPC wrapper
+│   ├── auth.ts                        getCurrentAdminRole + getCurrentAdmin(id,name,role) — RPC wrappers (3a)
 │   ├── cookies.ts                     getLang/setLang + getSession/setSession/clearSession(+Cookie) (2b-2/2b-3; D41)
 │   ├── i18n.ts                        Canonical Lang + translations + LANG_PICKER_LABELS (2b-2/2b-3)
 │   ├── actions/
 │   │   ├── setLang.ts                 Server Action wrapping setLang for client use (2b-2)
 │   │   ├── consent.ts                 submitConsent — validate + encrypt_pii + insert (2b-3)
-│   │   └── answers.ts                 saveAnswer (autosave + opened→started) + submitQuestionnaire (2b-3)
+│   │   ├── answers.ts                 saveAnswer (autosave + opened→started) + submitQuestionnaire (2b-3)
+│   │   └── auth.ts                    signOut Server Action (3a)
 │   ├── supabase/
 │   │   ├── server.ts                  createSupabaseServerClient (RSC + Server Actions + admin route handlers)
 │   │   ├── client.ts                  createSupabaseBrowserClient (use client)
 │   │   ├── admin.ts                   createSupabaseAdminClient (service role; throws on browser import)
+│   │   ├── middleware.ts              updateSession — @supabase/ssr token refresh for /admin/* (3a)
 │   │   └── database.types.ts          Generated by `npm run db:types` from live schema
 │   ├── repos/
 │   │   ├── README.md                  Repo pattern doc + PII-required allow-list
@@ -153,17 +166,17 @@ Migrations are forward-only. Don't edit applied migrations; write a new migratio
 │   ├── exports/                       (empty; Session 4 export tooling)
 │   └── encryption.ts                  NOT created — consent action calls admin.rpc("encrypt_pii") directly (one call site)
 ├── supabase/
-│   └── migrations/                    12 timestamped migration files (see §5)
+│   └── migrations/                    14 timestamped migration files (see §5)
 └── docs/
     ├── SCHEMA.md                      Canonical data model
-    ├── DECISIONS.md                   D1-D48 decision history with rationale
+    ├── DECISIONS.md                   D1-D51 decision history with rationale
     ├── CONVENTIONS.md                 TypeScript/SQL/Git/migration conventions
     └── STATUS.md                      Session-by-session build status + Notes
 ```
 
 ---
 
-## 7. Decisions register (D1-D48)
+## 7. Decisions register (D1-D51)
 
 Full text in `docs/DECISIONS.md`. One-line summaries grouped by topic:
 
@@ -245,6 +258,11 @@ Full text in `docs/DECISIONS.md`. One-line summaries grouped by topic:
 - D47: Submit gate enforced server-side over the respondent's visible required set, never client-trusted
 - D48: Public respondent-flow data access uses the service-role admin client (or SECURITY DEFINER), never anon RLS
 
+**Session 3a (D49-D51)**
+- D49: Supabase Auth public signup locked down — only pre-authorized admin emails can authenticate
+- D50: Admin auth architecture — middleware refresh + `(protected)` layout guard; magic-link via built-in email; no enumeration
+- D51: Admin email matching is case-insensitive (`lower()` + CHECK); UNIQUE(email) becomes effectively case-insensitive
+
 ---
 
 ## 8. Conventions to follow
@@ -287,7 +305,7 @@ Full text in `docs/CONVENTIONS.md`. Load-bearing ones the next session needs to 
 - `NEXT_PUBLIC_SITE_URL` — `http://localhost:3000` for dev, `https://karasneh-research.org` for prod
 
 **Naming conventions**
-- Migration files: `YYYYMMDDHHMMSS_name.sql`. Current latest timestamp range: `2026051917000{1..12}`. Next migration would be `…013_*` or later.
+- Migration files: `YYYYMMDDHHMMSS_name.sql`. Current latest timestamp range: `2026051917000{1..14}`. Next migration would be `…015_*` or later.
 - Vault secrets for PII keys: `pii_key_v<N>`, integer suffix (do not use leading zeros — sort is integer-cast).
 - Question codes: `Q1`-`Q14` for main, `F1`-`F4` for feedback.
 - Ref codes (anonymized display IDs): `{CAT_PREFIX}-{NAT_PREFIX}-{SEQ}` (e.g., `OFF-J-04`). Per CONVENTIONS.md "Reference Code Pattern".
@@ -360,22 +378,22 @@ These are in `docs/STATUS.md` Notes section and `docs/DECISIONS.md` D38-D39, but
 
 ---
 
-## 12. What's next: Session 3 (Admin Core)
+## 12. What's next: Session 3b (Invitation management)
 
-**Not yet scoped.** User wants a deliberate planning pass before implementation. Candidate scope (from `docs/STATUS.md` "Session 3 — Admin Core"):
+**Not yet scoped.** User wants a deliberate planning pass before implementation. Session 3 is split like 2b; **3a (admin auth) is done** — see §2. Candidate 3b scope:
 
-- Magic-link auth via Supabase Auth; admin route protection (middleware on `/admin/*`)
-- `lib/tokens.ts` — invitation token minting per D44 (32 random bytes base64url, SHA-256 hashed; plaintext into the email, hash into `invitations.token_hash`). This is the deferred generator referenced by D44; Task #11 (resend = token rotation, user-facing notice) lands with the invitations UI.
-- Invitations manager (create, send, resend/rotate, filter, shareable link)
-- Question editor (the first writer to `questions`; until now questions are SQL-seed-only)
-- Responses list + detail with tagging + researcher notes
-- Overview dashboard with real queries
+- `lib/tokens.ts` — invitation token minting per D44 (32 random bytes base64url, SHA-256 hashed; plaintext into the email, hash into `invitations.token_hash`). This is the deferred generator referenced by D44; Task #11 (resend = token rotation, user-facing notice) lands with the invitations UI. **First writer of invitation PII** → likely the second `encrypt_pii` consumer, so consider extracting `lib/encryption.ts` here (see note below).
+- Invitations manager (create, send, resend/rotate, filter, shareable link) — Owner-only writes through `lib/repos/invitations.ts` (already exists from 2a).
+- Resend wiring for **respondent invitation emails** (auth magic links stay on Supabase built-in email per D50). Keep the sender-domain pre-launch item in view (STATUS.md "Known Open Items").
+- Seed the **two supervisor admins** (readonly) once their emails are known — migration row + dashboard auth.users identities (mirror the 3a Sura bootstrap).
 
-**What Session 2b delivered (the whole respondent half):** invitation link → landing → consent (name encrypted) → paginated questionnaire (EN/AR, autosave, resumption, nationality-gated, forward-lock + map) → server-side submit gate → terminal thank-you, re-entry blocked post-submit. Verified live (12/12 smoke). Session 3 builds the admin half that creates invitations and reads/codes the responses this flow produces.
+Later Session 3 sub-sessions (3c+): question editor (first writer to `questions`), responses list/detail with tagging + researcher notes, overview dashboard with real queries.
 
-**Note on `lib/encryption.ts`:** the planned thin RPC wrapper was NOT created — 2b-3's consent action calls `admin.rpc("encrypt_pii", …)` directly (one call site). Extract a wrapper if/when a second consumer appears (likely Session 3 invitation PII or Session 4 export decrypt).
+**Note on `lib/encryption.ts`:** the planned thin RPC wrapper was NOT created in 2b-3 — the consent action calls `admin.rpc("encrypt_pii", …)` directly (one call site). 3b's invitation minting is the likely second consumer (recipient name/email PII); extract the wrapper then.
 
-When starting Session 3, expect the user to first ask for a scope-narrowing pass (like every prior session). Don't dive into implementation without explicit scope agreement. The established per-file rhythm: decisions surfaced → draft shown → user redlines → save → typecheck/lint/build green → commit; separate commits for separate concerns; deferred doc items batched; probe the live DB before encoding assumptions into migrations.
+**Admin-auth foundation 3b builds on (from 3a):** `getCurrentAdmin()` / `getCurrentAdminRole()` (lib/auth.ts), the `(protected)` layout guard, `/admin/*` middleware refresh, and the `requireRole`-style gating that admin Server Actions will need (to be added — lib/auth.ts already anticipates it in a comment).
+
+When starting 3b, expect the user to first ask for a scope-narrowing pass (like every prior session). Don't dive into implementation without explicit scope agreement. The established per-file rhythm: decisions surfaced → draft shown → user redlines → save → typecheck/lint/build green → commit; separate commits for separate concerns; deferred doc items batched; probe the live DB before encoding assumptions into migrations.
 
 ---
 
