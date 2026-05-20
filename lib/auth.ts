@@ -35,3 +35,37 @@ export async function getCurrentAdminRole(
   }
   return (data ?? null) as AdminRole;
 }
+
+export type CurrentAdmin = {
+  id: string;
+  name: string;
+  role: "owner" | "readonly";
+};
+
+/**
+ * Resolve the full signed-in admin (id, name, role) via the SECURITY
+ * DEFINER `current_admin()` function. Returns null when the caller is not
+ * an active admin (anonymous, signed-in non-admin, pending, or removed).
+ *
+ * MUST be called with the authenticated SERVER client — it carries the
+ * user's JWT, whose email claim `current_admin()` matches against
+ * `admins` (case-insensitively, per D51). The service-role admin client
+ * has no user email claim and would always resolve null.
+ *
+ * `current_admin()` is RETURNS TABLE, so the RPC yields an array; we take
+ * the first (LIMIT 1) row. On RPC error we log and return null so the
+ * route guard treats it as "not an admin" rather than throwing into the
+ * render.
+ */
+export async function getCurrentAdmin(
+  supabase: SupabaseClient<Database>
+): Promise<CurrentAdmin | null> {
+  const { data, error } = await supabase.rpc("current_admin");
+  if (error) {
+    console.error("getCurrentAdmin RPC failed:", error.message);
+    return null;
+  }
+  const row = data?.[0];
+  if (!row) return null;
+  return { id: row.id, name: row.name, role: row.role as "owner" | "readonly" };
+}
