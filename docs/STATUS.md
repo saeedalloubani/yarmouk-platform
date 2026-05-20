@@ -1,12 +1,12 @@
 # Build Status
 
-Last updated: end of Session 2a.
+Last updated: end of Session 2b-2.
 
 ## Where We Are
 
-**Phase**: Foundation built; entering the respondent flow.
+**Phase**: Respondent entry flow live; entering consent + questionnaire.
 
-Session 1 (scaffold + design system) and Session 2a (DB schema + RLS + repo pattern + types) are complete. Production Supabase project is linked and all 9 migrations applied via `supabase db push` with smoke tests passing. Session 2b (encryption helpers + public respondent flow) is next — scoped deliberately in a planning pass before implementation, because Vault setup has its own gotchas.
+Session 1 (scaffold + design system), Session 2a (DB schema + RLS + repo pattern + types), Session 2b-1 (encryption helpers + Pilot V1 seed), and Session 2b-2 (token route + cookies + public-flow landing) are complete. Production Supabase project is linked; 12 migrations applied via `supabase db push` with smoke tests passing. A respondent can now click an invitation link, get an atomically-claimed response row, land on a session-aware bilingual landing page, and switch language. Session 2b-3 (consent page + questionnaire + autosave + `opened`→`started` transition) is next.
 
 A working v3 visual mock exists at `~/Downloads/yarmouk-mock` on the owner's Mac. It demonstrates every screen and interaction. The production build replaces the mock's hardcoded data with real database queries while preserving every visual and behavioral detail.
 
@@ -40,7 +40,7 @@ All 20 pages designed and clickable in the v3 mock:
 
 ## In Progress
 
-Nothing in flight. Session 2b-2 (token route + cookies + public flow) will be scoped in its own planning pass before implementation begins.
+Nothing in flight. Session 2b-3 (consent + questionnaire + autosave) will be scoped in its own planning pass before implementation begins.
 
 ## Done
 
@@ -86,17 +86,28 @@ Nothing in flight. Session 2b-2 (token route + cookies + public flow) will be sc
 - [x] **Decisions locked in**: D38 grep refinement (excludes SQL line-comments — runs cleaner on subsequent audits), D39 (RETURNS TABLE aliasing, applied to encrypt/decrypt review), D40 (compound questions Q2/Q4 code as separate ATLAS.ti units)
 - [x] **SQLSTATE verify-probe pattern established** — see Notes section at bottom; caught a class-38 vs class-39 named-alias confusion that would have broken `decrypt_pii`'s rotation fallback in production
 
-## Next — Session 2b-2 (token route + cookies + public flow)
+### Session 2b-2 — Token route + cookies + public-flow landing
+- [x] **Migration `…012_validate_token_creates_response.sql`** — extends `validate_invitation_token` to atomically INSERT the response row on fresh claim and return `response_id` + `ref_code` (D42). Rewritten as DROP-then-CREATE after `CREATE OR REPLACE` was rejected with SQLSTATE 42P13 (return-type change) — locked in as D45. Three smoke scenarios green (fresh claim, resumption, already-submitted); types regenerated.
+- [x] **`lib/cookies.ts`** — typed `getLang`/`setLang` (`yarmouk_lang`) + `getSession`/`setSession`/`clearSession` (`yarmouk_session`). Session cookie is unsigned; integrity via DB hydration on every `getSession()` read (D41). Uses the admin client for the hydration lookup (responses RLS blocks anon SELECT); read-only by contract.
+- [x] **`lib/i18n.ts`** — 36 translations (mock + 2 inline-mock) + `LANG_PICKER_LABELS`; `Lang` lifted here as canonical, re-exported from `cookies.ts`. Five strings deferred for pre-launch Arabic (see "Known Open Items").
+- [x] **`app/r/[token]/route.ts`** — anon-client RPC, branch on empty/error/success, set cookies, redirect (`/` on success, `/invitation-invalid` on failure). Lang cookie overridden on every entry per D43.
+- [x] **`app/(public)/invitation-invalid/page.tsx`** — terminal bilingual page, no internal navigation, mailto with pre-filled subject.
+- [x] **`app/(public)/page.tsx` + `components/LandingNoSession.tsx` + `components/LandingInvited.tsx`** — server-side variant chooser on `getSession()`: no-session bilingual courtesy page vs invited single-language flow.
+- [x] **`components/LanguageSwitcher.tsx` + `lib/actions/setLang.ts`** — client component with optimistic UI (useTransition + useState, reverts on failure), backed by a Server Action wrapping `setLang` with runtime input validation.
+- [x] **End-to-end smoke passed 6/6** (2026-05-20): token claim, response creation, language switch, D43 resumption override, garbage-token terminal page, no-session landing. Test invitation cleaned up (`inv_left=0`, `resp_left=0`).
+- [x] **Decisions locked**: D41 (unsigned session cookie), D42 (response created inside the RPC), D43 (language resolution + resumption trade-off addendum), D44 (token format), D45 (DROP-then-CREATE for return-type changes).
+
+## Next — Session 2b-3 (consent + questionnaire + autosave)
 
 To be scoped in its own planning pass before implementation. Candidate items (likely subject to revision in the planning pass):
 
-- [ ] `/r/[token]` route handler: call `validate_invitation_token` via RPC, branch on `response_id IS NULL` (fresh) vs not-null (resumption), set cookies (`invitation_id`, `response_id`, `lang`), redirect
-- [ ] Cookie helpers — typed get/set with secure flags, expiry aligned to invitation `expires_at`
 - [ ] `lib/encryption.ts` — thin RPC wrapper around `encrypt_pii` / `decrypt_pii`
-- [ ] Public flow pages: landing + language picker, consent (signature → `encrypt_pii` → `consent_records`), questionnaire (one-at-a-time, required-answer validation, autosave Server Action, question map), submitted
+- [ ] Consent page (`app/(public)/consent/page.tsx`) — 5 sections, signature → `encrypt_pii` → `consent_records` via Server Action
+- [ ] Questionnaire page (`app/(public)/questionnaire/page.tsx`) — one-at-a-time, required-answer validation, autosave Server Action (debounced), question map, `visible_nationalities` gating for Q10–Q13
+- [ ] Submitted page (`app/(public)/submitted/page.tsx`) — thank-you + `clearSession()`
 - [ ] `opened` → `started` status transition on first answer insert (tracked task #10)
-- [ ] EN/AR + RTL working end-to-end
-- [ ] Submission triggers thank-you email + admin notifications (or defer to Session 3 with Resend wiring — TBD)
+- [ ] EN/AR + RTL working end-to-end through the full flow
+- [ ] Submission marks `responses.submitted_at`, transitions status to `submitted`; thank-you email + admin notifications deferred to Session 3 (Resend wiring) — TBD
 
 **End state**: A real invitation link Sura can send to herself, click, complete in EN or AR, and see the response land in the DB.
 
