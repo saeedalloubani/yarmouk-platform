@@ -198,8 +198,8 @@ export async function setSession(input: {
 }
 
 /**
- * Clear both cookies. Used by /submitted page after submission and
- * by any admin "exit session" UI we add later.
+ * Clear both cookies (session + lang). Full reset — e.g. an admin
+ * "exit session" UI we add later.
  *
  * MUST be called from a Route Handler or Server Action.
  */
@@ -207,4 +207,19 @@ export async function clearSession(): Promise<void> {
   const c = await cookies();
   c.delete({ name: SESSION_COOKIE, path: "/" });
   c.delete({ name: LANG_COOKIE, path: "/" });
+}
+
+/**
+ * Clear ONLY the session cookie, preserving the lang cookie. Used at
+ * submission: the response becomes terminal (getSession() already
+ * returns null once submitted_at is set), and we drop the session
+ * cookie for hygiene — but keep the lang cookie so the /submitted
+ * thank-you page still renders in the respondent's language.
+ *
+ * MUST be called from a Route Handler or Server Action (cookie writes
+ * are forbidden during RSC render — this can't run inside the page).
+ */
+export async function clearSessionCookie(): Promise<void> {
+  const c = await cookies();
+  c.delete({ name: SESSION_COOKIE, path: "/" });
 }
