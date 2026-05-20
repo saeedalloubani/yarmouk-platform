@@ -1007,6 +1007,15 @@ export type Database = {
       }
       decrypt_pii: { Args: { p_ciphertext: string }; Returns: string }
       encrypt_pii: { Args: { p_plaintext: string }; Returns: string }
+      log_audit: {
+        Args: {
+          p_action: string
+          p_metadata?: Json
+          p_resource?: string
+          p_severity?: Database["public"]["Enums"]["event_severity"]
+        }
+        Returns: undefined
+      }
       validate_invitation_token: {
         Args: { p_token: string }
         Returns: {
