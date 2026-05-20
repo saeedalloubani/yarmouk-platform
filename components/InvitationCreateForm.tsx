@@ -38,6 +38,7 @@ export default function InvitationCreateForm({
     questionnaireVersionId: versions[0]?.id ?? "",
     expiresAt: defaultExpiry(),
     maxUses: 1,
+    sendEmail: true,
   });
   const [result, setResult] = useState<CreateInvitationResult | null>(null);
   const [copied, setCopied] = useState(false);
@@ -63,19 +64,40 @@ export default function InvitationCreateForm({
 
   // Success view — show the one-time token URL.
   if (result?.ok) {
+    const sendWasRequested = form.sendEmail;
     return (
       <div className="card p-6">
-        <div className="notice-success mb-4">
-          <span>
-            Invitation <span className="mono font-semibold">{result.refCode}</span>{" "}
-            created.
-          </span>
-        </div>
+        {result.emailed ? (
+          <div className="notice-success mb-4">
+            <span>
+              Invitation{" "}
+              <span className="mono font-semibold">{result.refCode}</span> created
+              and emailed to the recipient.
+            </span>
+          </div>
+        ) : sendWasRequested ? (
+          <div className="notice-warn mb-4">
+            <div>
+              <strong>
+                Invitation {result.refCode} created, but the email could not be
+                sent.
+              </strong>{" "}
+              Copy the link below and send it to the recipient manually.
+            </div>
+          </div>
+        ) : (
+          <div className="notice-success mb-4">
+            <span>
+              Invitation{" "}
+              <span className="mono font-semibold">{result.refCode}</span>{" "}
+              created.
+            </span>
+          </div>
+        )}
         <div className="label mb-1">Invitation link — shown once</div>
         <p className="text-[13px] text-muted-strong mb-3">
           Copy this now. It is <strong>not stored and cannot be recovered</strong>;
-          to re-issue, create a new invitation. (Email delivery arrives in a
-          later session.)
+          to re-issue, use Resend (which mints a new link).
         </p>
         <div className="flex items-stretch gap-2">
           <input
@@ -231,6 +253,15 @@ export default function InvitationCreateForm({
         </div>
       </div>
 
+      <label className="flex items-center gap-2 text-[14px] text-ink cursor-pointer pt-1">
+        <input
+          type="checkbox"
+          checked={form.sendEmail}
+          onChange={(e) => set("sendEmail", e.target.checked)}
+        />
+        Send the invitation email now
+      </label>
+
       <div className="flex items-center justify-between gap-4 pt-2">
         <a href="/admin/invitations" className="btn-ghost text-[13px]">
           Cancel
@@ -240,7 +271,7 @@ export default function InvitationCreateForm({
           disabled={pending}
           className="btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          {pending ? "Creating…" : "Create invitation"}
+          {pending ? "Creating…" : form.sendEmail ? "Create & send" : "Create invitation"}
         </button>
       </div>
     </form>

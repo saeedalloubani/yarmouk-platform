@@ -11,6 +11,7 @@ import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentAdmin } from "@/lib/auth";
 import { listInvitations } from "@/lib/repos/invitations";
+import InvitationResendButton from "@/components/InvitationResendButton";
 
 export const dynamic = "force-dynamic";
 
@@ -67,6 +68,9 @@ export default async function InvitationsPage() {
                   <th className="text-start font-semibold px-4 py-2.5">Uses</th>
                   <th className="text-start font-semibold px-4 py-2.5">Expires</th>
                   <th className="text-start font-semibold px-4 py-2.5">Created</th>
+                  {isOwner && (
+                    <th className="text-start font-semibold px-4 py-2.5">Actions</th>
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -91,6 +95,14 @@ export default async function InvitationsPage() {
                     </td>
                     <td className="px-4 py-2.5">{fmtDate(inv.expiresAt)}</td>
                     <td className="px-4 py-2.5">{fmtDate(inv.createdAt)}</td>
+                    {isOwner && (
+                      <td className="px-4 py-2.5 align-top">
+                        <InvitationResendButton
+                          invitationId={inv.id}
+                          refCode={inv.refCode}
+                        />
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
