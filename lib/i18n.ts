@@ -145,6 +145,7 @@ export const translations = {
   },
 
   // ---- submitted ----
+  submissionReceived: { en: "Submission Received", ar: "تم الاستلام" },
   submittedTitle: {
     en: "Thank you for your contribution.",
     ar: "شكراً لمساهمتك.",
@@ -152,6 +153,79 @@ export const translations = {
   submittedBody: {
     en: "Your responses have been recorded. The researcher may follow up by email if any clarification is needed.",
     ar: "تم تسجيل إجاباتك. قد تتواصل معك الباحثة عبر البريد الإلكتروني إذا احتاجت إلى أي توضيح.",
+  },
+
+  // ---- consent (audio section + chrome; Arabic verbatim from mock) ----
+  step1of3: { en: "Step 1 of 3", ar: "خطوة ١ من ٣" },
+  audioSectionTitle: {
+    en: "Audio Recording (optional)",
+    ar: "تسجيل المقابلات (اختياري)",
+  },
+  audioSectionBody: {
+    en: "If administered as an interview, the researcher may request permission to audio-record for transcription.",
+    ar: "إذا تم إجراء الاستبيان كمقابلة، قد تطلب الباحثة الإذن بالتسجيل الصوتي لأغراض النسخ.",
+  },
+  audioAgree: {
+    en: "I agree to be audio-recorded.",
+    ar: "أوافق على التسجيل الصوتي.",
+  },
+  audioDecline: {
+    en: "I do NOT agree to be recorded (written notes only).",
+    ar: "لا أوافق على التسجيل (ملاحظات مكتوبة فقط).",
+  },
+  fullNamePlaceholder: {
+    en: "Your name as it appears officially",
+    ar: "الاسم كما يظهر رسمياً",
+  },
+
+  // ---- questionnaire chrome (Arabic verbatim from mock) ----
+  requiredMark: { en: "* Required", ar: "* مطلوب" },
+  answeredStatus: { en: "Answered", ar: "تم" },
+  answeredCountLabel: { en: "answered", ar: "تمت الإجابة" },
+  writeBeforeContinuing: {
+    en: "Write an answer before continuing",
+    ar: "اكتب إجابة قبل المتابعة",
+  },
+  requiredHintTitle: {
+    en: "This question is required.",
+    ar: "هذا السؤال مطلوب.",
+  },
+  requiredHintBody: {
+    en: 'Please provide an answer before continuing. If you have nothing to add, you may write "N/A" or a brief note.',
+    ar: 'يرجى تقديم إجابة قبل المتابعة. إذا لم يكن لديك إجابة، يمكنك كتابة "لا ينطبق" أو ملاحظة موجزة.',
+  },
+  wordOne: { en: "word", ar: "كلمة" },
+  wordMany: { en: "words", ar: "كلمة" },
+  questionMap: { en: "Question map", ar: "خريطة الأسئلة" },
+  mapLegendAnswered: { en: "Answered", ar: "تمت الإجابة" },
+  mapLegendCurrent: { en: "Current", ar: "حالي" },
+  mapLegendLocked: { en: "Locked", ar: "مقفل" },
+  mapHint: {
+    en: "Circles = pilot feedback questions · Locked questions cannot be skipped to",
+    ar: "الدوائر = أسئلة الملاحظات على النسخة التجريبية · لا يمكن التخطي إلى الأسئلة المقفلة",
+  },
+  completePrevFirst: {
+    en: "Complete previous questions first",
+    ar: "أكمل الأسئلة السابقة أولاً",
+  },
+
+  // ---- net-new interactive strings, no mock Arabic ----
+  // ENGLISH-FALLBACK (ar mirrors en), NOT a visible sentinel. These
+  // surface in error/friction paths (submit-with-blanks warning,
+  // consent save failure) where a bracketed "[Arabic — to be added]"
+  // placeholder would be the worst possible UX — exactly when the
+  // respondent needs to understand what went wrong. Clear English
+  // beats a sentinel; the audience reads English. Real Arabic before
+  // launch (tracked in STATUS.md "Known Open Items"). Principle:
+  // static dead-end strings get a visible placeholder; interactive
+  // in-flow strings get English-fallback.
+  submitMissingTitle: {
+    en: "Please answer all required questions before submitting. Still blank:",
+    ar: "Please answer all required questions before submitting. Still blank:",
+  },
+  consentError: {
+    en: "Could not save your consent. Please try again.",
+    ar: "Could not save your consent. Please try again.",
   },
 } as const;
 
