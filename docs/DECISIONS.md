@@ -528,6 +528,32 @@ const hash = createHash("sha256").update(plaintext).digest("hex");
 
 **Verified, not assumed:** 2b-3's consent flow is the first code to call `encrypt_pii` via the service-role client. A `has_function_privilege` probe (`supabase db query --linked`) confirmed `service_role` already holds EXECUTE on `encrypt_pii`/`decrypt_pii` despite migration 010's bare `GRANT … TO authenticated` — Supabase grants `service_role` broader function privileges than the migration text implies. No grant migration was needed; the probe overturned a confident static read.
 
+### D49. Supabase Auth public signup is locked down — only pre-authorized admin emails can authenticate
+
+**Decision:** Signups are disabled in the Supabase dashboard; the (eventually 3) admin `auth.users` identities are hand-provisioned via the dashboard; `signInWithOtp` uses `shouldCreateUser: false`.
+
+**Why:** Open signup would be an unauthenticated email-send primitive (abuse, and it shares the rate limit with real logins), would pollute the `auth.users` audit surface of an ethics-reviewed study, and would make the app-layer `current_admin_role()` gate the SOLE barrier to data — a single point of failure. Locking signup turns any future guard bug into a non-event; the app-layer gate remains defense-in-depth, not the front door.
+
+**Layers (four):** (1) dashboard signups disabled; (2) admin `auth.users` identities pre-created; (3) `shouldCreateUser:false` in the login call; (4) the `admins` allow-list — an authenticated identity with no matching active `admins` row resolves to role NULL → `/admin/unauthorized`. The `auth.users` allow-list is the *authentication* gate; `admins` is the *authorization* gate; they're separate lists kept aligned by hand for ~3 people.
+
+**Revisit:** if admin count ever needs to scale beyond a hand-managed allow-list.
+
+### D50. Admin auth architecture — middleware refresh + `(protected)` layout guard
+
+**Decision:** `middleware.ts` runs the `@supabase/ssr` session refresh on `/admin/*` (refresh only, no redirects). `app/admin/(protected)/layout.tsx` (Server Component) owns the authorization decision tree: no session → `/admin/login`; authenticated non-admin → `/admin/unauthorized`; active admin → render. `login` / `callback` / `unauthorized` live OUTSIDE the `(protected)` route group so an unauthenticated bounce can't loop. `getCurrentAdmin` uses the authenticated server client — the service-role client has no user email claim and would resolve role NULL. Passwordless magic-link / OTP via Supabase's BUILT-IN email; Resend is reserved for respondent invitation emails (later). Login responses don't reveal whether an email is an admin (no enumeration).
+
+**Why split middleware vs layout:** the role check needs a DB RPC and the authenticated server client; running it in the layout (Node runtime, DB access) keeps it off every edge request and gives a single source of redirect truth. Middleware's only job is token refresh so the server client sees a fresh session.
+
+**Magic-link transport:** PKCE `?code=` exchange in `/admin/callback` is the primary path; the `token_hash` + `verifyOtp` flow (one email-template tweak) is the documented fallback if the PKCE code-verifier cookie isn't shared (see RUNBOOK.md "Admin auth bootstrap" + the callback route comment).
+
+### D51. Admin email matching is case-insensitive (`lower()` + CHECK), addressing the 2a casing risk
+
+**Decision:** `current_admin_role` / `current_admin_id` / `current_admin` compare `lower(email) = lower(auth.jwt() ->> 'email')`; `admins.email` carries `CHECK (email = lower(email))` to enforce lowercase storage.
+
+**Why:** the JWT email claim's casing can't be trusted to match stored email; a silent case mismatch would deny a legitimate admin (the risk 2a flagged). `lower()` is chosen over `citext` to avoid the extension-operator/`search_path` gotcha (D38) inside SECURITY DEFINER functions — `lower()` is a `pg_catalog` builtin, always resolvable under the locked `search_path`.
+
+**UNIQUE side-effect:** because the CHECK forces every stored email to lowercase, the existing `UNIQUE(email)` constraint becomes effectively case-insensitive — two rows can no longer differ only by case (e.g. `Sura@x` is rejected at insert; only `sura@x` is storable), so a case-variant duplicate admin can't exist.
+
 ## Out of Scope (Explicitly)
 
 - **AI translation** between EN/AR. Button exists in mock as placeholder; clicking does nothing. Real translation would require GPT-4 or DeepL API; deferred.

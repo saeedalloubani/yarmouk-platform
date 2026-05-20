@@ -1,6 +1,29 @@
 # Operations Runbook
 
-Manual steps a human runs outside the codebase — Vault key setup, key rotation, disaster recovery. Migrations and scripts handle everything else. Decision rationale for these operations lives in `docs/DECISIONS.md` (D36 covers the Vault model; D4 covers what's encrypted and why).
+Manual steps a human runs outside the codebase — Vault key setup, key rotation, disaster recovery, admin auth bootstrap. Migrations and scripts handle everything else. Decision rationale for these operations lives in `docs/DECISIONS.md` (D36 covers the Vault model; D4 covers what's encrypted and why; D49/D50/D51 cover admin auth).
+
+## Admin auth bootstrap (Session 3a)
+
+Migrations seed the `admins` allow-list **row** (app-level role data), but do NOT create Supabase Auth identities. Provision those by hand in the dashboard. Per D49, signup is locked down — only pre-created identities can ever sign in.
+
+**One-time dashboard steps:**
+
+1. **Disable signups.** Authentication → Sign In / Providers → turn **"Allow new users to sign up" OFF**. (Belt-and-suspenders with `shouldCreateUser:false` in the login code.)
+2. **Pre-create the admin identity.** Authentication → Users → **Add user** → `sjkarasneh24@eng.just.edu.jo`, **auto-confirm**. Dashboard "Add user" bypasses the signup toggle, so step 1 and step 2 are order-independent — what matters is that the user **exists before first login** (with `shouldCreateUser:false`, login can't create it). Supervisors (two readonly admins) are added the same way in Session 3b once their emails are known, and seeded into `admins` by that session's migration.
+3. **Redirect URLs.** Authentication → URL Configuration → Redirect URLs → add `http://localhost:3000/admin/callback` and `https://karasneh-research.org/admin/callback` (plus the Vercel preview URL if previews are used).
+
+After these: `npm run dev`, go to `/admin/login`, enter the email, click the magic link → `/admin/callback` exchanges it → `/admin` shows "Signed in as Sura Karasneh (owner)".
+
+**PKCE fallback (only if the magic link fails at `/admin/callback`):**
+
+The default email template uses a `?code=` link that the callback exchanges via `exchangeCodeForSession`. `@supabase/ssr` stores the PKCE code-verifier in a cookie shared with the server callback; if that cookie isn't present for some flow, the exchange fails and the user is bounced to `/admin/login?error=auth`. The fix (no code-verifier needed):
+
+1. Authentication → Email Templates → **Magic Link**: change the link to
+   `{{ .SiteURL }}/admin/callback?token_hash={{ .TokenHash }}&type=email`
+2. In `app/admin/callback/route.ts`, read `token_hash` + `type` and call
+   `await supabase.auth.verifyOtp({ type, token_hash })` instead of `exchangeCodeForSession(code)`.
+
+Build/keep the code-exchange path first; switch only if smoke fails. (Also noted in the callback route comment.)
 
 ## First-time setup: Vault keys
 
