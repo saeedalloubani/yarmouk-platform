@@ -68,6 +68,14 @@ Shared components in `/components/`. Shared logic in `/lib/`.
 - **Enum values in DB**: `snake_case` (`'officials'`, `'main_officials_jordanian'`).
 - **Enum values in TS**: match the DB. Don't translate to PascalCase.
 
+## Data modeling
+
+- **`invitations.status` is a denormalized convenience column** for admin-facing UIs and reporting. The authoritative respondent state machine lives in the underlying columns: `responses` (existence, `started_at`, `submitted_at`, `is_locked`) plus `invitations.expires_at` and `invitations.use_count`.
+- **Any code making a correctness decision** — gating access, deciding resumption vs fresh claim, determining whether a session is valid — **MUST read the underlying state, not `status`.** `status` can lag the true state across transactional windows.
+- Examples in the codebase:
+  - `getSession()` in `lib/cookies.ts` checks `is_locked` + `submitted_at` + `expires_at` directly, never `status`.
+  - `validate_invitation_token` derives its three return paths from `use_count`, `max_uses`, and the existence / `submitted_at` of the response row, updating `status` as a side effect rather than reading it as a source of truth.
+
 ## Supabase Clients
 
 Three factories live in `lib/supabase/`. Pick the right one:

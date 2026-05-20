@@ -421,6 +421,8 @@ Application code calls these via `supabase.rpc(...)`. One RPC round-trip per PII
 
 **Implication:** The `/r/[token]` route handler always calls `setLang(row.language)` unconditionally. `getLang()` reads the cookie with `'en'` as the only fallback. The LanguageSwitcher writes the cookie + `router.refresh()`. No middleware, no header sniffing.
 
+**Known trade-off:** if a respondent switches language mid-flow via the LanguageSwitcher, then closes the browser and re-enters through the email link, the lang cookie resets to the invitation's `preferred_language` (the override on `/r/[token]` entry runs on every visit, including resumption). This is intentional — the email link is the canonical reset anchor. Preserving a mid-flow language choice across resumption would create worse failure modes: a shared browser, an accidental switcher click, or a second invitation with a different `preferred_language` could leave the cookie authoritative over the invitation, producing language-chrome-vs-content mismatches (e.g., English UI wrapping Arabic answers). Verified in the 2b-2 manual smoke (test f): mid-flow switch to Arabic, re-entry via token, page correctly reset to English with no new response row and `use_count` unchanged.
+
 ### D44. Invitation token plaintext format: 32 random bytes, base64url-encoded
 
 **Decision:** Every invitation token is generated as exactly 32 cryptographically random bytes, encoded as base64url without padding (43 characters, URL-safe, no `+`, `/`, or `=`). Stored as the SHA-256 hex digest in `invitations.token_hash`. Plaintext exists only at mint-time and in the recipient's email inbox.
