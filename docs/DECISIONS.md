@@ -554,6 +554,24 @@ const hash = createHash("sha256").update(plaintext).digest("hex");
 
 **UNIQUE side-effect:** because the CHECK forces every stored email to lowercase, the existing `UNIQUE(email)` constraint becomes effectively case-insensitive — two rows can no longer differ only by case (e.g. `Sura@x` is rejected at insert; only `sura@x` is storable), so a case-variant duplicate admin can't exist.
 
+### D52. ref_code is free-text (format-guided), with `UNIQUE` as the duplicate guard
+
+**Decision:** The invitation `ref_code` (the pseudonymous display ID, D5 — e.g. `OFF-J-04`) is entered as free text by the owner in the create form, validated for shape (letters/digits/dashes, non-empty) but not for strict scheme-matching. The `UNIQUE(ref_code)` constraint is the duplicate guard; the create action maps `23505` → `ref_code_taken`.
+
+**Why:** auto-generating the sequence number (`{CAT}-{NAT}-{SEQ}`) means a count query per category+nationality with a race on `SEQ` — more machinery than minting needs, and it would lock Sura into one numbering scheme. Free text lets her match her own records; the `UNIQUE` constraint makes a collision a clean, recoverable error rather than a silent dup. Auto-generation is a clean future enhancement if hand-typing becomes tedious.
+
+### D53. The plaintext invitation token is surfaced exactly once, never stored/logged/in a URL
+
+**Decision:** On invitation create, the plaintext token is returned by the Server Action and rendered once as the `/r/<token>` URL on the success view (3b-i) — with a "shown once, not recoverable" notice — or emailed (3b-ii). It is never persisted (only the SHA-256 `token_hash` is, per D44), never written to logs, and never placed in a page URL or query string (which would leak it into browser history).
+
+**Why:** the token is a bearer credential granting access to a respondent's questionnaire + their encrypted PII. Minimizing its lifetime and surface area is the whole point of storing only the hash (D44). Re-issuing a link means minting a new token (resend = rotation, 3b-ii) — there is deliberately no way to recover a lost plaintext.
+
+### D54. Admin mutations are audited via a SECURITY DEFINER `log_audit()` function
+
+Admin mutations are audited via a SECURITY DEFINER `log_audit()` function granted to `authenticated`. It bypasses the `audit_log` RLS insert restriction while `auth.jwt()` inside still resolves the caller's email, so the `audit_log_fill_actor` trigger snapshots the ACTING OWNER (not `'system'`). `lib/audit.ts` wraps it; every admin mutation calls it before returning. This resolves the RLS-vs-trigger actor-attribution tension (service-role insert → mis-attributed `'system'`; authenticated insert → blocked by RLS).
+
+**Pattern established in 3b-i:** the create action calls `logAudit()` AFTER the mutation commits (auditing a completed action), as a separate statement — deliberately NOT one transaction with the insert, so an audit hiccup can't roll back a minted credential. Security-relevant *refusals* are also audited: a non-owner reaching the create gate logs an `invitation.create.forbidden` `warn` row before being refused. Audit `metadata` carries non-PII context only — never the token, name, or email.
+
 ## Out of Scope (Explicitly)
 
 - **AI translation** between EN/AR. Button exists in mock as placeholder; clicking does nothing. Real translation would require GPT-4 or DeepL API; deferred.

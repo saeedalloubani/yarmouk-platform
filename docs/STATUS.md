@@ -40,7 +40,7 @@ All 20 pages designed and clickable in the v3 mock:
 
 ## In Progress
 
-Nothing in flight. **Session 2b is complete** — the full public respondent flow (landing → consent → questionnaire → autosave → submit) is operational and verified live. Session 3 (admin UI: auth, invitation minting, question editor) will be scoped in its own planning pass before implementation begins.
+Nothing in flight. **Session 2b** (public respondent flow) and **Session 3a** (admin auth) and **3b-i** (invitation minting + list + create + audit) are complete and verified live. Next is **Session 3b-ii** (Resend invitation emails + resend/token-rotation), scoped in its own planning pass before implementation begins.
 
 ## Done
 
@@ -107,11 +107,22 @@ Nothing in flight. **Session 2b is complete** — the full public respondent flo
 - [x] **All 12 smoke tests passed against the live DB** (2026-05-20): token→consent→eager-response (A), consent gate (B), encryption roundtrip (C), Jordanian 14-q map without Q10–Q13 (D), autosave + status flip (E), EDGE-1 flush (F), resumption at first-unanswered (G), incomplete-blocked (H), finalize (I), post-submit re-entry blocked (J), Syrian 18-q map with Q10–Q13 (K), language-switch-position + EDGE-1.5 flush (L). Test invitations cleaned up, cascade confirmed 0 leftover.
 - [x] **Decisions locked**: D46 (one-per-page wizard, derived position), D47 (server-side submit gate), D48 (admin-client public-flow access).
 
-## Next — Session 3 (Admin Core)
+### Session 3a — Admin auth + route protection
+- [x] **Magic-link / OTP sign-in** via Supabase built-in email — `app/admin/login` (`signInWithOtp`, `shouldCreateUser:false`, no enumeration), `app/admin/callback` (PKCE code exchange), `lib/actions/auth.ts` (`signOut`). Signup locked down (D49).
+- [x] **Route protection** — `app/admin/(protected)/layout.tsx` authorization guard (getUser → getCurrentAdmin → redirect tree) + `middleware.ts`/`lib/supabase/middleware.ts` session refresh on `/admin/*` (D50). `login`/`callback`/`unauthorized` sit outside the guarded group.
+- [x] **Migration 013** — case-insensitive `current_admin_role`/`current_admin_id` + new `current_admin()` (id,name,role) + `CHECK (email = lower(email))` (D51). **Migration 014** — Sura owner seed (auth.users identity hand-provisioned in dashboard).
+- [x] **8/8 admin-auth smoke tests** green against live DB. Decisions: D49, D50, D51.
 
-**Session 2b is COMPLETE** (2a + 2b-1 + 2b-2 + 2b-3). The full public respondent flow works end to end: a real invitation link → landing → consent → paginated questionnaire (EN/AR, autosave, resumption, nationality-gated) → submit → terminal thank-you, with re-entry correctly blocked after submission. Verified live.
+### Session 3b-i — Invitation minting + list + create
+- [x] **`lib/tokens.ts`** — `mintInvitationToken()` per D44 (32 random bytes → base64url; SHA-256 hex hash; plaintext never stored).
+- [x] **Invitation create** — `lib/actions/invitations.ts` (`createInvitationAction`): owner gate (app check + RLS backstop + forbidden-attempt audit) → zod validate → mint → `encrypt_pii` via the owner's authenticated client → insert → audit → return one-time `/r/<token>` URL (D52, D53). `components/InvitationCreateForm.tsx` + `app/admin/(protected)/invitations/new/page.tsx` (owner-asserted, loads active versions).
+- [x] **Invitation list** — `app/admin/(protected)/invitations/page.tsx`: existing repo role-branch (owner→base, readonly→redacted), non-PII columns only, owner-only "+ New".
+- [x] **Audit infrastructure** — **Migration 015** `log_audit()` (SECURITY DEFINER, granted to authenticated; trigger snapshots the acting owner, not `'system'`) + `lib/audit.ts` wrapper (D54). Audit is wired from the **first** admin mutation, not retrofitted.
+- [x] **6/6 smoke checks** green against live DB (2026-05-20): mint+encrypt+insert with decrypt roundtrip + hash_len=64; audit actor = owner (not `'system'`), non-PII metadata; minted link drove the live respondent flow (sent→opened, use_count 0→1); ref_code uniqueness → `ref_code_taken`; list role-branch + owner-gated "+ New"; owner-gate refuses readonly (UX + route layers). Smoke data cleaned, 0 leftover. Decisions: D52, D53, D54.
 
-Next is the **admin side** — see the Session 3 subsection below. Headline items: magic-link auth, admin route protection, invitation minting (`lib/tokens.ts` per D44 — 32 random bytes base64url, SHA-256 hashed), the question editor, and the responses list/detail with tagging. Will be scoped in its own planning pass before implementation.
+## Next — Session 3b-ii (invitation emails + resend/rotation)
+
+**Session 3 is split** (like 2b): 3a (admin auth) + 3b-i (mint/list/create) are **done**; 3b-ii is next. 3b-ii wires **Resend** for respondent invitation emails (the minted `/r/<token>` URL goes into the email instead of the screen), plus the **resend = token-rotation** flow (Task #11 — mint new, rotate `token_hash`, old link dies). Land the `NEXT_PUBLIC_SITE_URL` hardening (Known Open Items) **before** 3b-ii emails anything, and switch the Resend sender off `onboarding@resend.dev`. Later sub-sessions (3c+): responses list/detail with tagging + researcher notes, question editor, overview dashboard.
 
 ## After That (Sessions 3–7)
 
@@ -189,6 +200,9 @@ _(All of Session 2 — 2a, 2b-1, 2b-2, 2b-3 — is now in "Done" above. The publ
 | **DEV ADMIN ACCOUNT — remove before launch (BLOCKER)** | Pre-launch blocker | `salloubani@cybercorrelate.com` is seeded as a **second `owner`** for the duration of the build (dev convenience + backup login). Added out-of-band (live DB + dashboard auth user), **NOT** in any migration — so a from-migrations rebuild never includes it, and the repo seed history stays clean (014 = Sura only). **Before launch MUST remove both halves:** (1) `DELETE FROM admins WHERE email='salloubani@cybercorrelate.com';` and (2) delete the matching `auth.users` identity in the dashboard. End state: Sura is the sole `owner`. Security blocker — do not launch with a second owner the researcher didn't authorize. |
 | Resend sender domain | Pre-launch | Auth magic links use Supabase's built-in email (fine for the build). Respondent invitation emails (Session 3b+) will use Resend — before launch, verify the real sending domain (SPF/DKIM/DMARC on `karasneh-research.org`) and switch the sender OFF `onboarding@resend.dev`. The `resend.dev` test sender only delivers to verified addresses, so real invitees wouldn't receive anything. (Overlaps the Session 7 "Resend domain authentication" item — this row is the explicit "don't ship the test sender" reminder.) |
 | Supervisor admins (2 × readonly) | Session 3b | Two supervisor admins (Dr. Mutawakkil Obeidat, Dr. Virginia Tice) still need seeding — both `admins` rows (readonly, active) via a 3b migration AND their `auth.users` identities provisioned in the dashboard — once their emails are known. |
+| **HARDENING — `NEXT_PUBLIC_SITE_URL` guard (before 3b-ii)** | Before 3b-ii | The create action builds the token URL as `${NEXT_PUBLIC_SITE_URL}/r/<token>`; when the env var is unset it renders `undefined/r/...` rather than failing (caught in 3b-i smoke; added to `.env.local`). Harmless locally, but in production a missing env var would mint **broken links emailed to real officials**. Fix: throw a clear error at mint time if `NEXT_PUBLIC_SITE_URL` is unset. MUST land before 3b-ii sends any email. |
+| forbidden-attempt audit verification | Session 3b | `invitation.create.forbidden` (`warn`) audit row is built and composed from live-verified pieces, but not yet observed firing — the page guard bounces a readonly admin before the action runs. Verify the row fires once a real readonly supervisor exists (seed in 3b). |
+| InvitationCreateForm Cancel/Back use `<a href>` | Optional polish | Cosmetic — swap to `<Link>` for client-side nav consistency. Lint passes as-is (sibling-route links, not flagged). |
 
 ## Risks to Watch
 
