@@ -1,6 +1,6 @@
 # Task State — Handoff Snapshot
 
-Last updated: end of Session 3b-ii (2026-05-20) — invitation email + resend live.
+Last updated: end of Session 3c-i (2026-05-20) — responses list + detail (PII-redaction boundary) live.
 
 Read this first if you're picking up the project cold. It's a synthesis of where we are, what's been decided, and what's next. The canonical docs for each topic are linked inline — when this doc and a canonical doc disagree, the canonical doc wins.
 
@@ -21,11 +21,11 @@ See `CLAUDE.md` for the framing, `docs/STATUS.md` for build status, `docs/DECISI
 
 ## 2. Where we are right now
 
-**Session 2b COMPLETE** (full public respondent flow), **3a COMPLETE** (admin auth), **3b COMPLETE** (invitations — 3b-i mint/list/create + 3b-ii email/resend) — all verified live. 2b: invitation link → `/r/[token]` → landing → consent (name encrypted) → paginated questionnaire (EN/AR, autosave, resumption, nationality-gated, forward-lock + map) → server-side submit gate → terminal thank-you, re-entry blocked post-submit. 3a: magic-link/OTP sign-in via Supabase built-in email (signup locked down, D49), `(protected)` layout guard + `/admin/*` session-refresh middleware (D50), case-insensitive email matching (D51), `current_admin()`, Sura owner seed. 3b-i: `lib/tokens.ts` mint (D44), owner-gated invitation create (encrypt_pii via the authenticated client, one-time `/r/<token>` URL — D52/D53), invitation list (repo role-branch, non-PII columns), **admin-mutation audit from mutation #1** via `log_audit()` SECURITY DEFINER + `lib/audit.ts` (D54). 3b-ii: `buildInvitationUrl()` SITE_URL guard, send-at-create (optional, failure benign), `resendInvitationAction` (D56 response-aware rotation: submitted→block / in-progress→resume re-send work-preserved / none→fresh), bilingual email via Resend API (D55; EN final, AR→EN fallback). 8/8 (3a) + 6/6 (3b-i) + 5/5 (3b-ii) smoke tests passed against the live DB (2026-05-20); production cleaned back to 0/0/0. Migrations 013–015 applied (count → 15; **3b-ii shipped no migration** — app-code only). New deps: `zod` (3b-i), `resend` (3b-ii).
+**Session 2b COMPLETE** (full public respondent flow), **3a COMPLETE** (admin auth), **3b COMPLETE** (invitations — 3b-i mint/list/create + 3b-ii email/resend), **3c-i COMPLETE** (responses list + detail — PII-redaction boundary) — all verified live. 2b: invitation link → `/r/[token]` → landing → consent (name encrypted) → paginated questionnaire (EN/AR, autosave, resumption, nationality-gated, forward-lock + map) → server-side submit gate → terminal thank-you, re-entry blocked post-submit. 3a: magic-link/OTP sign-in via Supabase built-in email (signup locked down, D49), `(protected)` layout guard + `/admin/*` session-refresh middleware (D50), case-insensitive email matching (D51), `current_admin()`, Sura owner seed. 3b-i: `lib/tokens.ts` mint (D44), owner-gated invitation create (encrypt_pii via the authenticated client, one-time `/r/<token>` URL — D52/D53), invitation list (repo role-branch, non-PII columns), **admin-mutation audit from mutation #1** via `log_audit()` SECURITY DEFINER + `lib/audit.ts` (D54). 3b-ii: `buildInvitationUrl()` SITE_URL guard, send-at-create (optional, failure benign), `resendInvitationAction` (D56 response-aware rotation: submitted→block / in-progress→resume re-send work-preserved / none→fresh), bilingual email via Resend API (D55; EN final, AR→EN fallback). 3c-i: responses list (ref_code-keyed, identity-free, invitation context via the role-routed repo joined **in memory** — never a PostgREST embed onto a PII base table, which would leak ciphertext to readonly) + response detail (**null-driven redaction**: `ciphertext ? decrypt_pii : "Redacted"`, zero page-level role conditionals; `getVisibleQuestions` nationality-filtered + answers; consent verification; independent readonly banner). 8/8 (3a) + 6/6 (3b-i) + 5/5 (3b-ii) smoke tests + 3/3 (3c-i: owner / readonly / back) passed against the live DB (2026-05-20); production cleaned back to 0/0/0. Migrations 013–015 applied (count → 15; **3b-ii and 3c-i shipped no migration** — app-code only). New deps: `zod` (3b-i), `resend` (3b-ii).
 
 **Dev-admin note:** `salloubani@cybercorrelate.com` is seeded live as a SECOND `owner` for the build (out-of-band, not in any migration). Pre-launch removal blocker — tracked in `docs/STATUS.md` "Known Open Items".
 
-**Next: Session 3c (responses list/detail + tagging)** — Session 3 split: 3a (auth) done, 3b (invitations) done, 3c (responses) next, question editor + overview dashboard later. 3c builds the analysis side: responses list, response detail (answers + tags + researcher notes), the tagging panel that seeds ATLAS.ti starter codes (D19). Admin-readable (owner full, readonly via redacted views); admin mutations audit via `log_audit` (D54). Still pending from 3b: seed the two supervisor admins (readonly) once emails are known (also unblocks observing the `invitation.*.forbidden` audit rows). Not yet scoped; deliberate planning pass first.
+**Next: Session 3c-ii (tagging + researcher notes)** — Session 3 split: 3a (auth) done, 3b (invitations) done, 3c-i (responses list + detail) done, 3c-ii (tagging + researcher notes) next, question editor + overview dashboard later. 3c-ii adds the coding layer to the response detail: **tags** (owner-writable / supervisor-readable; apply → ATLAS.ti starter codes, D19) and **researcher_notes** (owner-only, one per response) — both mutations, both audit via `log_audit` (D54). Still pending from 3b: seed the two supervisor admins (readonly) once emails are known (also unblocks observing the `invitation.*.forbidden` audit rows). Not yet scoped; deliberate planning pass first.
 
 **Nothing is in flight.** No background processes, no timers, no scheduled work. The repo is in a clean state: working tree matches `origin/main`.
 
@@ -131,9 +131,12 @@ Migrations are forward-only. Don't edit applied migrations; write a new migratio
 │   │   └── (protected)/               Guarded subtree (login/callback/unauthorized sit OUTSIDE)
 │   │       ├── layout.tsx             Auth guard: getUser → getCurrentAdmin → redirect tree (3a; D50)
 │   │       ├── page.tsx               Auth-proof landing ("Signed in as {name} ({role})") (3a)
-│   │       └── invitations/           Invitations admin (3b-i)
-│   │           ├── page.tsx           List — repo role-branch, non-PII columns, owner "+ New" + Resend column (3b-i/3b-ii)
-│   │           └── new/page.tsx       Create — owner-asserted; loads active versions; renders the form
+│   │       ├── invitations/           Invitations admin (3b-i)
+│   │       │   ├── page.tsx           List — repo role-branch, non-PII columns, owner "+ New" + Resend column (3b-i/3b-ii)
+│   │       │   └── new/page.tsx       Create — owner-asserted; loads active versions; renders the form
+│   │       └── responses/             Responses admin (3c-i)
+│   │           ├── page.tsx           List — ref_code-keyed, identity-free, in-memory join via role-routed repos (3c-i)
+│   │           └── [id]/page.tsx      Detail — null-driven PII redaction; getVisibleQuestions + answers; consent verify (3c-i)
 │   ├── api/                           (empty; route handlers go here)
 │   ├── r/[token]/route.ts            Public token entry: RPC → cookies → redirect (2b-2)
 │   ├── globals.css                    Tailwind base + design tokens
@@ -173,7 +176,8 @@ Migrations are forward-only. Don't edit applied migrations; write a new migratio
 │   │   ├── recordings.ts              Owner→base, Readonly→recordings_redacted
 │   │   ├── consent.ts                 Owner repos + public-flow helpers (consentExists/insert) (2b-3)
 │   │   ├── questions.ts               Public-flow getVisibleQuestions (nationality filter; D48) (2b-3)
-│   │   └── answers.ts                 Public-flow getAnswersMap/getAnsweredQuestionIds/upsertAnswer (2b-3)
+│   │   ├── answers.ts                 Public-flow getAnswersMap/getAnsweredQuestionIds/upsertAnswer (2b-3)
+│   │   └── responses.ts               Admin non-PII reads (list/get + answer counts/details); no role branch (3c-i)
 │   ├── exports/                       (empty; Session 4 export tooling)
 │   └── encryption.ts                  NOT created — consent action calls admin.rpc("encrypt_pii") directly (one call site)
 ├── supabase/
@@ -395,21 +399,22 @@ These are in `docs/STATUS.md` Notes section and `docs/DECISIONS.md` D38-D39, but
 9. **`validate_invitation_token` is resumption-aware.** Don't assume a successful call means "fresh response" — check the returned `response_id`. Null = fresh, non-null = resume.
 10. **Email resend requires token rotation** (since plaintext is never stored). Mint new plaintext, hash it, UPDATE `invitations.token_hash`. The old link stops working — intentional, documented in Task #11 reminder.
 11. **`CREATE OR REPLACE FUNCTION` can't change return type.** Adding/removing/reordering a `RETURNS TABLE` column (or changing a scalar return type) is rejected at push time with SQLSTATE 42P13. Use `DROP FUNCTION IF EXISTS …(exact-arg-types); CREATE FUNCTION …` + restate REVOKE/GRANT. Check `pg_depend` first to confirm no dependents. Body-only changes still use `CREATE OR REPLACE`. (D45, caught on migration 012.)
+12. **Redaction is at the VIEW layer — never PostgREST-embed a PII base table.** Readonly admins keep a base-table SELECT policy on the PII tables (`invitations_readonly_select` etc.) — that policy is what lets the `security_invoker` redacted views return rows. A PostgREST embed like `responses.select("*, invitations(...)")` resolves against the **base** `invitations`, not `invitations_redacted`, handing readonly the ciphertext PII. Always fetch PII context (invitation/consent identity) through the role-routed repos (`lib/repos/{invitations,consent}.ts`) and join in memory by id. (Session 3c-i.)
 
 ---
 
-## 12. What's next: Session 3c (responses list/detail + tagging)
+## 12. What's next: Session 3c-ii (tagging + researcher notes)
 
-**Not yet scoped.** User wants a deliberate planning pass before implementation. Session 3 is split like 2b: **3a (admin auth)** and **3b (invitations — 3b-i mint/list/create + 3b-ii email/resend)** are done — see §2. Candidate 3c scope:
+**Not yet scoped.** User wants a deliberate planning pass before implementation. Session 3 is split like 2b: **3a (admin auth)**, **3b (invitations — 3b-i mint/list/create + 3b-ii email/resend)**, and **3c-i (responses list + detail)** are done — see §2. 3c-i shipped the read side with the PII-redaction boundary proven live (null-driven redaction via the role-routed repos + `current_admin_role()`; the embed trap avoided — see §11 watch-out 12). Candidate 3c-ii scope:
 
-- **Responses list** — all admins; owner→base, readonly→redacted views. Filters (category, nationality, status). Pseudonymous `ref_code` display (D5), not names.
-- **Response detail** — the answers (per question), the consent record, recordings status; the **tagging panel** (apply tags → ATLAS.ti starter codes, D19) and **researcher notes** (`researcher_notes`, one per response). Owner-only writes; audited via `logAudit` (D54).
-- **Overview dashboard** (maybe here, maybe its own pass) — real KPI queries (counts by status/category, completion).
+- **Tagging panel** on the response detail — apply/remove `tags` on a response (`response_tags`); tags become ATLAS.ti starter codes (D19). Tags are owner-writable / supervisor-readable (both roles SELECT per RLS; owner-only INSERT/DELETE).
+- **Researcher notes** — `researcher_notes`, one per response, owner-only write.
+- Both are **mutations** → both audit via `logAudit` (D54). The `requireRole`-style owner-gate helper (still anticipated in `lib/auth.ts`) is the natural extraction point: create/resend currently inline the owner check + forbidden-audit, and tag/note writes will all need the same gate.
 - **Carried from 3b:** seed the **two supervisor admins** (readonly) once emails are known — migration row + dashboard auth.users identities (mirror the 3a Sura bootstrap); this also unblocks observing the `invitation.*.forbidden` `warn` audit rows fire (a real readonly account is needed to trigger them).
 
-Later: question editor (first writer to `questions` — until now SQL-seed-only), exports (Session 4), recordings/import (Session 6).
+Later: overview dashboard (real KPI queries), question editor (first writer to `questions` — until now SQL-seed-only), exports (Session 4), recordings/import (Session 6).
 
-**Note on `lib/encryption.ts`:** still NOT created — `encrypt_pii` has two call sites (consent action → service-role admin client; invitation create → authenticated owner client) + `decrypt_pii` one (resend → owner client), each a one-liner `rpc(...)`. Different clients, so a shared wrapper buys little; extract only if a third same-client consumer appears.
+**Note on `lib/encryption.ts`:** still NOT created — `encrypt_pii` has two call sites (consent action → service-role admin client; invitation create → authenticated owner client); `decrypt_pii` now has two (resend action + response detail page, both the authenticated owner client; the detail page wraps it in a local `decryptPii` helper). The two authenticated `decrypt_pii` sites are the first plausible shared-wrapper candidate — deferred until a third appears or the local helper needs reuse. Each is a one-liner `rpc(...)`, and the encrypt/decrypt split across different clients means a single shared module still buys little.
 
 **Admin foundation 3c builds on:** `getCurrentAdmin()`/`getCurrentAdminRole()` (lib/auth.ts), the `(protected)` guard, `/admin/*` middleware refresh, the role-branching repos, and `lib/audit.ts` (D54 — every admin mutation calls `logAudit`). A `requireRole`-style helper for admin Server Actions is still anticipated (lib/auth.ts comment) — create/resend currently inline the owner check + forbidden-audit; 3c could extract it (tag/note writes will all need the same gate).
 

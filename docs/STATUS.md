@@ -1,6 +1,6 @@
 # Build Status
 
-Last updated: end of Session 2b-2.
+Last updated: end of Session 3c-i (2026-05-20).
 
 ## Where We Are
 
@@ -40,7 +40,7 @@ All 20 pages designed and clickable in the v3 mock:
 
 ## In Progress
 
-Nothing in flight. **Session 2b** (public respondent flow), **3a** (admin auth), and **3b** (invitations — 3b-i mint/list/create + 3b-ii email/resend) are complete and verified live. Next is **Session 3c** (responses list/detail + tagging), scoped in its own planning pass before implementation begins.
+Nothing in flight. **Session 2b** (public respondent flow), **3a** (admin auth), **3b** (invitations — 3b-i mint/list/create + 3b-ii email/resend), and **3c-i** (responses list + detail) are complete and verified live. Next is **Session 3c-ii** (tagging + researcher notes), scoped in its own planning pass before implementation begins.
 
 ## Done
 
@@ -127,9 +127,15 @@ Nothing in flight. **Session 2b** (public respondent flow), **3a** (admin auth),
 - [x] **Bilingual email helper** — `lib/email/invitation.ts` via the Resend API (D55), separate from Supabase auth SMTP. EN final; AR→EN fallback (pre-launch: Sura's Arabic). Never logs address/URL.
 - [x] **5/5 smoke tests** green against live DB (2026-05-20): (a) guard — no orphan on unset SITE_URL; (b) send-at-create — email_sent only on success, metadata PII-free; (c) resend fresh — hash rotated/old link dead/sent·0·null reset/`mode:"fresh"`; (d) **resend resume** — hash rotated BUT use_count/opened_at/status unchanged + answer "RESUME TEST ANSWER 12345" preserved/`mode:"resume"`; (e) resend submitted-block — action-level refusal, hash frozen, no new audit row. Smoke data cleaned, production back to 0/0/0. **No migration** (3b-ii is app-code only). New dep: `resend`. Decisions: D55, D56.
 
-## Next — Session 3c (responses list/detail + tagging)
+### Session 3c-i — Responses list + detail (PII-redaction boundary)
+- [x] **`lib/repos/responses.ts`** — thin **non-PII** read helper (`listResponses`, `getResponse`, `getAnswerCounts`, `getAnswersForResponse`); takes the authenticated server client so RLS applies. No role branch / no redacted view — `responses`/`answers` are on the non-PII allow-list (D31). The respondent's identity context is deliberately NOT read here; it comes from the role-routed invitations/consent repos.
+- [x] **Responses list** — `app/admin/(protected)/responses/page.tsx`: ref_code-keyed, **identity-free** (no recipient name → no redaction branch at all on the list). Invitation context (ref_code, category, nationality, status) fetched via the role-routed invitations repo and joined **in memory** — NOT a PostgREST embed, which would hit the invitations base table and leak ciphertext PII to readonly. Non-empty answer count, submitted-first ordering, empty state. "status" = invitation.status (responses has no status column; a display value, not a correctness gate).
+- [x] **Response detail** — `app/admin/(protected)/responses/[id]/page.tsx`: **null-driven redaction** — identity values are `ciphertext ? decrypt_pii(ciphertext) : "Redacted"`, computed purely from what the role-routed repos returned, with **zero page-level `if (role === 'owner')`** in the redaction path. Answers (question text + answer text) shown in full to both roles via `getVisibleQuestions` (nationality-filtered, D32) left-joined to answers; consent verification via the consent repo (signed-name redacted for readonly). The cosmetic readonly banner is **fully independent** of the redaction path (the only use of `admin.role`; it gates no data). decrypt failure degrades gracefully (logs + placeholder, answers still render) per RUNBOOK.
+- [x] **3/3 smoke states** green against live DB (2026-05-20): owner (full identity + consent name), readonly via SQL role-flip + refresh (name/email/consent-name → "Redacted", banner appears, answers intact), back-to-owner (identity returns) — the privacy boundary flips on `current_admin_role()` with **zero code change**. Smoke data cleaned, production back to 0/0/0. **No migration, no new decision** (app-code only).
 
-**Session 3 is split** (like 2b): **3a** (admin auth) done · **3b** (invitations) done — 3b-i mint/list/create + 3b-ii email/resend · **3c** (responses) next · question editor + overview dashboard later. 3c builds the analysis side: responses list, response detail (answers + tags + researcher notes), the tagging panel that seeds ATLAS.ti starter codes (D19). All admin-readable (owner full, readonly via redacted views); admin mutations audit via `log_audit` (D54).
+## Next — Session 3c-ii (tagging + researcher notes)
+
+**Session 3 progress:** **3a** (admin auth) done · **3b** (invitations) done — 3b-i mint/list/create + 3b-ii email/resend · **3c-i** (responses list + detail) done · **3c-ii** (tagging + researcher notes) next · question editor + overview dashboard later. 3c-ii adds the coding layer to the response detail: **tags** (owner-writable / supervisor-readable; apply to a response → ATLAS.ti starter codes, D19) and **researcher_notes** (owner-only, one per response). Both are mutations → both audit via `log_audit` (D54). Carried from 3b: seed the two supervisor admins (readonly) once emails are known — also unblocks observing the `invitation.*.forbidden` warn audit rows.
 
 ## After That (Sessions 3–7)
 
@@ -270,3 +276,7 @@ Session 2b-2 (Migration 012, 42P13 catch): Adding `ref_code` to `validate_invita
 ### Probe before migrating: service_role function grants (Session 2b-3)
 
 Session 2b-3: probe-before-migration overturned a second confident static read — `service_role` already had EXECUTE on `encrypt_pii`/`decrypt_pii` despite migration 010's bare `GRANT … TO authenticated`, because Supabase grants `service_role` broader function privileges than the migration text implies. Reinforces: the live DB is the authority; `supabase db query --linked` is the probe tool. Avoided shipping a no-op migration 013. Same lesson family as the SQLSTATE probe (2b-1) — verify against the running database before encoding an assumption into a migration.
+
+### The embed trap: redaction is at the VIEW layer, so never PostgREST-embed a PII base table (Session 3c-i)
+
+Session 3c-i: PII redaction lives at the *view* layer (`*_redacted` with `security_invoker = true`), and readonly admins retain a real base-table SELECT policy on the PII tables (`invitations_readonly_select`, `consent_records_readonly_select`, `recordings_readonly_select`) — that policy is precisely what lets a `security_invoker` view return any rows. The trap: a PostgREST embed onto a PII base table (e.g. `responses.select("*, invitations(ref_code, …)")`) resolves the relationship against the **base** `invitations` table, not `invitations_redacted` — so a readonly admin gets back the **ciphertext** `recipient_*_encrypted` columns, bypassing the redacted view entirely. Rule: PII context (invitation/consent identity) is ALWAYS fetched through the role-routed repos (`lib/repos/{invitations,consent}.ts`) and joined **in memory** by id — never an embed. Same lesson family as the other "the obvious shortcut quietly defeats a security boundary" notes (D38 qualifier, 42P13 return-type, service_role grant): the convenient path and the safe path diverge, and only the safe path routes through `current_admin_role()`.
