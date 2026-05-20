@@ -18,3 +18,22 @@ export function mintInvitationToken(): MintedToken {
   const hash = createHash("sha256").update(plaintext).digest("hex");
   return { plaintext, hash };
 }
+
+/**
+ * Build the respondent link from a freshly-minted plaintext token.
+ * Throws if NEXT_PUBLIC_SITE_URL is unset/empty, so we never produce a
+ * broken "undefined/r/..." link (caught in 3b-i smoke). Call this BEFORE
+ * any DB write/rotation: in create, before the insert (no orphan record);
+ * in resend, before token_hash is overwritten (a misconfig leaves the old
+ * link alive).
+ */
+export function buildInvitationUrl(plaintext: string): string {
+  const base = process.env.NEXT_PUBLIC_SITE_URL?.trim();
+  if (!base) {
+    throw new Error(
+      "NEXT_PUBLIC_SITE_URL is not set — refusing to build an invitation " +
+        "link. Set it before creating or sending invitations."
+    );
+  }
+  return `${base.replace(/\/$/, "")}/r/${plaintext}`;
+}
