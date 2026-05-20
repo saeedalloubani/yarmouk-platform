@@ -1,6 +1,6 @@
 # Task State — Handoff Snapshot
 
-Last updated: end of Session 3b-i (2026-05-20) — invitation mint/list/create live.
+Last updated: end of Session 3b-ii (2026-05-20) — invitation email + resend live.
 
 Read this first if you're picking up the project cold. It's a synthesis of where we are, what's been decided, and what's next. The canonical docs for each topic are linked inline — when this doc and a canonical doc disagree, the canonical doc wins.
 
@@ -21,11 +21,11 @@ See `CLAUDE.md` for the framing, `docs/STATUS.md` for build status, `docs/DECISI
 
 ## 2. Where we are right now
 
-**Session 2b is COMPLETE** (full public respondent flow), **3a is COMPLETE** (admin auth + route protection), and **3b-i is COMPLETE** (invitation minting + list + create + audit) — all verified live. 2b: invitation link → `/r/[token]` → landing → consent (name encrypted) → paginated questionnaire (EN/AR, autosave, resumption, nationality-gated, forward-lock + map) → server-side submit gate → terminal thank-you, re-entry blocked post-submit. 3a: magic-link/OTP sign-in via Supabase built-in email (signup locked down, D49), `(protected)` layout guard + `/admin/*` session-refresh middleware (D50), case-insensitive email matching (D51), `current_admin()`, Sura owner seed. 3b-i: `lib/tokens.ts` mint (D44), owner-gated invitation create (encrypt_pii via the authenticated client, one-time `/r/<token>` URL — D52/D53), invitation list (repo role-branch, non-PII columns), and **admin-mutation audit from mutation #1** via `log_audit()` SECURITY DEFINER + `lib/audit.ts` (D54 — actor snapshots the acting owner, not `'system'`). 8/8 (3a) + 6/6 (3b-i) smoke tests passed against the live DB (2026-05-20). Migrations 013 + 014 + 015 applied (count → 15).
+**Session 2b COMPLETE** (full public respondent flow), **3a COMPLETE** (admin auth), **3b COMPLETE** (invitations — 3b-i mint/list/create + 3b-ii email/resend) — all verified live. 2b: invitation link → `/r/[token]` → landing → consent (name encrypted) → paginated questionnaire (EN/AR, autosave, resumption, nationality-gated, forward-lock + map) → server-side submit gate → terminal thank-you, re-entry blocked post-submit. 3a: magic-link/OTP sign-in via Supabase built-in email (signup locked down, D49), `(protected)` layout guard + `/admin/*` session-refresh middleware (D50), case-insensitive email matching (D51), `current_admin()`, Sura owner seed. 3b-i: `lib/tokens.ts` mint (D44), owner-gated invitation create (encrypt_pii via the authenticated client, one-time `/r/<token>` URL — D52/D53), invitation list (repo role-branch, non-PII columns), **admin-mutation audit from mutation #1** via `log_audit()` SECURITY DEFINER + `lib/audit.ts` (D54). 3b-ii: `buildInvitationUrl()` SITE_URL guard, send-at-create (optional, failure benign), `resendInvitationAction` (D56 response-aware rotation: submitted→block / in-progress→resume re-send work-preserved / none→fresh), bilingual email via Resend API (D55; EN final, AR→EN fallback). 8/8 (3a) + 6/6 (3b-i) + 5/5 (3b-ii) smoke tests passed against the live DB (2026-05-20); production cleaned back to 0/0/0. Migrations 013–015 applied (count → 15; **3b-ii shipped no migration** — app-code only). New deps: `zod` (3b-i), `resend` (3b-ii).
 
 **Dev-admin note:** `salloubani@cybercorrelate.com` is seeded live as a SECOND `owner` for the build (out-of-band, not in any migration). Pre-launch removal blocker — tracked in `docs/STATUS.md` "Known Open Items".
 
-**Next: Session 3b-ii (invitation emails + resend/rotation)** — Session 3b is split; 3b-i (mint/list/create) is done. 3b-ii wires **Resend** for respondent invitation emails (the minted `/r/<token>` URL goes into the email instead of the create screen) + the **resend = token-rotation** flow (Task #11 — mint new, rotate `token_hash`, old link dies) + seeding the two supervisor admins (readonly) once their emails are known. **Land the `NEXT_PUBLIC_SITE_URL` guard first** (Known Open Items — currently mints `undefined/r/...` if unset) and switch the Resend sender off `onboarding@resend.dev`. Not yet scoped; deliberate planning pass first. Later 3b/3c+: responses list/detail + tagging + researcher notes, question editor, overview dashboard.
+**Next: Session 3c (responses list/detail + tagging)** — Session 3 split: 3a (auth) done, 3b (invitations) done, 3c (responses) next, question editor + overview dashboard later. 3c builds the analysis side: responses list, response detail (answers + tags + researcher notes), the tagging panel that seeds ATLAS.ti starter codes (D19). Admin-readable (owner full, readonly via redacted views); admin mutations audit via `log_audit` (D54). Still pending from 3b: seed the two supervisor admins (readonly) once emails are known (also unblocks observing the `invitation.*.forbidden` audit rows). Not yet scoped; deliberate planning pass first.
 
 **Nothing is in flight.** No background processes, no timers, no scheduled work. The repo is in a clean state: working tree matches `origin/main`.
 
@@ -132,7 +132,7 @@ Migrations are forward-only. Don't edit applied migrations; write a new migratio
 │   │       ├── layout.tsx             Auth guard: getUser → getCurrentAdmin → redirect tree (3a; D50)
 │   │       ├── page.tsx               Auth-proof landing ("Signed in as {name} ({role})") (3a)
 │   │       └── invitations/           Invitations admin (3b-i)
-│   │           ├── page.tsx           List — repo role-branch, non-PII columns, owner-gated "+ New"
+│   │           ├── page.tsx           List — repo role-branch, non-PII columns, owner "+ New" + Resend column (3b-i/3b-ii)
 │   │           └── new/page.tsx       Create — owner-asserted; loads active versions; renders the form
 │   ├── api/                           (empty; route handlers go here)
 │   ├── r/[token]/route.ts            Public token entry: RPC → cookies → redirect (2b-2)
@@ -145,19 +145,22 @@ Migrations are forward-only. Don't edit applied migrations; write a new migratio
 │   ├── LanguageSwitcher.tsx           Client: optimistic lang toggle via Server Action (2b-2)
 │   ├── ConsentForm.tsx                Client consent form — required audio radio (2b-3)
 │   ├── QuestionnaireWizard.tsx        Client wizard — autosave, flush-on-boundary, map (2b-3)
-│   └── InvitationCreateForm.tsx       Client create form — one-time token URL on success (3b-i)
+│   ├── InvitationCreateForm.tsx       Client create form — send-now checkbox + one-time token URL (3b-i/3b-ii)
+│   └── InvitationResendButton.tsx     Client per-row resend island — loud-failure panel (3b-ii; D56)
 ├── lib/
 │   ├── auth.ts                        getCurrentAdminRole + getCurrentAdmin(id,name,role) — RPC wrappers (3a)
 │   ├── audit.ts                       logAudit() — wraps log_audit() RPC; every admin mutation calls it (3b-i; D54)
-│   ├── tokens.ts                      mintInvitationToken() — 32 bytes base64url + SHA-256 hash (3b-i; D44)
+│   ├── tokens.ts                      mintInvitationToken() (D44) + buildInvitationUrl() SITE_URL guard (3b-i/3b-ii)
 │   ├── cookies.ts                     getLang/setLang + getSession/setSession/clearSession(+Cookie) (2b-2/2b-3; D41)
 │   ├── i18n.ts                        Canonical Lang + translations + LANG_PICKER_LABELS (2b-2/2b-3)
+│   ├── email/
+│   │   └── invitation.ts             sendInvitationEmail() via Resend API; EN final, AR→EN fallback (3b-ii; D55)
 │   ├── actions/
 │   │   ├── setLang.ts                 Server Action wrapping setLang for client use (2b-2)
 │   │   ├── consent.ts                 submitConsent — validate + encrypt_pii + insert (2b-3)
 │   │   ├── answers.ts                 saveAnswer (autosave + opened→started) + submitQuestionnaire (2b-3)
 │   │   ├── auth.ts                    signOut Server Action (3a)
-│   │   └── invitations.ts            createInvitationAction — owner gate + mint + encrypt + insert + audit (3b-i)
+│   │   └── invitations.ts            createInvitationAction (+send-at-create) + resendInvitationAction (3b-i/3b-ii; D56)
 │   ├── supabase/
 │   │   ├── server.ts                  createSupabaseServerClient (RSC + Server Actions + admin route handlers)
 │   │   ├── client.ts                  createSupabaseBrowserClient (use client)
@@ -177,14 +180,14 @@ Migrations are forward-only. Don't edit applied migrations; write a new migratio
 │   └── migrations/                    15 timestamped migration files (see §5)
 └── docs/
     ├── SCHEMA.md                      Canonical data model
-    ├── DECISIONS.md                   D1-D54 decision history with rationale
+    ├── DECISIONS.md                   D1-D56 decision history with rationale
     ├── CONVENTIONS.md                 TypeScript/SQL/Git/migration conventions
     └── STATUS.md                      Session-by-session build status + Notes
 ```
 
 ---
 
-## 7. Decisions register (D1-D54)
+## 7. Decisions register (D1-D56)
 
 Full text in `docs/DECISIONS.md`. One-line summaries grouped by topic:
 
@@ -275,6 +278,10 @@ Full text in `docs/DECISIONS.md`. One-line summaries grouped by topic:
 - D52: ref_code is free-text (format-guided); `UNIQUE` is the duplicate guard; auto-gen deferred
 - D53: plaintext invitation token surfaced exactly once on create; never stored/logged/in a URL (only the SHA-256 hash persists)
 - D54: admin mutations audited via SECURITY DEFINER `log_audit()` (granted to authenticated; trigger snapshots the acting owner, not 'system'); refusals audited too
+
+**Session 3b-ii (D55-D56)**
+- D55: app invitation emails via the Resend API directly (resend SDK), separate from Supabase auth SMTP; EN final, AR→EN fallback (pre-launch: Sura's Arabic + domain verification)
+- D56: resend = response-aware token rotation — submitted→block, in-progress→resume re-send (work preserved), none→fresh re-send; old link dies on rotation; email-failure loud surface
 
 ---
 
@@ -391,22 +398,22 @@ These are in `docs/STATUS.md` Notes section and `docs/DECISIONS.md` D38-D39, but
 
 ---
 
-## 12. What's next: Session 3b-ii (invitation emails + resend/rotation)
+## 12. What's next: Session 3c (responses list/detail + tagging)
 
-**Not yet scoped.** User wants a deliberate planning pass before implementation. Session 3 is split like 2b: **3a (admin auth)** and **3b-i (mint/list/create + audit)** are done — see §2. Candidate 3b-ii scope:
+**Not yet scoped.** User wants a deliberate planning pass before implementation. Session 3 is split like 2b: **3a (admin auth)** and **3b (invitations — 3b-i mint/list/create + 3b-ii email/resend)** are done — see §2. Candidate 3c scope:
 
-- **Resend wiring** for respondent invitation emails — the minted `/r/<token>` URL goes into the email instead of the create-success screen (3b-i shows it once for manual hand-off). Auth magic links stay on Supabase built-in email (D50). Switch the Resend sender off `onboarding@resend.dev` (STATUS.md pre-launch item).
-- **Resend = token rotation** flow (Task #11): mint a new token, rotate `invitations.token_hash`, old link dies. User-facing notice in the invitations UI.
-- **`NEXT_PUBLIC_SITE_URL` guard** — land this FIRST (Known Open Items): the create action mints `undefined/r/...` if the env var is unset; throw at mint time instead, before any email goes out.
-- Seed the **two supervisor admins** (readonly) once their emails are known — migration row + dashboard auth.users identities (mirror the 3a Sura bootstrap); also lets us finally observe the `invitation.create.forbidden` audit row fire.
+- **Responses list** — all admins; owner→base, readonly→redacted views. Filters (category, nationality, status). Pseudonymous `ref_code` display (D5), not names.
+- **Response detail** — the answers (per question), the consent record, recordings status; the **tagging panel** (apply tags → ATLAS.ti starter codes, D19) and **researcher notes** (`researcher_notes`, one per response). Owner-only writes; audited via `logAudit` (D54).
+- **Overview dashboard** (maybe here, maybe its own pass) — real KPI queries (counts by status/category, completion).
+- **Carried from 3b:** seed the **two supervisor admins** (readonly) once emails are known — migration row + dashboard auth.users identities (mirror the 3a Sura bootstrap); this also unblocks observing the `invitation.*.forbidden` `warn` audit rows fire (a real readonly account is needed to trigger them).
 
-Later Session 3 sub-sessions (3c+): responses list/detail with tagging + researcher notes, question editor (first writer to `questions`), overview dashboard with real queries.
+Later: question editor (first writer to `questions` — until now SQL-seed-only), exports (Session 4), recordings/import (Session 6).
 
-**Note on `lib/encryption.ts`:** still NOT created — `encrypt_pii` now has two call sites (consent action via service-role admin client; invitation create action via the authenticated owner client), each a one-liner `rpc("encrypt_pii", …)`. They use different clients, so a shared wrapper buys little; extract only if a third consumer with the same client appears.
+**Note on `lib/encryption.ts`:** still NOT created — `encrypt_pii` has two call sites (consent action → service-role admin client; invitation create → authenticated owner client) + `decrypt_pii` one (resend → owner client), each a one-liner `rpc(...)`. Different clients, so a shared wrapper buys little; extract only if a third same-client consumer appears.
 
-**Admin foundation 3b-ii builds on:** `getCurrentAdmin()`/`getCurrentAdminRole()` (lib/auth.ts), the `(protected)` guard, `/admin/*` middleware refresh, the invitations repo + create action, and `lib/audit.ts` (D54 — call `logAudit` for the rotate/resend mutation too). A `requireRole`-style helper for admin Server Actions is still anticipated (lib/auth.ts comment) — the create action currently inlines the owner check.
+**Admin foundation 3c builds on:** `getCurrentAdmin()`/`getCurrentAdminRole()` (lib/auth.ts), the `(protected)` guard, `/admin/*` middleware refresh, the role-branching repos, and `lib/audit.ts` (D54 — every admin mutation calls `logAudit`). A `requireRole`-style helper for admin Server Actions is still anticipated (lib/auth.ts comment) — create/resend currently inline the owner check + forbidden-audit; 3c could extract it (tag/note writes will all need the same gate).
 
-When starting 3b-ii, expect the user to first ask for a scope-narrowing pass (like every prior session). Don't dive into implementation without explicit scope agreement. The established per-file rhythm: decisions surfaced → draft shown → user redlines → save → typecheck/lint/build green → commit; separate commits for separate concerns; deferred doc items batched; probe the live DB before encoding assumptions into migrations.
+When starting 3c, expect the user to first ask for a scope-narrowing pass (like every prior session). Don't dive into implementation without explicit scope agreement. The established per-file rhythm: decisions surfaced → draft shown → user redlines → save → typecheck/lint/build green → commit; separate commits for separate concerns; deferred doc items batched; probe the live DB before encoding assumptions into migrations.
 
 ---
 

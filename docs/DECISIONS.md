@@ -572,6 +572,26 @@ Admin mutations are audited via a SECURITY DEFINER `log_audit()` function grante
 
 **Pattern established in 3b-i:** the create action calls `logAudit()` AFTER the mutation commits (auditing a completed action), as a separate statement — deliberately NOT one transaction with the insert, so an audit hiccup can't roll back a minted credential. Security-relevant *refusals* are also audited: a non-owner reaching the create gate logs an `invitation.create.forbidden` `warn` row before being refused. Audit `metadata` carries non-PII context only — never the token, name, or email.
 
+### D55. App invitation emails are sent via the Resend API directly (resend SDK)
+
+App invitation emails go through the Resend API directly (the `resend` SDK), server-side, distinct from Supabase auth emails (magic links, which use Supabase SMTP). Invitation mail is app-triggered with app-controlled bilingual content, from/reply-to, and the `/r/<token>` link; Supabase SMTP serves only its own auth mail and exposes no general send API. `RESEND_API_KEY` is required; the helper throws if it's unset. The recipient address and token URL never appear in logs or audit metadata.
+
+**Email copy** lives in `lib/email/invitation.ts` (a separate surface from the web i18n). EN is final; AR currently **falls back to EN** — first-contact copy with officials must be native-speaker-written by Sura. Real bilingual sends are gated behind two paired pre-launch items: Sura's Arabic copy AND Resend domain verification (the `onboarding@resend.dev` test sender only delivers to the Resend account address — confirmed live in 3b-ii smoke).
+
+### D56. Resend = response-aware token rotation
+
+Minting a new token overwrites `invitations.token_hash` — the old link dies immediately (irreversible, D44/D53). The reset branches on the `responses` table (source of truth, not `invitations.status`):
+
+- **submitted response exists → BLOCK** (`already_submitted`): `validate_invitation_token` rejects re-entry on `submitted_at` regardless of token, so a new link would be dead-on-arrival. The block is enforced at the action level (before mint/rotation), not just the UI — verified live (3b-ii smoke e: token_hash frozen, no new audit row).
+- **in-progress (non-submitted) response → "resume re-send"**: new `token_hash` + extend `expires_at`; KEEP `use_count`/`status`/`opened_at`. The new link resumes the existing response via validate's resumption path. Work is preserved — verified live (3b-ii smoke d: answer + use_count intact after rotation).
+- **no response → "fresh re-send"**: new `token_hash` + `use_count=0` + `opened_at=NULL` + `status='sent'` + extend `expires_at`.
+
+Resend NEVER touches `responses`/`answers`, so a respondent's work is structurally safe in every branch.
+
+**Corollary (from D53):** the create-time token can only be emailed AT create (the plaintext exists once); "send later" necessarily mints fresh — i.e. it is a resend.
+
+**Email-failure consequence (loud surface):** the DB rotation and the email are separate statements (per D54 ordering — you can't email a token you haven't minted+rotated). Because `token_hash` is overwritten BEFORE the email sends, a rotation that commits and then fails to email leaves the OLD link dead and the NEW link only in the action's returned `tokenUrl`. Recoverable (resend again), but the UI MUST surface the failure unmissably and show the new `tokenUrl` prominently — louder than create's email-failure surface, where no link is ever dead. (`InvitationResendButton` renders a red panel with the link on `ok && !emailed`.)
+
 ## Out of Scope (Explicitly)
 
 - **AI translation** between EN/AR. Button exists in mock as placeholder; clicking does nothing. Real translation would require GPT-4 or DeepL API; deferred.

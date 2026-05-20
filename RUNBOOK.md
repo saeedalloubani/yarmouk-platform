@@ -25,6 +25,15 @@ The default email template uses a `?code=` link that the callback exchanges via 
 
 Build/keep the code-exchange path first; switch only if smoke fails. (Also noted in the callback route comment.)
 
+## Reading invitation-send failures (Session 3b-ii)
+
+When a resend (`resendInvitationAction`) returns `emailed: false`, the UI shows the loud red panel with the new link — but the *cause* lives only in the dev/prod server log, and the two causes mean very different things. Check **which `console.error` fired** in `lib/actions/invitations.ts` / `lib/email/invitation.ts`:
+
+- **`[invitations] resend decrypt_pii failed`** → a **Vault/key sev-1**. `decrypt_pii` couldn't read the recipient address, which means the encryption key path is broken — and that breaks **every PII read app-wide** (consent names, invitation names/emails, future exports). Stop and treat as a key-access incident (see "Disaster recovery: lost encryption key" below). The token *did* rotate (old link dead), so hand off the panel's `tokenUrl` manually, then fix the key path.
+- **`[email] invitation send failed/threw for <refCode>`** → a **transient Resend issue** (API down, rate limit, or — in test mode — recipient isn't the verified account address). Recoverable: resend again once Resend is healthy, or hand off the panel's `tokenUrl`. Not a data-integrity problem.
+
+Same user-facing surface (loud panel + `tokenUrl`), very different operational severity. The log line is how you tell them apart.
+
 ## First-time setup: Vault keys
 
 Required before applying any migration that references `pii_key_v*`. Without this, `decrypt_pii` finds no key in Vault and PII reads/writes fail.
