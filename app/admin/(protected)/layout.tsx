@@ -17,6 +17,7 @@
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentAdmin } from "@/lib/auth";
+import AdminShell from "@/components/AdminShell";
 
 export const dynamic = "force-dynamic";
 
@@ -35,5 +36,10 @@ export default async function ProtectedAdminLayout({
   const admin = await getCurrentAdmin(supabase);
   if (!admin) redirect("/admin/unauthorized");
 
-  return <>{children}</>;
+  // Guard passed → render the role-gated sidebar shell around the page.
+  return (
+    <AdminShell admin={{ name: admin.name, role: admin.role }}>
+      {children}
+    </AdminShell>
+  );
 }

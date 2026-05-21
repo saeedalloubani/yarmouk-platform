@@ -1,0 +1,115 @@
+"use client";
+
+// components/AdminShell.tsx
+//
+// Admin console sidebar shell (Session 4 — admin dashboard). Mirrors the
+// mock's left sidebar, trimmed to the routes that actually exist. The auth
+// guard stays in the Server Component layout; this client island only needs
+// usePathname for active-link highlighting + the admin's {name, role} for
+// the footer and role-gated nav.
+//
+// ROLE GATE: Questionnaires is appended ONLY for owners — a readonly admin's
+// nav array never contains it (absent, not CSS-hidden). The page-level owner
+// gate on /admin/questionnaires remains the real enforcement; this just
+// keeps the link out of sight. Analytics / Data / Comms / Owner-only /
+// Settings groups + NotificationsBell are omitted until those pages exist.
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { signOut } from "@/lib/actions/auth";
+
+type Admin = { name: string; role: "owner" | "readonly" };
+type NavItem = { href: string; label: string };
+
+export default function AdminShell({
+  admin,
+  children,
+}: {
+  admin: Admin;
+  children: React.ReactNode;
+}) {
+  const pathname = usePathname();
+
+  const nav: NavItem[] = [
+    { href: "/admin", label: "Overview" },
+    { href: "/admin/invitations", label: "Invitations" },
+    { href: "/admin/responses", label: "Responses" },
+    // Owner-only: editing instrument content (matches the question-editor boundary).
+    ...(admin.role === "owner"
+      ? [{ href: "/admin/questionnaires", label: "Questionnaires" }]
+      : []),
+  ];
+
+  function isActive(href: string): boolean {
+    if (href === "/admin") return pathname === "/admin";
+    return pathname === href || pathname.startsWith(`${href}/`);
+  }
+
+  const initials =
+    admin.name
+      .split(/\s+/)
+      .map((w) => w[0])
+      .filter(Boolean)
+      .slice(0, 2)
+      .join("")
+      .toUpperCase() || "?";
+
+  return (
+    <div className="min-h-screen flex bg-bgAlt" dir="ltr">
+      <aside className="w-64 bg-white border-e border-line flex flex-col flex-shrink-0">
+        <Link href="/admin" className="px-5 py-5 border-b border-line block">
+          <div className="text-[15px] font-bold text-ink leading-tight tracking-tight">
+            Yarmouk Study
+          </div>
+          <div className="text-[10px] font-semibold text-muted uppercase tracking-wider">
+            Admin Console
+          </div>
+        </Link>
+
+        <nav className="py-3 flex-1 overflow-y-auto">
+          {nav.map((item) => {
+            const active = isActive(item.href);
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`block mx-2 px-3 py-2 rounded-md text-[13px] font-medium transition-colors ${
+                  active
+                    ? "bg-brand-50 text-brand-700"
+                    : "text-muted hover:bg-bgAlt hover:text-ink"
+                }`}
+              >
+                {item.label}
+              </Link>
+            );
+          })}
+        </nav>
+
+        <div className="p-4 border-t border-line">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-full bg-brand-100 text-brand-700 text-[12px] font-bold flex items-center justify-center flex-shrink-0">
+              {initials}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-[13px] font-semibold text-ink truncate">
+                {admin.name}
+              </div>
+              <div className="text-[11px] text-muted capitalize">{admin.role}</div>
+            </div>
+            <form action={signOut}>
+              <button
+                type="submit"
+                className="text-muted hover:text-ink text-[12px]"
+                title="Sign out"
+              >
+                Sign out
+              </button>
+            </form>
+          </div>
+        </div>
+      </aside>
+
+      <main className="flex-1 min-w-0 overflow-x-hidden">{children}</main>
+    </div>
+  );
+}
