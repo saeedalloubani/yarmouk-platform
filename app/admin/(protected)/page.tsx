@@ -9,6 +9,7 @@
 // here for display (a second cheap RPC) and null-guard defensively in case
 // the admin was removed between layout and page render.
 
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentAdmin } from "@/lib/auth";
@@ -34,10 +35,25 @@ export default async function AdminLandingPage() {
             {admin.role}
           </span>
         </p>
-        <p className="text-[13px] text-muted-faint mb-8">
-          Admin authentication is working. The dashboard arrives in the next
+        <p className="text-[13px] text-muted-faint mb-6">
+          Admin authentication is working. The dashboard arrives in a later
           session.
         </p>
+
+        <nav className="flex flex-wrap items-center justify-center gap-2 mb-8">
+          <Link href="/admin/responses" className="btn-secondary text-[13px]">
+            Responses
+          </Link>
+          <Link href="/admin/invitations" className="btn-secondary text-[13px]">
+            Invitations
+          </Link>
+          {admin.role === "owner" && (
+            <Link href="/admin/questionnaires" className="btn-secondary text-[13px]">
+              Questionnaires
+            </Link>
+          )}
+        </nav>
+
         <form action={signOut}>
           <button type="submit" className="btn-secondary">
             Sign out
