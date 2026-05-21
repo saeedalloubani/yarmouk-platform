@@ -1,12 +1,12 @@
 # Build Status
 
-Last updated: end of Session 3c-ii (2026-05-21).
+Last updated: end of Session 3 — question editor (2026-05-21).
 
 ## Where We Are
 
-**Phase**: Respondent entry flow live; entering consent + questionnaire.
+**Phase**: Admin core complete; next is analytics + exports.
 
-Session 1 (scaffold + design system), Session 2a (DB schema + RLS + repo pattern + types), Session 2b-1 (encryption helpers + Pilot V1 seed), and Session 2b-2 (token route + cookies + public-flow landing) are complete. Production Supabase project is linked; 12 migrations applied via `supabase db push` with smoke tests passing. A respondent can now click an invitation link, get an atomically-claimed response row, land on a session-aware bilingual landing page, and switch language. Session 2b-3 (consent page + questionnaire + autosave + `opened`→`started` transition) is next.
+Sessions 1–3 are complete — public respondent flow (2b), admin auth (3a), invitations (3b), responses + tagging + researcher notes (3c), and the question editor — with **17 migrations** applied to the linked Supabase project and smoke tests passing at each step. Next is **Session 4** (analytics dashboards + ATLAS.ti / file exports). The authoritative current-state snapshot lives in **In Progress** (below) and `TASK_STATE.md` §2; this section is orientation only.
 
 A working v3 visual mock exists at `~/Downloads/yarmouk-mock` on the owner's Mac. It demonstrates every screen and interaction. The production build replaces the mock's hardcoded data with real database queries while preserving every visual and behavioral detail.
 
@@ -40,7 +40,7 @@ All 20 pages designed and clickable in the v3 mock:
 
 ## In Progress
 
-Nothing in flight. **Session 2b** (public respondent flow), **3a** (admin auth), **3b** (invitations — 3b-i mint/list/create + 3b-ii email/resend), **3c-i** (responses list + detail), and **3c-ii** (tagging + researcher notes) are complete and verified live. **Session 3 is complete except the question editor** (the first writer to `questions`, SQL-seed-only until now); next is that editor — scopeable in its own planning pass — or **Session 4** (analytics + exports).
+Nothing in flight. **Session 2b** (public respondent flow), **3a** (admin auth), **3b** (invitations — 3b-i mint/list/create + 3b-ii email/resend), **3c-i** (responses list + detail), **3c-ii** (tagging + researcher notes), and the **question editor** are complete and verified live — **Session 3 is COMPLETE**. Next is **Session 4** (analytics dashboards + ATLAS.ti / PNG / PDF / Word exports).
 
 ## Done
 
@@ -141,9 +141,16 @@ Nothing in flight. **Session 2b** (public respondent flow), **3a** (admin auth),
 - [x] **`rn_owner_select` fix verified live** via an owner-vs-readonly contrast **under `SET ROLE authenticated`** (RLS enforced, JWT email claim set so `current_admin_role()` resolves per-admin): readonly read of `researcher_notes` = **0 rows**, owner = **1 row** — the note exists and is genuinely hidden, not missing.
 - [x] **3/3 smoke states** green against the live DB (2026-05-21): owner (add tag — create-new + pick-existing — + save note; both persisted with owner-attributed `tag.apply` / `note.save` audit rows; note body absent from metadata); readonly via SQL role-flip + refresh (tags read-only, add/remove gone, **whole notes section absent**, plus the DB-layer 0-vs-1 contrast); back-to-owner (controls + notes return). Smoke data cleaned, production back to 0/0/0. **No new decision** (D-count stays D56).
 
-## Next — question editor, then Session 4 (analytics + exports)
+### Session 3 — Question editor (draft questionnaire content)
+- [x] **Migration 017** `…017_questions_draft_only.sql` — the `questions_draft_only` BEFORE INSERT/UPDATE/DELETE trigger makes **D10 a DB invariant**: questions are mutable only on `draft` versions; active/closed are frozen at the database, not by convention. A BEFORE trigger fires regardless of connection role, so no path (editor, direct PostgREST, privileged console, future script) can edit a frozen question. SECURITY DEFINER + locked search_path; `COALESCE(NEW,OLD)`; raises `check_violation` (23514). Intentionally also freezes the active pilot_officials 18. Validated transactionally (draft allowed / active UPDATE+DELETE refused) before apply; trigger only → no `db:types` regen.
+- [x] **Repo + actions** — `lib/repos/questionnaires.ts` (authenticated-client version list + UNFILTERED question reads + write helpers; distinct from the public-flow `questions.ts`) and `lib/actions/questions.ts` (create/update/delete/move). Each action: **owner gate (+ `question.*.forbidden` warn-audit) → DRAFT gate (`status==='draft'`, else `frozen`) → zod validate → mutate → `log_audit`** (D54). Create appends `order_index`, unique code per version (`23505→code_taken`), `is_feedback` only on feedback-block versions, empty visibility `[]→NULL` (the all-footgun guard); delete re-sequences to contiguous 1..N; move swaps `order_index` up/down. Audit is lean — code + ids only, **never the EN/AR text bodies**.
+- [x] **Editor UI** — `questionnaires/page.tsx` (versions list; active/closed marked "frozen", view-only; drafts open the editor) + `[versionId]/page.tsx` (owner-gated; interactive editor for drafts, read-only frozen view otherwise) + `components/QuestionEditor.tsx` (**bilingual EN+AR, both required**; visibility All→NULL / Jordanian / Syrian / Both; `is_required`; `is_feedback` when allowed; add / inline-edit / delete-with-confirm / up-down; list rendered from props + `router.refresh()` so server order is source of truth). Owner-only **Questionnaires** nav link added to `/admin`.
+- [x] **Freeze proven at three layers** — UI shows the active version read-only; the action draft-gate returns `frozen`; the **trigger refused a direct UPDATE *and* DELETE on active questions** (transactional probe, both `check_violation` 23514, active 18 unchanged). **Readonly boundary at four layers** — nav link hidden, editor page redirects readonly → `/admin`, the action owner-gate returns `forbidden` (+warn-audit), and `q_owner_*` RLS refused a readonly INSERT under real RLS (`42501`, `resolved_role=readonly`).
+- [x] **Full smoke** green against the live DB (2026-05-21): owner draft CRUD (add EN+AR / edit / reorder / delete + re-sequence) all persisted + audited; active pilot_officials frozen read-only; DB-trigger backstop + readonly boundary proven; smoke data cleaned (6 drafts back to 0 questions, active 18 intact, `question.*` audit rows cleared). **Session 3 is COMPLETE.** No new decision (D-count stays D56).
 
-**Session 3 progress:** **3a** (admin auth) done · **3b** (invitations) done — 3b-i mint/list/create + 3b-ii email/resend · **3c-i** (responses list + detail) done · **3c-ii** (tagging + researcher notes) done. **Session 3 is complete except the question editor** — the first writer to `questions` (SQL-seed-only until now), letting Sura edit questionnaire content in-app. That editor is the remaining Session-3 piece (scope it next, or fold it into a later session — owner's call). After that, **Session 4** (analytics dashboards + ATLAS.ti / PNG / PDF / Word exports — note 3c-ii's tags feed the ATLAS.ti starter codes, D19). **Carried from 3b:** seed the two supervisor admins (readonly) once emails are known — also unblocks observing the `invitation.*.forbidden` warn audit rows fire.
+## Next — Session 4 (analytics + exports)
+
+**Session 3 is complete** — 3a (admin auth), 3b (invitations), 3c (responses + detail, tagging + researcher notes), and the question editor. Next is **Session 4**: the five analytics dashboards over real SQL, the **ATLAS.ti `.xlsx` export** (the thesis-analysis deliverable — 3c-ii's tags feed the starter codes, D19), PNG/PDF/Word exports per dashboard, and the Executive Progress Report. **Carried from 3b:** seed the two supervisor admins (readonly) once emails are known — also unblocks observing the `invitation.*.forbidden` warn audit rows fire.
 
 ## After That (Sessions 3–7)
 
@@ -205,6 +212,12 @@ _(All of Session 2 — 2a, 2b-1, 2b-2, 2b-3 — is now in "Done" above. The publ
 - **Open questions**:
   - Dashboard export tooling: `@vercel/og` for PNG snapshots, `puppeteer-core` + `@sparticuz/chromium` (Vercel-compatible Chromium build) for PDF, `docx` library for Word documents built programmatically from response data (not HTML capture). Confirm before final integration.
 - **End state**: Live site, ready for real invitations to be sent
+
+## v1.1 / Post-launch backlog
+
+Deferred to a **v1.1 portal pass after the whole v1 project is complete and live** — NOT the next session.
+
+- **Create-questionnaire-variant UI** — add new variant enum value(s) via migration (keep `variant` as an enum, type-safe, not free text) + a create-draft-version admin form. The 6 seeded draft variants cover the v1 pilot study; new variants (e.g. private sector) are a next-study need. Bundle into a v1.1 portal pass after v1 is live.
 
 ## Known Open Items
 
@@ -292,3 +305,7 @@ Session 3c-i: PII redaction lives at the *view* layer (`*_redacted` with `securi
 ### Owner-only tables need an owner-only RLS SELECT — a redacted view doesn't cover them (Session 3c-ii)
 
 Session 3c-ii: a redacted-view strategy doesn't cover owner-ONLY tables. `researcher_notes` had a both-roles SELECT policy (`rn_admins_select`, from migration 004) that leaked note bodies to readonly supervisors via direct PostgREST despite the UI hiding the section — found by reading live `pg_policies`, not the migration source. Owner-only surfaces need an owner-only RLS SELECT policy (migration 016's `rn_owner_select`), verified with a readonly-vs-owner contrast **under `SET ROLE authenticated`** (RLS enforced, JWT email claim set so `current_admin_role()` resolves per-admin) — NOT as postgres/service-role, which bypasses RLS and would have shown the row in both cases, masking the bug. The distinction matters in the app too: redaction (identity fields shown-or-masked, null-driven, both roles render the page) is a different mechanism from an owner-only *feature* (researcher_notes — absent for readonly, gated by `if (role === 'owner')` + action gate + RLS). Same lesson family as the embed trap and the SQLSTATE / 42P13 / service_role-grant notes: a convenient assumption (UI hides it / a view masks it) quietly defeats a security boundary; the live DB under the real role is authoritative.
+
+### Methodological invariants belong as DB triggers, not app convention (Session 3 — question editor)
+
+Methodological invariants (like the D10 question-freeze) that protect research validity belong as DB triggers, not app convention — a BEFORE trigger fires regardless of connection role (editor, direct PostgREST, privileged console, future script), so nothing can bypass it. The `questions_draft_only` trigger (migration 017) makes "no editing frozen questions" structural: an edited-after-answer question silently corrupts the analysis, so leaving the freeze to app good-behavior was the same shape of gap as the researcher_notes RLS leak. Verified with a transactional refusal probe (UPDATE + DELETE on an active-version question both → `check_violation` 23514, active 18 unchanged). Same family as the embed-trap / researcher_notes-RLS notes: enforce load-bearing invariants at the layer nothing can route around.

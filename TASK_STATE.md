@@ -1,6 +1,6 @@
 # Task State — Handoff Snapshot
 
-Last updated: end of Session 3c-ii (2026-05-21) — tagging + researcher notes (annotation layer) live.
+Last updated: end of Session 3 — question editor (2026-05-21); Session 3 COMPLETE.
 
 Read this first if you're picking up the project cold. It's a synthesis of where we are, what's been decided, and what's next. The canonical docs for each topic are linked inline — when this doc and a canonical doc disagree, the canonical doc wins.
 
@@ -21,11 +21,11 @@ See `CLAUDE.md` for the framing, `docs/STATUS.md` for build status, `docs/DECISI
 
 ## 2. Where we are right now
 
-**Session 2b COMPLETE** (full public respondent flow), **3a COMPLETE** (admin auth), **3b COMPLETE** (invitations — 3b-i mint/list/create + 3b-ii email/resend), **3c-i COMPLETE** (responses list + detail — PII-redaction boundary), **3c-ii COMPLETE** (tagging + researcher notes — annotation layer) — all verified live. 2b: invitation link → `/r/[token]` → landing → consent (name encrypted) → paginated questionnaire (EN/AR, autosave, resumption, nationality-gated, forward-lock + map) → server-side submit gate → terminal thank-you, re-entry blocked post-submit. 3a: magic-link/OTP sign-in via Supabase built-in email (signup locked down, D49), `(protected)` layout guard + `/admin/*` session-refresh middleware (D50), case-insensitive email matching (D51), `current_admin()`, Sura owner seed. 3b-i: `lib/tokens.ts` mint (D44), owner-gated invitation create (encrypt_pii via the authenticated client, one-time `/r/<token>` URL — D52/D53), invitation list (repo role-branch, non-PII columns), **admin-mutation audit from mutation #1** via `log_audit()` SECURITY DEFINER + `lib/audit.ts` (D54). 3b-ii: `buildInvitationUrl()` SITE_URL guard, send-at-create (optional, failure benign), `resendInvitationAction` (D56 response-aware rotation: submitted→block / in-progress→resume re-send work-preserved / none→fresh), bilingual email via Resend API (D55; EN final, AR→EN fallback). 3c-i: responses list (ref_code-keyed, identity-free, invitation context via the role-routed repo joined **in memory** — never a PostgREST embed onto a PII base table, which would leak ciphertext to readonly) + response detail (**null-driven redaction**: `ciphertext ? decrypt_pii : "Redacted"`, zero page-level role conditionals; `getVisibleQuestions` nationality-filtered + answers; consent verification; independent readonly banner). 3c-ii: tagging (create-or-pick inline, case-insensitive dedup backed by `tags_name_lower_key`, category required for new tags, idempotent apply; owner-write / supervisor-read) + researcher notes (owner-only, one-per-response upsert, **absent** for readonly) — both owner-gated + forbidden-audited + audited via `log_audit` (D54) with the note **body kept OUT of metadata** (chars only); write boundary proven at all three layers (UI / action / RLS) and the `rn_owner_select` fix verified via an owner-vs-readonly RLS contrast under `SET ROLE authenticated` (0 vs 1 rows). 8/8 (3a) + 6/6 (3b-i) + 5/5 (3b-ii) + 3/3 (3c-i) + 3/3 (3c-ii: owner / readonly / back) smoke tests passed against the live DB (2026-05-20/21); production cleaned back to 0/0/0. Migrations 013–016 applied (count → 16; **3b-ii and 3c-i shipped no migration**; **3c-ii shipped migration 016** — `researcher_notes` owner-only SELECT (`rn_owner_select`) + `tags_name_lower_key` dedup index). New deps: `zod` (3b-i), `resend` (3b-ii).
+**Session 2b COMPLETE** (full public respondent flow), **3a COMPLETE** (admin auth), **3b COMPLETE** (invitations — 3b-i mint/list/create + 3b-ii email/resend), **3c-i COMPLETE** (responses list + detail — PII-redaction boundary), **3c-ii COMPLETE** (tagging + researcher notes — annotation layer), **question editor COMPLETE** (draft questionnaire content) — **Session 3 COMPLETE**, all verified live. 2b: invitation link → `/r/[token]` → landing → consent (name encrypted) → paginated questionnaire (EN/AR, autosave, resumption, nationality-gated, forward-lock + map) → server-side submit gate → terminal thank-you, re-entry blocked post-submit. 3a: magic-link/OTP sign-in via Supabase built-in email (signup locked down, D49), `(protected)` layout guard + `/admin/*` session-refresh middleware (D50), case-insensitive email matching (D51), `current_admin()`, Sura owner seed. 3b-i: `lib/tokens.ts` mint (D44), owner-gated invitation create (encrypt_pii via the authenticated client, one-time `/r/<token>` URL — D52/D53), invitation list (repo role-branch, non-PII columns), **admin-mutation audit from mutation #1** via `log_audit()` SECURITY DEFINER + `lib/audit.ts` (D54). 3b-ii: `buildInvitationUrl()` SITE_URL guard, send-at-create (optional, failure benign), `resendInvitationAction` (D56 response-aware rotation: submitted→block / in-progress→resume re-send work-preserved / none→fresh), bilingual email via Resend API (D55; EN final, AR→EN fallback). 3c-i: responses list (ref_code-keyed, identity-free, invitation context via the role-routed repo joined **in memory** — never a PostgREST embed onto a PII base table, which would leak ciphertext to readonly) + response detail (**null-driven redaction**: `ciphertext ? decrypt_pii : "Redacted"`, zero page-level role conditionals; `getVisibleQuestions` nationality-filtered + answers; consent verification; independent readonly banner). 3c-ii: tagging (create-or-pick inline, case-insensitive dedup backed by `tags_name_lower_key`, category required for new tags, idempotent apply; owner-write / supervisor-read) + researcher notes (owner-only, one-per-response upsert, **absent** for readonly) — both owner-gated + forbidden-audited + audited via `log_audit` (D54) with the note **body kept OUT of metadata** (chars only); write boundary proven at all three layers (UI / action / RLS) and the `rn_owner_select` fix verified via an owner-vs-readonly RLS contrast under `SET ROLE authenticated` (0 vs 1 rows). Question editor: draft-only bilingual EN+AR question CRUD (`lib/repos/questionnaires.ts` + `lib/actions/questions.ts` + `components/QuestionEditor.tsx` + `/admin/questionnaires` list & `[versionId]` editor) — owner-gated → draft-gated (`status==='draft'`, else `frozen`) → audited (D54, code+ids only, no text bodies); add / edit / delete-with-re-sequence / reorder; the D10 freeze made a **DB invariant** by the `questions_draft_only` trigger (migration 017) — proven at three layers (UI / action / trigger, `check_violation` 23514) and the readonly write-boundary at four (nav / redirect / action-gate / `q_owner_*` RLS `42501`). 8/8 (3a) + 6/6 (3b-i) + 5/5 (3b-ii) + 3/3 (3c-i) + 3/3 (3c-ii) + full question-editor smoke passed against the live DB (2026-05-20/21); production cleaned back to 0/0/0. Migrations 013–017 applied (count → 17; **3b-ii and 3c-i shipped no migration**; **3c-ii shipped 016** — `rn_owner_select` + `tags_name_lower_key`; **question editor shipped 017** — `questions_draft_only` trigger). New deps: `zod` (3b-i), `resend` (3b-ii).
 
 **Dev-admin note:** `salloubani@cybercorrelate.com` is seeded live as a SECOND `owner` for the build (out-of-band, not in any migration). Pre-launch removal blocker — tracked in `docs/STATUS.md` "Known Open Items".
 
-**Next: question editor, then Session 4 (analytics + exports)** — Session 3 split: 3a (auth) done, 3b (invitations) done, 3c-i (responses list + detail) done, 3c-ii (tagging + researcher notes) done. **Session 3 is complete except the question editor** — the first writer to `questions` (SQL-seed-only until now), letting Sura edit questionnaire content in-app. Scope that next (or fold into a later session — owner's call); after it, **Session 4** (analytics dashboards + ATLAS.ti / PNG / PDF / Word exports — 3c-ii's tags feed the ATLAS.ti starter codes, D19). Still pending from 3b: seed the two supervisor admins (readonly) once emails are known (also unblocks observing the `invitation.*.forbidden` audit rows fire). Not yet scoped; deliberate planning pass first.
+**Next: Session 4 (analytics + exports)** — **Session 3 is COMPLETE**: 3a (auth), 3b (invitations), 3c (responses + detail, tagging + researcher notes), and the question editor (draft-only bilingual question CRUD; D10 freeze as a DB trigger). Session 4 is the thesis-analysis deliverable: five analytics dashboards over real SQL, the **ATLAS.ti `.xlsx` export** (3c-ii's tags feed the starter codes, D19), PNG/PDF/Word exports per dashboard, and the Executive Progress Report. Still pending from 3b: seed the two supervisor admins (readonly) once emails are known (also unblocks observing the `invitation.*.forbidden` audit rows fire). Not yet scoped; deliberate planning pass first.
 
 **Nothing is in flight.** No background processes, no timers, no scheduled work. The repo is in a clean state: working tree matches `origin/main`.
 
@@ -38,7 +38,7 @@ See `CLAUDE.md` for the framing, `docs/STATUS.md` for build status, `docs/DECISI
 - **Supabase region / tier**: free tier (default Supabase placement)
 - **Branch protection** on `main`: force-push blocked, deletion blocked. Direct pushes still allowed (solo phase).
 - **Vault state**: `pii_key_v1` exists. Verified `decryptable=true`. Backed up in Owner's password manager as `Yarmouk — pii_key_v1 (active)`.
-- **Migrations applied**: all 16 (see §5).
+- **Migrations applied**: all 17 (see §5).
 - **RLS**: enabled on every table. Helpers `current_admin_role()` and `current_admin_id()` resolve admin identity via JWT email lookup (D37).
 - **PII columns ciphertext**: helpers exist (`encrypt_pii` / `decrypt_pii`) but no real PII has been written yet — the only data in user tables is the seed questionnaire content. (2b-2 smoke wrote + cleaned up a test invitation; `inv_left=0`, `resp_left=0`.)
 - **Branch protection on Vault**: Studio access is Owner-only; CLI access via `SUPABASE_DB_PASSWORD` (in Owner's env, not in repo).
@@ -75,7 +75,7 @@ For full architecture, read in this order:
 
 ---
 
-## 5. Migrations applied (16 total)
+## 5. Migrations applied (17 total)
 
 All in `supabase/migrations/`, timestamped `YYYYMMDDHHMMSS_name.sql` (per Supabase CLI requirement — `0001_*` naming would be silently skipped). Applied to live DB in order.
 
@@ -97,6 +97,7 @@ All in `supabase/migrations/`, timestamped `YYYYMMDDHHMMSS_name.sql` (per Supaba
 | `…014_seed_admin_sura.sql` | Seed Sura (owner, active) — app-level role row; auth.users identity hand-provisioned in dashboard (D37/D49). |
 | `…015_log_audit.sql` | Audit (3b-i): `log_audit()` SECURITY DEFINER granted to authenticated — bypasses audit_log's authenticated-INSERT restriction while the trigger snapshots the acting owner (not 'system'). Pure INSERT, no actor params (D54). |
 | `…016_tighten_researcher_notes_and_tag_dedup.sql` | Annotation layer (3c-ii): replaces `rn_admins_select` (owner+readonly) with `rn_owner_select` (owner-only SELECT on `researcher_notes` — closes a readonly note-read leak found in live `pg_policies`); adds `tags_name_lower_key` UNIQUE INDEX on `lower(name)` for case-insensitive tag dedup (case-sensitive `UNIQUE(name)` retained). Policy + functional index only → no type regen. |
+| `…017_questions_draft_only.sql` | Question editor (Session 3): `questions_draft_only` BEFORE INSERT/UPDATE/DELETE trigger — refuses any question mutation whose parent version isn't `draft` (raises `check_violation` 23514). Makes the D10 freeze a DB invariant (fires regardless of connection role). SECURITY DEFINER + locked search_path; `COALESCE(NEW,OLD)`. Trigger + function only → no type regen. |
 
 Migrations are forward-only. Don't edit applied migrations; write a new migration that fixes forward.
 
@@ -131,13 +132,16 @@ Migrations are forward-only. Don't edit applied migrations; write a new migratio
 │   │   ├── unauthorized/page.tsx      Authenticated-non-admin notice + sign out (3a)
 │   │   └── (protected)/               Guarded subtree (login/callback/unauthorized sit OUTSIDE)
 │   │       ├── layout.tsx             Auth guard: getUser → getCurrentAdmin → redirect tree (3a; D50)
-│   │       ├── page.tsx               Auth-proof landing ("Signed in as {name} ({role})") (3a)
+│   │       ├── page.tsx               Auth landing + admin nav links (owner-only Questionnaires) (3a/Session 3)
 │   │       ├── invitations/           Invitations admin (3b-i)
 │   │       │   ├── page.tsx           List — repo role-branch, non-PII columns, owner "+ New" + Resend column (3b-i/3b-ii)
 │   │       │   └── new/page.tsx       Create — owner-asserted; loads active versions; renders the form
-│   │       └── responses/             Responses admin (3c-i)
-│   │           ├── page.tsx           List — ref_code-keyed, identity-free, in-memory join via role-routed repos (3c-i)
-│   │           └── [id]/page.tsx      Detail — null-driven PII redaction; answers; consent verify (3c-i) + tags (both roles) + researcher-notes (owner-only) annotation (3c-ii)
+│   │       ├── responses/             Responses admin (3c-i)
+│   │       │   ├── page.tsx           List — ref_code-keyed, identity-free, in-memory join via role-routed repos (3c-i)
+│   │       │   └── [id]/page.tsx      Detail — null-driven PII redaction; answers; consent verify (3c-i) + tags (both roles) + researcher-notes (owner-only) annotation (3c-ii)
+│   │       └── questionnaires/        Question editor — OWNER-ONLY (Session 3)
+│   │           ├── page.tsx           Versions list — drafts editable; active/closed frozen, view-only
+│   │           └── [versionId]/page.tsx  Editor for a draft; read-only frozen view otherwise
 │   ├── api/                           (empty; route handlers go here)
 │   ├── r/[token]/route.ts            Public token entry: RPC → cookies → redirect (2b-2)
 │   ├── globals.css                    Tailwind base + design tokens
@@ -152,7 +156,8 @@ Migrations are forward-only. Don't edit applied migrations; write a new migratio
 │   ├── InvitationCreateForm.tsx       Client create form — send-now checkbox + one-time token URL (3b-i/3b-ii)
 │   ├── InvitationResendButton.tsx     Client per-row resend island — loud-failure panel (3b-ii; D56)
 │   ├── ResponseTagEditor.tsx          Client tags island — chips both roles; owner add/remove (canEdit) (3c-ii)
-│   └── ResearcherNoteEditor.tsx       Client note island — owner-only textarea + upsert (3c-ii)
+│   ├── ResearcherNoteEditor.tsx       Client note island — owner-only textarea + upsert (3c-ii)
+│   └── QuestionEditor.tsx             Client draft editor — bilingual EN+AR CRUD + up/down (Session 3)
 ├── lib/
 │   ├── auth.ts                        getCurrentAdminRole + getCurrentAdmin(id,name,role) — RPC wrappers (3a)
 │   ├── audit.ts                       logAudit() — wraps log_audit() RPC; every admin mutation calls it (3b-i; D54)
@@ -168,7 +173,8 @@ Migrations are forward-only. Don't edit applied migrations; write a new migratio
 │   │   ├── auth.ts                    signOut Server Action (3a)
 │   │   ├── invitations.ts            createInvitationAction (+send-at-create) + resendInvitationAction (3b-i/3b-ii; D56)
 │   │   ├── tags.ts                    addTagToResponse / removeTagFromResponse — owner-gated + audited (3c-ii)
-│   │   └── notes.ts                   saveResearcherNote — owner-gated + audited, body out of metadata (3c-ii)
+│   │   ├── notes.ts                   saveResearcherNote — owner-gated + audited, body out of metadata (3c-ii)
+│   │   └── questions.ts               create/update/delete/move — owner+draft gated + audited (Session 3)
 │   ├── supabase/
 │   │   ├── server.ts                  createSupabaseServerClient (RSC + Server Actions + admin route handlers)
 │   │   ├── client.ts                  createSupabaseBrowserClient (use client)
@@ -184,11 +190,12 @@ Migrations are forward-only. Don't edit applied migrations; write a new migratio
 │   │   ├── answers.ts                 Public-flow getAnswersMap/getAnsweredQuestionIds/upsertAnswer (2b-3)
 │   │   ├── responses.ts               Admin non-PII reads (list/get + answer counts/details); no role branch (3c-i)
 │   │   ├── tags.ts                     Non-PII tags/response_tags reads + find-or-create + apply/remove (3c-ii)
-│   │   └── notes.ts                    Non-PII researcher_notes get + upsert; owner-only via RLS (3c-ii)
+│   │   ├── notes.ts                    Non-PII researcher_notes get + upsert; owner-only via RLS (3c-ii)
+│   │   └── questionnaires.ts           Admin version list + question reads/writes (editor; authenticated client) (Session 3)
 │   ├── exports/                       (empty; Session 4 export tooling)
 │   └── encryption.ts                  NOT created — consent action calls admin.rpc("encrypt_pii") directly (one call site)
 ├── supabase/
-│   └── migrations/                    16 timestamped migration files (see §5)
+│   └── migrations/                    17 timestamped migration files (see §5)
 └── docs/
     ├── SCHEMA.md                      Canonical data model
     ├── DECISIONS.md                   D1-D56 decision history with rationale
@@ -336,7 +343,7 @@ Full text in `docs/CONVENTIONS.md`. Load-bearing ones the next session needs to 
 - `NEXT_PUBLIC_SITE_URL` — `http://localhost:3000` for dev, `https://karasneh-research.org` for prod
 
 **Naming conventions**
-- Migration files: `YYYYMMDDHHMMSS_name.sql`. Current latest timestamp range: `2026051917000{1..16}`. Next migration would be `…017_*` or later.
+- Migration files: `YYYYMMDDHHMMSS_name.sql`. Current latest timestamp range: `2026051917000{1..17}`. Next migration would be `…018_*` or later.
 - Vault secrets for PII keys: `pii_key_v<N>`, integer suffix (do not use leading zeros — sort is integer-cast).
 - Question codes: `Q1`-`Q14` for main, `F1`-`F4` for feedback.
 - Ref codes (anonymized display IDs): `{CAT_PREFIX}-{NAT_PREFIX}-{SEQ}` (e.g., `OFF-J-04`). Per CONVENTIONS.md "Reference Code Pattern".
@@ -408,22 +415,23 @@ These are in `docs/STATUS.md` Notes section and `docs/DECISIONS.md` D38-D39, but
 11. **`CREATE OR REPLACE FUNCTION` can't change return type.** Adding/removing/reordering a `RETURNS TABLE` column (or changing a scalar return type) is rejected at push time with SQLSTATE 42P13. Use `DROP FUNCTION IF EXISTS …(exact-arg-types); CREATE FUNCTION …` + restate REVOKE/GRANT. Check `pg_depend` first to confirm no dependents. Body-only changes still use `CREATE OR REPLACE`. (D45, caught on migration 012.)
 12. **Redaction is at the VIEW layer — never PostgREST-embed a PII base table.** Readonly admins keep a base-table SELECT policy on the PII tables (`invitations_readonly_select` etc.) — that policy is what lets the `security_invoker` redacted views return rows. A PostgREST embed like `responses.select("*, invitations(...)")` resolves against the **base** `invitations`, not `invitations_redacted`, handing readonly the ciphertext PII. Always fetch PII context (invitation/consent identity) through the role-routed repos (`lib/repos/{invitations,consent}.ts`) and join in memory by id. (Session 3c-i.)
 13. **A redacted view doesn't cover owner-ONLY tables — they need an owner-only RLS SELECT.** `researcher_notes` shipped with `rn_admins_select` (owner+readonly SELECT, from migration 004), so readonly supervisors could read note bodies via direct PostgREST even though the UI hid the section — found by reading live `pg_policies`, not the migration source. Owner-only surfaces need an owner-only SELECT policy (migration 016's `rn_owner_select`). **Verify such a fix with an owner-vs-readonly contrast under `SET ROLE authenticated`** (RLS enforced; set `request.jwt.claims` so `current_admin_role()` resolves per-admin) — NOT as postgres/service-role, which bypasses RLS and shows the row in both cases, masking the bug. (Session 3c-ii.)
+14. **Methodological invariants belong as DB triggers, not app convention.** The D10 question-freeze (don't edit a question once responses exist) was convention-only until the `questions_draft_only` BEFORE INSERT/UPDATE/DELETE trigger (migration 017) made it structural: it refuses any mutation whose parent version isn't `draft` (`check_violation` 23514), and a BEFORE trigger fires regardless of connection role — editor, direct PostgREST, privileged console, future script. An edited-after-answer question silently corrupts the analysis, so this protects research validity, not just data shape. Verify such a guard FIRES (not just parses) with a transactional probe: UPDATE *and* DELETE on a frozen row both refused, an allowed (draft) row still works, all rolled back. (Session 3 — question editor.)
 
 ---
 
-## 12. What's next: question editor, then Session 4 (analytics + exports)
+## 12. What's next: Session 4 (analytics + exports)
 
-**Not yet scoped.** User wants a deliberate planning pass before implementation. Session 3 is split like 2b: **3a (admin auth)**, **3b (invitations — 3b-i + 3b-ii)**, **3c-i (responses list + detail)**, and **3c-ii (tagging + researcher notes)** are all done — see §2. 3c-ii shipped the annotation layer with the write boundary proven at all three layers (UI / action / RLS) and the `rn_owner_select` finding fixed + verified live (see §11 watch-out 13). Session 3's one remaining piece is the **question editor**:
+**Not yet scoped.** User wants a deliberate planning pass before implementation. **Session 3 is COMPLETE** — 3a (admin auth), 3b (invitations — 3b-i + 3b-ii), 3c (responses + detail, tagging + researcher notes), and the question editor (draft-only bilingual question CRUD; the D10 freeze made a DB invariant by the `questions_draft_only` trigger — see §11 watch-out 14) — all see §2. Next is **Session 4 (analytics + exports)** — the thesis-analysis deliverable:
 
-- **Question editor** — the first writer to `questions` (SQL-seed-only until now). Lets Sura create/edit questionnaire content in-app: text (EN/AR), order, required flag, `visible_nationalities` (D32), feedback flag. Owner-only mutations → audit via `logAudit` (D54). Couple it carefully to the version model (D10/D11: one active version per variant; first response freezes; V2 atomic publish migrates non-submitted invitees).
-- Then **Session 4** (analytics + exports): five analytics dashboards over real SQL, ATLAS.ti `.xlsx` (3c-ii's tags become starter codes, D19), PNG/PDF/Word exports, Executive Progress Report.
+- **Analytics dashboards** — the five views (per-question pivot, themes/tags, timeline, demographics, pilot-feedback hub) over real SQL.
+- **ATLAS.ti `.xlsx` export** — Survey-Import format (D18); 3c-ii's tags become starter codes (D19). Plus PNG/PDF/Word exports per dashboard and the Executive Progress Report.
 - **Carried from 3b:** seed the **two supervisor admins** (readonly) once emails are known — migration row + dashboard auth.users identities (mirror the 3a Sura bootstrap); this also unblocks observing the `invitation.*.forbidden` `warn` audit rows fire (a real readonly account is needed to trigger them).
 
-Later: overview dashboard (real KPI queries), exports (Session 4), comms/owner-only (Session 5), recordings/import/backup (Session 6), go-live (Session 7).
+Later: overview dashboard (real KPI queries), comms/owner-only (Session 5), recordings/import/backup (Session 6), go-live (Session 7). **v1.1 post-launch:** create-questionnaire-variant UI (new variant enum value(s) via migration + create-draft-version form) — see `docs/STATUS.md` "v1.1 / Post-launch backlog".
 
-**Note on `lib/encryption.ts`:** still NOT created — `encrypt_pii` has two call sites (consent action → service-role admin client; invitation create → authenticated owner client); `decrypt_pii` now has two (resend action + response detail page, both the authenticated owner client; the detail page wraps it in a local `decryptPii` helper). The two authenticated `decrypt_pii` sites are the first plausible shared-wrapper candidate — deferred until a third appears or the local helper needs reuse. Each is a one-liner `rpc(...)`, and the encrypt/decrypt split across different clients means a single shared module still buys little.
+**Note on `lib/encryption.ts`:** still NOT created — `encrypt_pii` has two call sites (consent action → service-role admin client; invitation create → authenticated owner client); `decrypt_pii` has two (resend action + response detail page, authenticated owner client). The question editor added NO encrypt/decrypt sites (questions are non-PII). Still deferred until a third decrypt site appears or the local `decryptPii` helper needs reuse.
 
-**Admin foundation the next session builds on:** `getCurrentAdmin()`/`getCurrentAdminRole()` (lib/auth.ts), the `(protected)` guard, `/admin/*` middleware refresh, the role-branching repos, and `lib/audit.ts` (D54 — every admin mutation calls `logAudit`). A `requireRole`-style helper for admin Server Actions is still anticipated (lib/auth.ts comment) — create / resend / addTag / removeTag / saveResearcherNote now ALL inline the same owner check + forbidden-audit (**five** call sites); extract it when the question-editor actions would add a sixth.
+**Owner-gate helper — extraction now begun:** the question editor introduced a local `requireOwner()` helper inside `lib/actions/questions.ts` (owner check + `*.forbidden` warn-audit + draft gate is separate) — the first real factoring of the pattern that create / resend / addTag / removeTag / saveResearcherNote each still inline. The anticipated `requireRole`-style helper in `lib/auth.ts` would unify all action files; do it when convenient (Session 4 actions will want the same gate).
 
 When starting the next session, expect the user to first ask for a scope-narrowing pass (like every prior session). Don't dive into implementation without explicit scope agreement. The established per-file rhythm: decisions surfaced → draft shown → user redlines → save → typecheck/lint/build green → commit; separate commits for separate concerns; deferred doc items batched; probe the live DB before encoding assumptions into migrations.
 
