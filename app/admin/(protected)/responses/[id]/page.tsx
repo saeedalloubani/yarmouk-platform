@@ -30,6 +30,10 @@ import { getResponse, getAnswersForResponse } from "@/lib/repos/responses";
 import { getInvitation } from "@/lib/repos/invitations";
 import { getConsentForResponse } from "@/lib/repos/consent";
 import { getVisibleQuestions } from "@/lib/repos/questions";
+import { listTagsForResponse, listAllTags } from "@/lib/repos/tags";
+import { getResearcherNote } from "@/lib/repos/notes";
+import ResponseTagEditor from "@/components/ResponseTagEditor";
+import ResearcherNoteEditor from "@/components/ResearcherNoteEditor";
 
 export const dynamic = "force-dynamic";
 
@@ -133,6 +137,24 @@ export default async function ResponseDetailPage({
 
   const refCode = invitation?.refCode ?? "—";
   const isReadonly = admin.role === "readonly"; // BANNER ONLY — not a data gate.
+  const isOwner = admin.role === "owner";
+
+  // ---- ANNOTATION LAYER (3c-ii) -----------------------------------------
+  // Tags: applied codes are visible to BOTH roles (RLS admits readonly
+  // SELECT on tags/response_tags). The owner's datalist of all tag names is
+  // fetched only on the owner branch — readonly never gets the add control.
+  const appliedTags = await listTagsForResponse(supabase, response.id);
+  const allTags = isOwner ? await listAllTags(supabase) : [];
+
+  // Researcher note: OWNER-ONLY FEATURE — fetched ONLY on the owner branch
+  // (not a redaction; absent for readonly). This is a legitimate role gate,
+  // distinct from the null-driven identity-redaction path above. RLS
+  // (rn_owner_select, migration 16) also returns nothing to readonly, so the
+  // note body never reaches a supervisor by any path.
+  const researcherNote = isOwner
+    ? await getResearcherNote(supabase, response.id)
+    : null;
+  // -----------------------------------------------------------------------
 
   return (
     <main className="min-h-screen bg-white">
@@ -333,6 +355,43 @@ export default async function ResponseDetailPage({
             </ol>
           )}
         </section>
+
+        {/* Tags — applied qualitative codes (3c-ii). Both roles see the
+            chips; only the owner gets the add form + remove controls
+            (canEdit). The server action + RLS enforce the write boundary
+            independently of canEdit. */}
+        <section className="card p-5 mt-5">
+          <h2 className="text-[15px] font-semibold text-ink mb-3">Tags</h2>
+          <ResponseTagEditor
+            responseId={response.id}
+            initialTags={appliedTags.map((t) => ({
+              id: t.id,
+              name: t.name,
+              category: t.category,
+            }))}
+            allTagNames={allTags.map((t) => t.name)}
+            canEdit={isOwner}
+          />
+        </section>
+
+        {/* Researcher notes — OWNER ONLY. Rendered only on the owner branch,
+            so it's never sent to a readonly supervisor's browser (absent, not
+            redacted). */}
+        {isOwner && (
+          <section className="card p-5 mt-5">
+            <h2 className="text-[15px] font-semibold text-ink mb-3">
+              Researcher notes
+            </h2>
+            <p className="text-[12px] text-muted mb-3">
+              Private working notes — visible only to you (the owner), never to
+              read-only supervisors.
+            </p>
+            <ResearcherNoteEditor
+              responseId={response.id}
+              initialNote={researcherNote?.noteText ?? ""}
+            />
+          </section>
+        )}
       </div>
     </main>
   );
