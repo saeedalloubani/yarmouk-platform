@@ -1,6 +1,6 @@
 # Build Status
 
-Last updated: end of Session 3 — question editor (2026-05-21).
+Last updated: admin dashboard + sidebar shell (2026-05-21).
 
 ## Where We Are
 
@@ -40,7 +40,7 @@ All 20 pages designed and clickable in the v3 mock:
 
 ## In Progress
 
-Nothing in flight. **Session 2b** (public respondent flow), **3a** (admin auth), **3b** (invitations — 3b-i mint/list/create + 3b-ii email/resend), **3c-i** (responses list + detail), **3c-ii** (tagging + researcher notes), and the **question editor** are complete and verified live — **Session 3 is COMPLETE**. Next is **Session 4** (analytics dashboards + ATLAS.ti / PNG / PDF / Word exports).
+Nothing in flight. **Session 2b** (public respondent flow), **3a** (admin auth), **3b** (invitations — 3b-i mint/list/create + 3b-ii email/resend), **3c-i** (responses list + detail), **3c-ii** (tagging + researcher notes), the **question editor** (Session 3 COMPLETE), and the **admin dashboard + sidebar shell** are complete and verified live. Next is **Session 4** (analytics dashboards + ATLAS.ti / file exports) or **recordings/import** (Session 6) — both deferrable; the core build is well-advanced.
 
 ## Done
 
@@ -148,23 +148,19 @@ Nothing in flight. **Session 2b** (public respondent flow), **3a** (admin auth),
 - [x] **Freeze proven at three layers** — UI shows the active version read-only; the action draft-gate returns `frozen`; the **trigger refused a direct UPDATE *and* DELETE on active questions** (transactional probe, both `check_violation` 23514, active 18 unchanged). **Readonly boundary at four layers** — nav link hidden, editor page redirects readonly → `/admin`, the action owner-gate returns `forbidden` (+warn-audit), and `q_owner_*` RLS refused a readonly INSERT under real RLS (`42501`, `resolved_role=readonly`).
 - [x] **Full smoke** green against the live DB (2026-05-21): owner draft CRUD (add EN+AR / edit / reorder / delete + re-sequence) all persisted + audited; active pilot_officials frozen read-only; DB-trigger backstop + readonly boundary proven; smoke data cleaned (6 drafts back to 0 questions, active 18 intact, `question.*` audit rows cleared). **Session 3 is COMPLETE.** No new decision (D-count stays D56).
 
-## Next — Session 4 (analytics + exports)
+### Admin dashboard + sidebar shell (operator cockpit)
+- [x] **`lib/repos/dashboard.ts`** — null-safe, non-PII read-aggregation. Invitation stats read **`invitations_redacted`** (not the base table) selecting only non-PII columns — **identity-free by construction, no PII embed**; response/answer/tag stats read the non-PII tables (`response_tags→tags` embed is safe, both non-PII). Status-based KPI funnel (invited / submitted / in-progress), completion %, by-category, recent activity (ref_code-keyed). **Avg duration COMPUTED from `submitted_at − started_at`** over submitted responses — the `duration_minutes` column is never populated. At-a-glance: languages, median + avg per-response words, top tag. **Every stat guarded for 0 rows** (0 / 0% / "—" / "No activity yet").
+- [x] **`components/AdminShell.tsx` + `(protected)/layout.tsx`** — role-gated sidebar shell wrapped around the existing auth guard. Nav is **role-gated: Questionnaires appended only for owners** (absent from a readonly nav array, not CSS-hidden); page guards remain the enforcement. Replaces the one-off overview nav links. Omits not-yet-built groups (analytics/data/comms/owner-only/settings) + NotificationsBell.
+- [x] **`(protected)/page.tsx`** — Overview dashboard replacing the auth-proof stub: KPI cards, completion-by-category bars, recent-activity feed, at-a-glance minis. Deferred/interpretive items **omitted** (Pilot Feedback Signal — can't derive "Q7 flagged by 3/6" from data; Export / Progress-Report / Publish-V2; analytics links) — added in their own future sessions.
+- [x] **Smoke** green against the live DB (2026-05-21): empty state reads intentional (0 / 0% / "—" / "No activity yet"); came alive correctly through the full lifecycle (Invited 2, Submitted 1/50%, avg duration computed to 2m, Officials 1/1 100%, ref_code-only activity); readonly drops the Questionnaires nav while the dashboard still renders identity-free. Smoke data cleaned (back to 0/0/0). **No migration** (read-aggregation); D-count stays D56, migration count stays 17.
 
-**Session 3 is complete** — 3a (admin auth), 3b (invitations), 3c (responses + detail, tagging + researcher notes), and the question editor. Next is **Session 4**: the five analytics dashboards over real SQL, the **ATLAS.ti `.xlsx` export** (the thesis-analysis deliverable — 3c-ii's tags feed the starter codes, D19), PNG/PDF/Word exports per dashboard, and the Executive Progress Report. **Carried from 3b:** seed the two supervisor admins (readonly) once emails are known — also unblocks observing the `invitation.*.forbidden` warn audit rows fire.
+## Next — Session 4 (analytics + exports), or recordings (Session 6)
 
-## After That (Sessions 3–7)
+**Session 3 is complete** (3a auth, 3b invitations, 3c responses + tagging + notes, question editor) and the **admin dashboard** is live. Next is **Session 4**: the five analytics dashboards over real SQL, the **ATLAS.ti `.xlsx` export** (the thesis-analysis deliverable — 3c-ii's tags feed the starter codes, D19), PNG/PDF/Word exports, and the Executive Progress Report. Alternatively **Session 6 recordings/import** (pending the Sura Whisper auto-vs-manual question). Both are **deferrable** — the core operator build (collect → view → code → edit instrument → monitor) is well-advanced. **Carried from 3b:** seed the two supervisor admins (readonly) once emails are known — also unblocks observing the `invitation.*.forbidden` warn audit rows fire.
 
-_(All of Session 2 — 2a, 2b-1, 2b-2, 2b-3 — is now in "Done" above. The public respondent flow is complete; what follows is the admin side and operations.)_
+## After That (Sessions 4–7)
 
-### Session 3 — Admin Core
-- [ ] Magic-link auth via Supabase
-- [ ] Admin route protection (middleware)
-- [ ] Overview dashboard with real queries
-- [ ] Invitations manager (create, send, resend, filter, shareable link generation)
-- [ ] Responses list + detail with tagging + notes
-- [ ] Resend email integration with all 5 templates
-- [ ] "Send test email" actually sends
-- **End state**: Sura logs in, creates an invitation, sends it, sees the response come back
+_(Sessions 1–3 + the admin dashboard are in "Done" above — **Session 3 — Admin Core is COMPLETE**: magic-link auth, route protection, overview dashboard, invitations manager, responses + detail with tagging + notes, invitation email + resend. Two original Session-3 email items remain and **fold into Session 5 — Comms**: the remaining email templates (reminder1 / reminderFinal / thankYou / v2Migration) and a working "send test email".)_
 
 ### Session 4 — Analytics + Exports
 - [ ] All 5 analytics dashboards with real SQL queries
