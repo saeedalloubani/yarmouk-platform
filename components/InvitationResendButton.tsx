@@ -67,6 +67,7 @@ export default function InvitationResendButton({
             <div className="flex items-stretch gap-2 mt-2">
               <input
                 readOnly
+                aria-label="Invitation link"
                 className="field mono text-[11px] flex-1"
                 value={result.tokenUrl}
                 onFocus={(e) => e.currentTarget.select()}

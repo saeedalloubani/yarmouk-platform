@@ -14,6 +14,7 @@ import { getCurrentAdmin } from "@/lib/auth";
 import {
   listVersionsForEditor,
   getQuestionCounts,
+  variantLabel,
 } from "@/lib/repos/questionnaires";
 
 export const dynamic = "force-dynamic";
@@ -59,7 +60,7 @@ export default async function QuestionnairesPage() {
                 const isDraft = v.status === "draft";
                 return (
                   <tr key={v.id} className="border-t border-line hover:bg-bgAlt/50">
-                    <td className="px-4 py-2.5 mono">{v.variant}</td>
+                    <td className="px-4 py-2.5 font-medium text-ink">{variantLabel(v.variant)}</td>
                     <td className="px-4 py-2.5 capitalize">{v.type}</td>
                     <td className="px-4 py-2.5 mono">v{v.versionNumber}</td>
                     <td className="px-4 py-2.5">

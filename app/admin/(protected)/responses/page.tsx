@@ -18,7 +18,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentAdmin } from "@/lib/auth";
-import { listInvitations } from "@/lib/repos/invitations";
+import { listInvitations, categoryLabel } from "@/lib/repos/invitations";
 import { listResponses, getAnswerCounts } from "@/lib/repos/responses";
 
 export const dynamic = "force-dynamic";
@@ -121,7 +121,7 @@ export default async function ResponsesPage() {
                         {row.refCode}
                       </Link>
                     </td>
-                    <td className="px-4 py-2.5 capitalize">{row.category ?? "—"}</td>
+                    <td className="px-4 py-2.5">{row.category ? categoryLabel(row.category) : "—"}</td>
                     <td className="px-4 py-2.5 capitalize">
                       {row.nationality ?? "—"}
                     </td>

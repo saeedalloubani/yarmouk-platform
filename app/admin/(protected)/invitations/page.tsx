@@ -10,7 +10,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentAdmin } from "@/lib/auth";
-import { listInvitations } from "@/lib/repos/invitations";
+import { listInvitations, categoryLabel } from "@/lib/repos/invitations";
 import InvitationResendButton from "@/components/InvitationResendButton";
 
 export const dynamic = "force-dynamic";
@@ -81,7 +81,7 @@ export default async function InvitationsPage() {
                         {inv.refCode}
                       </span>
                     </td>
-                    <td className="px-4 py-2.5 capitalize">{inv.category}</td>
+                    <td className="px-4 py-2.5">{categoryLabel(inv.category)}</td>
                     <td className="px-4 py-2.5 capitalize">
                       {inv.nationality ?? "—"}
                     </td>

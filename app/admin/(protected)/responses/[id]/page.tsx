@@ -27,7 +27,7 @@ import type { Database } from "@/lib/supabase/database.types";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentAdmin } from "@/lib/auth";
 import { getResponse, getAnswersForResponse } from "@/lib/repos/responses";
-import { getInvitation } from "@/lib/repos/invitations";
+import { getInvitation, categoryLabel } from "@/lib/repos/invitations";
 import { getConsentForResponse } from "@/lib/repos/consent";
 import { getVisibleQuestions } from "@/lib/repos/questions";
 import { listTagsForResponse, listAllTags } from "@/lib/repos/tags";
@@ -199,8 +199,8 @@ export default async function ResponseDetailPage({
             </div>
             <div>
               <dt className="text-muted mb-0.5">Category</dt>
-              <dd className="text-ink capitalize">
-                {invitation?.category ?? "—"}
+              <dd className="text-ink">
+                {invitation?.category ? categoryLabel(invitation.category) : "—"}
               </dd>
             </div>
             <div>

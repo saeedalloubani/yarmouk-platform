@@ -31,6 +31,14 @@ type DbInsert = Database["public"]["Tables"]["invitations"]["Insert"];
 type DbUpdate = Database["public"]["Tables"]["invitations"]["Update"];
 
 export type InvitationCategory = "officials" | "researchers" | "donors" | "ngos";
+
+// Display-only label for a category. Title-casing handles three of the
+// four; "ngos" is the acronym exception ("NGOs", not "Ngos"). Does NOT
+// touch the stored enum value — purely how the label renders.
+export function categoryLabel(category: string): string {
+  if (category === "ngos") return "NGOs";
+  return category.charAt(0).toUpperCase() + category.slice(1);
+}
 export type InvitationNationality =
   | "jordanian"
   | "syrian"

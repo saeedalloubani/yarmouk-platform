@@ -13,6 +13,7 @@ import { getCurrentAdmin } from "@/lib/auth";
 import {
   getVersion,
   getQuestionsForVersion,
+  variantLabel,
 } from "@/lib/repos/questionnaires";
 import QuestionEditor, {
   type EditorQuestionView,
@@ -81,7 +82,7 @@ export default async function EditVersionPage({
           </Link>
           <div className="eyebrow mb-1">{isDraft ? "Edit draft" : "View version"}</div>
           <h1 className="text-[22px] font-bold text-ink tracking-tight">
-            <span className="mono text-brand-700">{version.variant}</span>{" "}
+            <span className="text-brand-700">{variantLabel(version.variant)}</span>{" "}
             <span className="text-muted text-[16px]">v{version.versionNumber}</span>
           </h1>
           <p className="text-[13px] text-muted mt-1 capitalize">

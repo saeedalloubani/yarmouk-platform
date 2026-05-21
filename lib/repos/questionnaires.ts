@@ -28,6 +28,33 @@ export type EditorVersion = {
   includesFeedbackBlock: boolean;
 };
 
+// Display-only human labels for the questionnaire_variant enum. The raw
+// enum values (e.g. "pilot_researchers_donors_ngos") read with ugly
+// underscores; this maps each to a clean human form. Display-only — the
+// stored enum is never changed. Unknown values fall back to a de-
+// underscored title-case so a newly-added variant never renders raw.
+// (The questionnaire_type enum — "pilot" | "main" — title-cases cleanly
+// on its own, so it needs no map.)
+const VARIANT_LABELS: Record<string, string> = {
+  pilot_officials: "Pilot · Officials",
+  pilot_researchers_donors_ngos: "Pilot · Researchers, Donors & NGOs",
+  main_researchers: "Main · Researchers",
+  main_donors: "Main · Donors",
+  main_ngos: "Main · NGOs",
+  main_officials_jordanian: "Main · Officials (Jordanian)",
+  main_officials_syrian: "Main · Officials (Syrian)",
+};
+
+export function variantLabel(variant: string): string {
+  return (
+    VARIANT_LABELS[variant] ??
+    variant
+      .split("_")
+      .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1) : w))
+      .join(" ")
+  );
+}
+
 export type EditorQuestion = {
   id: string;
   versionId: string;

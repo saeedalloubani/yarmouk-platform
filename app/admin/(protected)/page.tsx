@@ -16,6 +16,7 @@ import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentAdmin } from "@/lib/auth";
 import { getDashboardData, type CategoryStat } from "@/lib/repos/dashboard";
+import { categoryLabel } from "@/lib/repos/invitations";
 
 export const dynamic = "force-dynamic";
 
@@ -206,8 +207,8 @@ function CategoryBar({ stat }: { stat: CategoryStat }) {
             className="inline-block w-2 h-2 rounded-full"
             style={{ background: color }}
           />
-          <span className="text-[14px] font-semibold text-ink capitalize">
-            {stat.category}
+          <span className="text-[14px] font-semibold text-ink">
+            {categoryLabel(stat.category)}
           </span>
         </div>
         <div className="text-[12px] text-muted">

@@ -52,6 +52,7 @@ export default function ResearcherNoteEditor({
     <div>
       <textarea
         className="field text-[13px] min-h-[120px] w-full"
+        aria-label="Researcher notes"
         placeholder="Private working notes for this response (owner only)…"
         value={text}
         onChange={(e) => {

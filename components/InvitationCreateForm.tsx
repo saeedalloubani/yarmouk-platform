@@ -8,6 +8,7 @@
 // notice — never re-fetchable. No email is sent (that's 3b-ii); this
 // surface is for manual hand-off / testing.
 
+import Link from "next/link";
 import { useState, useTransition } from "react";
 import {
   createInvitationAction,
@@ -118,9 +119,9 @@ export default function InvitationCreateForm({
           </button>
         </div>
         <div className="mt-6">
-          <a href="/admin/invitations" className="btn-ghost text-[13px]">
+          <Link href="/admin/invitations" className="btn-ghost text-[13px]">
             ← Back to invitations
-          </a>
+          </Link>
         </div>
       </div>
     );
@@ -263,9 +264,9 @@ export default function InvitationCreateForm({
       </label>
 
       <div className="flex items-center justify-between gap-4 pt-2">
-        <a href="/admin/invitations" className="btn-ghost text-[13px]">
+        <Link href="/admin/invitations" className="btn-ghost text-[13px]">
           Cancel
-        </a>
+        </Link>
         <button
           type="submit"
           disabled={pending}

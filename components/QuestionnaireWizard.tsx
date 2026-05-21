@@ -277,7 +277,10 @@ export default function QuestionnaireWizard({
             )}
           </div>
 
-          <h2 className="text-[20px] font-semibold leading-[1.4] text-ink mb-5">
+          <h2
+            id="current-question-text"
+            className="text-[20px] font-semibold leading-[1.4] text-ink mb-5"
+          >
             {isAr ? current.textAr : current.textEn}
           </h2>
 
@@ -287,6 +290,7 @@ export default function QuestionnaireWizard({
                 ? "!border-danger !shadow-[0_0_0_3px_rgba(220,38,38,0.15)]"
                 : ""
             }`}
+            aria-labelledby="current-question-text"
             placeholder={t.writeAnswer}
             value={currentText}
             onChange={(e) => onType(e.target.value)}
