@@ -17,6 +17,11 @@
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentAdmin } from "@/lib/auth";
+import {
+  listNotificationsForAdmin,
+  getUnreadCount,
+  type NotificationView,
+} from "@/lib/repos/notifications";
 import AdminShell from "@/components/AdminShell";
 
 export const dynamic = "force-dynamic";
@@ -36,9 +41,25 @@ export default async function ProtectedAdminLayout({
   const admin = await getCurrentAdmin(supabase);
   if (!admin) redirect("/admin/unauthorized");
 
+  // Notifications are owner-only (no row ever targets readonly — safe by
+  // absence). Fetch via the AUTHENTICATED client so RLS n_self_select scopes
+  // to this admin. Skip the query entirely for readonly.
+  let notifications: NotificationView[] = [];
+  let unreadCount = 0;
+  if (admin.role === "owner") {
+    [notifications, unreadCount] = await Promise.all([
+      listNotificationsForAdmin(supabase),
+      getUnreadCount(supabase),
+    ]);
+  }
+
   // Guard passed → render the role-gated sidebar shell around the page.
   return (
-    <AdminShell admin={{ name: admin.name, role: admin.role }}>
+    <AdminShell
+      admin={{ name: admin.name, role: admin.role }}
+      notifications={notifications}
+      unreadCount={unreadCount}
+    >
       {children}
     </AdminShell>
   );

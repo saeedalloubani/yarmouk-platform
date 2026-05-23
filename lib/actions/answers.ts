@@ -12,6 +12,7 @@ import { getSession, clearSessionCookie } from "@/lib/cookies";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getVisibleQuestions } from "@/lib/repos/questions";
 import { upsertAnswer, getAnsweredQuestionIds } from "@/lib/repos/answers";
+import { notifyOwnersOfSubmission } from "@/lib/notifications";
 
 // ---- saveAnswer (autosave) ----
 export async function saveAnswer(
@@ -117,6 +118,18 @@ export async function submitQuestionnaire(): Promise<SubmitResult> {
     .from("invitations")
     .update({ status: "submitted", submitted_at: nowIso })
     .eq("id", session.invitationId);
+
+  // Best-effort owner notification (in-app + email). FIRE-AND-FORGET:
+  // notifyOwnersOfSubmission NEVER throws — it wraps every step and only
+  // logs. We await it (serverless can't reliably detach background work),
+  // but a failure here can't roll back the submit or block the redirect.
+  // Placed BEFORE redirect() on purpose, and deliberately NOT inside a try
+  // that wraps the redirect — redirect() works by throwing NEXT_REDIRECT,
+  // which must propagate. The respondent reaches /submitted regardless.
+  await notifyOwnersOfSubmission(admin, {
+    invitationId: session.invitationId,
+    responseId: session.responseId,
+  });
 
   // Drop the session cookie (keep lang so /submitted renders in the
   // respondent's language). The response is already terminal — getSession

@@ -17,15 +17,21 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut } from "@/lib/actions/auth";
+import NotificationsBell from "@/components/NotificationsBell";
+import type { NotificationView } from "@/lib/repos/notifications";
 
 type Admin = { name: string; role: "owner" | "readonly" };
 type NavItem = { href: string; label: string };
 
 export default function AdminShell({
   admin,
+  notifications,
+  unreadCount,
   children,
 }: {
   admin: Admin;
+  notifications: NotificationView[];
+  unreadCount: number;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -109,7 +115,21 @@ export default function AdminShell({
         </div>
       </aside>
 
-      <main className="flex-1 min-w-0 overflow-x-hidden">{children}</main>
+      <div className="flex-1 min-w-0 flex flex-col">
+        {/* Top header strip. The bell is owner-only — a readonly admin has no
+            notifications and gets no bell (the header stays empty for them,
+            keeping layout consistent). Pages keep their own padding/headings;
+            this strip just hosts the bell, right-aligned. */}
+        {admin.role === "owner" && (
+          <header className="h-14 flex-shrink-0 border-b border-line bg-white flex items-center justify-end px-6">
+            <NotificationsBell
+              notifications={notifications}
+              unreadCount={unreadCount}
+            />
+          </header>
+        )}
+        <main className="flex-1 min-w-0 overflow-x-hidden">{children}</main>
+      </div>
     </div>
   );
 }
