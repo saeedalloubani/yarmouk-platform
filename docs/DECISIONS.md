@@ -592,6 +592,40 @@ Resend NEVER touches `responses`/`answers`, so a respondent's work is structural
 
 **Email-failure consequence (loud surface):** the DB rotation and the email are separate statements (per D54 ordering — you can't email a token you haven't minted+rotated). Because `token_hash` is overwritten BEFORE the email sends, a rotation that commits and then fails to email leaves the OLD link dead and the NEW link only in the action's returned `tokenUrl`. Recoverable (resend again), but the UI MUST surface the failure unmissably and show the new `tokenUrl` prominently — louder than create's email-failure surface, where no link is ever dead. (`InvitationResendButton` renders a red panel with the link on `ok && !emailed`.)
 
+### D57. The recordings Storage bucket is dashboard-provisioned, not migration-managed
+
+The private `recordings` bucket (50 MB per-file limit, audio-MIME allow-list, `public=false`) is created through the Supabase Studio dashboard, deliberately NOT in a SQL migration. Migration 018 manages the *access control* on the bucket's contents (`recordings_obj_owner_all` RLS on `storage.objects`) but not the bucket's existence.
+
+**Why:** Storage buckets sit in the same category as Vault secrets (watch-out #7) — infrastructure provisioned out-of-band, not reproducible cleanly through `supabase db push`. A `storage.buckets` INSERT in a migration is fragile across environments and fights Supabase's own provisioning. The migration owns what SQL owns well (RLS policies, triggers); the dashboard owns the bucket. A fresh environment requires the documented manual step of creating the bucket — recorded in RUNBOOK / STATUS, not assumed.
+
+**Corollary — Storage objects are API-delete-only:** `storage.objects` rows cannot be removed via SQL `DELETE` (the `storage.protect_delete` trigger raises 42501). Deletion must go through the Storage API `.remove()` (which `deleteRecordingObject` does). Any future cleanup or backup tooling must use the API, not SQL.
+
+### D58. Recording↔consent is a database trigger, not an application convention
+
+Audio may only be attached to a response whose consent record has `audio_consent = true`. This is enforced by the `recordings_require_consent` BEFORE INSERT/UPDATE trigger (migration 018), which refuses audio against a non-consenting OR unverified-consent response (raises `check_violation` 23514). The application *also* pre-checks consent before upload (for a clean UX error), but the trigger is the invariant.
+
+**Why:** consent-before-recording is an ethics boundary, not a UX nicety — it must hold regardless of the connection role or code path that writes the row, exactly the reasoning behind the D10 question-freeze trigger (`questions_draft_only`, migration 017). An app-only check can be bypassed by a future code path that forgets it; a trigger cannot. SECURITY DEFINER with a locked search_path, same pattern as 017.
+
+**Orthogonality:** `audio_consent` (whether a response may be recorded) is independent of `collection_mode` (how the response was gathered, D60). An interview may be unrecorded — `collection_mode='interview'` with `audio_consent=false` is a valid, representable state.
+
+### D59. v1 audio upload goes through a Server Action; direct-to-Storage rework is a pre-launch blocker
+
+Audio upload (v1) sends the file through a Next.js Server Action (`uploadRecordingAction`), which streams it to the bucket via the authenticated client (so the proven `recordings_obj_owner_all` RLS authorizes every write — never service-role). The local dev limit is raised via `next.config.ts` `serverActions.bodySizeLimit = '50mb'` to match the bucket cap.
+
+**Why this is acceptable for v1:** it's the simplest path for a solo researcher uploading occasional interview audio, and it reuses the full security model (RLS, consent trigger, audit, playback) on the real authenticated path.
+
+**Pre-launch blocker — Vercel 4.5 MB body cap:** the Server-Action transport works locally but **Vercel caps serverless request bodies at 4.5 MB**, below a real interview's audio size — production uploads will be rejected at the platform layer regardless of `bodySizeLimit`. Before launch, rework to a direct-to-Storage signed-upload URL (browser → bucket, bypassing the Server Action body). The bucket, RLS, consent trigger, row model, playback, and audit all carry over; only the upload transport (`uploadRecordingAction` + the FormData call in `RecordingsSection.tsx`) changes. Tracked in STATUS "Known Open Items".
+
+### D60. collection_mode is a data marker on the invitation, not a gate on a separate write path
+
+A `collection_mode` enum (`self_completed` | `interview`) on `invitations`, NOT NULL default `self_completed`, inherited by the response through its invitation FK (deliberately no column on `responses`). It records HOW a response was gathered. Create-only — set at invitation creation, NOT editable via resend (resend rotates the token for the same run; it does not re-scope how the invitation is conducted).
+
+**The interview workflow:** the researcher conducts the interview offline with a recorder, returns to the office, logs in as owner, creates an invitation marked `interview` (does not email it), opens the `/r/<token>` link herself, marks consent (including audio_consent), fills the answers via the existing respondent flow, and uploads the audio on the admin response page.
+
+**Why no separate admin answer-entry UI (the deliberate non-build):** the respondent flow already collects answers. An interview is simply an invitation the researcher fills via its own link — so a parallel owner answer-entry screen would duplicate existing functionality and create two write paths into the same `answers` rows. `collection_mode` exists ONLY to distinguish the resulting data (dashboards, exports, the "Interview" chip on the responses list), not to gate a new write path. We explored owner answer-entry with provenance/freeze/audit and abandoned it once the workflow was clear: answers go through the respondent path regardless of who types them, so per-answer provenance would be inaccurate anyway — the honest marker lives on the invitation, not the answer.
+
+**Orthogonality:** independent of `audio_consent` (D58) — collection_mode is how-gathered, audio_consent is whether-recorded.
+
 ## Out of Scope (Explicitly)
 
 - **AI translation** between EN/AR. Button exists in mock as placeholder; clicking does nothing. Real translation would require GPT-4 or DeepL API; deferred.
