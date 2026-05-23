@@ -16,12 +16,13 @@
 // "[notify] email send failed" / "[notify] email threw".
 //
 // Takes the SERVICE-ROLE admin client (the respondent has no admin JWT):
-// createNotification + getActiveOwners run RLS-bypass; content is identity-free
-// (ref_code, never the respondent's name).
+// createNotification + getActiveOwnersToNotify run RLS-bypass; content is
+// identity-free (ref_code, never the respondent's name). The fan-out honors
+// each owner's submission_inapp / submission_email preference (no row = ON).
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "./supabase/database.types";
-import { createNotification, getActiveOwners } from "./repos/notifications";
+import { createNotification, getActiveOwnersToNotify } from "./repos/notifications";
 import { sendSubmissionEmail } from "./email/submission";
 
 /**
@@ -47,8 +48,8 @@ export async function notifyOwnersOfSubmission(
       console.error("[notify] ref_code lookup failed —", (e as Error).message);
     }
 
-    // 2. Resolve targets.
-    const owners = await getActiveOwners(admin);
+    // 2. Resolve targets, each annotated with their submission preferences.
+    const owners = await getActiveOwnersToNotify(admin);
     if (owners.length === 0) {
       console.error("[notify] no active owners to notify");
       return;
@@ -67,42 +68,48 @@ export async function notifyOwnersOfSubmission(
 
     for (const owner of owners) {
       // 2a. In-app row — distinct failure log; one owner failing doesn't
-      //     stop the others.
-      try {
-        await createNotification(admin, {
-          recipientAdminId: owner.id,
-          type: "submission",
-          title,
-          body,
-          href: relHref,
-        });
-      } catch (e) {
-        console.error(
-          "[notify] in-app write failed for owner",
-          owner.id,
-          "—",
-          (e as Error).message
-        );
+      //     stop the others. Gated on the owner's preference: an opt-out is
+      //     skipped silently (not a failure, so no log).
+      if (owner.submissionInapp) {
+        try {
+          await createNotification(admin, {
+            recipientAdminId: owner.id,
+            type: "submission",
+            title,
+            body,
+            href: relHref,
+          });
+        } catch (e) {
+          console.error(
+            "[notify] in-app write failed for owner",
+            owner.id,
+            "—",
+            (e as Error).message
+          );
+        }
       }
 
       // 2b. Email — best-effort. sendSubmissionEmail self-catches and returns
-      //     { ok }; the extra try guards the missing-API-key throw.
-      try {
-        const sent = await sendSubmissionEmail({
-          to: owner.email,
-          refCode: refCode ?? "—",
-          href: emailHref,
-        });
-        if (!sent.ok) {
-          console.error("[notify] email send failed for owner", owner.id);
+      //     { ok }; the extra try guards the missing-API-key throw. Gated on
+      //     the owner's preference: an opt-out is skipped silently.
+      if (owner.submissionEmail) {
+        try {
+          const sent = await sendSubmissionEmail({
+            to: owner.email,
+            refCode: refCode ?? "—",
+            href: emailHref,
+          });
+          if (!sent.ok) {
+            console.error("[notify] email send failed for owner", owner.id);
+          }
+        } catch (e) {
+          console.error(
+            "[notify] email threw for owner",
+            owner.id,
+            "—",
+            (e as Error).message
+          );
         }
-      } catch (e) {
-        console.error(
-          "[notify] email threw for owner",
-          owner.id,
-          "—",
-          (e as Error).message
-        );
       }
     }
   } catch (e) {

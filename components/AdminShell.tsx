@@ -11,8 +11,9 @@
 // ROLE GATE: Questionnaires is appended ONLY for owners — a readonly admin's
 // nav array never contains it (absent, not CSS-hidden). The page-level owner
 // gate on /admin/questionnaires remains the real enforcement; this just
-// keeps the link out of sight. Analytics / Data / Comms / Owner-only /
-// Settings groups + NotificationsBell are omitted until those pages exist.
+// keeps the link out of sight. Settings is now present (owner-only). The
+// Analytics / Data / Comms / Owner-only groups are still omitted until those
+// pages exist.
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -40,9 +41,12 @@ export default function AdminShell({
     { href: "/admin", label: "Overview" },
     { href: "/admin/invitations", label: "Invitations" },
     { href: "/admin/responses", label: "Responses" },
-    // Owner-only: editing instrument content (matches the question-editor boundary).
+    // Owner-only: instrument editing (question-editor boundary) + self-service settings.
     ...(admin.role === "owner"
-      ? [{ href: "/admin/questionnaires", label: "Questionnaires" }]
+      ? [
+          { href: "/admin/questionnaires", label: "Questionnaires" },
+          { href: "/admin/settings", label: "Settings" },
+        ]
       : []),
   ];
 

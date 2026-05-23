@@ -41,6 +41,13 @@ export type ActiveOwner = {
   email: string;
 };
 
+export type OwnerToNotify = {
+  id: string;
+  email: string;
+  submissionInapp: boolean;
+  submissionEmail: boolean;
+};
+
 const NOTIFICATION_COLS = "id, type, title, body, href, read_at, created_at";
 
 function rowToView(r: {
@@ -166,4 +173,58 @@ export async function getActiveOwners(
     .eq("status", "active");
   if (error) throw error;
   return (data ?? []).map((r) => ({ id: r.id, email: r.email }));
+}
+
+/**
+ * Active owners to notify on submit, each annotated with their two submission
+ * preferences. SERVICE-ROLE client (the respondent submit path has no admin
+ * JWT) — same path as getActiveOwners; runs RLS-bypass.
+ *
+ * "No row = ON": notification_preferences has no row for an owner until one is
+ * written, and a missing row means the column DEFAULT never fires — so we can
+ * NOT lean on the DB default. We default every owner to BOTH flags true and
+ * only override from a matching preferences row when one exists.
+ *
+ * Two queries joined IN MEMORY (owners, then their preferences by id) rather
+ * than a PostgREST embed — consistent with this project's join-in-memory
+ * convention; an inner embed onto notification_preferences would also silently
+ * drop owners who have no preferences row at all (exactly the "no row = ON"
+ * case we must preserve).
+ */
+export async function getActiveOwnersToNotify(
+  supabase: SupabaseClient<Database>
+): Promise<OwnerToNotify[]> {
+  // 1. Active owners — same query shape as getActiveOwners.
+  const { data: owners, error: ownersErr } = await supabase
+    .from("admins")
+    .select("id, email")
+    .eq("role", "owner")
+    .eq("status", "active");
+  if (ownersErr) throw ownersErr;
+  if (!owners || owners.length === 0) return [];
+
+  // 2. Their preferences, scoped to just those owner ids (read no more than
+  //    needed). Owners with no row simply won't appear here.
+  const ownerIds = owners.map((o) => o.id);
+  const { data: prefs, error: prefsErr } = await supabase
+    .from("notification_preferences")
+    .select("admin_id, submission_inapp, submission_email")
+    .in("admin_id", ownerIds);
+  if (prefsErr) throw prefsErr;
+
+  const prefByAdmin = new Map(
+    (prefs ?? []).map((p) => [p.admin_id, p] as const)
+  );
+
+  // 3. Left-join in memory: default BOTH flags true (no row = ON), override
+  //    only when a matching preferences row exists.
+  return owners.map((o) => {
+    const p = prefByAdmin.get(o.id);
+    return {
+      id: o.id,
+      email: o.email,
+      submissionInapp: p ? p.submission_inapp : true,
+      submissionEmail: p ? p.submission_email : true,
+    };
+  });
 }
