@@ -16,7 +16,7 @@
 import { Resend } from "resend";
 import type { Lang } from "@/lib/i18n";
 
-const FROM = "Yarmouk Study <onboarding@resend.dev>"; // test sender; real domain pre-launch
+const FROM = "Yarmouk Study <noreply@karasneh-research.org>"; // verified production sender (karasneh-research.org)
 const REPLY_TO = "sjkarasneh24@eng.just.edu.jo";
 
 const EN = {
