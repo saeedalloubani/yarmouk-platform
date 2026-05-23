@@ -1,6 +1,6 @@
 # Task State — Handoff Snapshot
 
-Last updated: notification-preferences feature (2026-05-23); submission notifications now honor per-owner toggles + Settings UI live.
+Last updated: recordings storage + upload/playback (2026-05-23); migration 18, D57–D59; Feature live-smoked. Pre-launch blocker: Vercel 4.5MB body cap (see §2).
 
 Read this first if you're picking up the project cold. It's a synthesis of where we are, what's been decided, and what's next. The canonical docs for each topic are linked inline — when this doc and a canonical doc disagree, the canonical doc wins.
 
@@ -25,6 +25,8 @@ See `CLAUDE.md` for the framing, `docs/STATUS.md` for build status, `docs/DECISI
 
 **Notification preferences** (2026-05-23, no migration): the submission-notification toggles (submission_inapp / submission_email) are now load-bearing — previously drawn-but-fake (the fan-out ignored them, default-on). lib/repos/notifications.ts gains getActiveOwnersToNotify (resolves active owners + their two submission prefs; no-row = ON, enforced in app code via a default-true overlay, NOT the DB column default — a missing row means the default never fires) alongside the untouched getActiveOwners; lib/notifications.ts fan-out swaps to it and gates each channel per-owner (in-app skipped if submission_inapp=false, email if submission_email=false; a skip is silent — opt-out is not failure; never-throw contract + await-before-redirect preserved); lib/actions/settings.ts adds owner-gated getMySubmissionPrefs / saveMySubmissionPrefs (upsert keyed on admin_id PK, writes only the two surfaced columns so the other ten keep DB defaults on insert / untouched on update; admin_id always server-derived from getCurrentAdmin, never client input; not audited per D54, same as mark-read); /admin/settings owner-gated page (mirrors the questionnaires gate) + components/SubmissionPrefsForm.tsx (save-on-flip, optimistic with loud-failure revert — a toggle never shows a state the server rejected) + AdminShell.tsx owner-only Settings nav link (last in the owner section). Live-smoked via a throwaway direct fan-out call (deleted, never committed): with the account owner's prefs at submission_inapp=false and the other owner at no-row, a single submit produced exactly one in-app row (the no-row owner — bell fired) and zero for the opted-out owner (bell suppressed), both emails attempted (one delivered, one the known test-sender ok=false), never-throw held; DB cleaned to true-empty (0/0/0/0). No migration (notification_preferences table + np_self_* RLS already shipped in migration 004); count stays 17, D-count stays D56 — no new decision (no-row=ON is an app convention). Verified by construction, NOT live-smoked (flagged honestly): the readonly→/admin/settings redirect (mirrors the proven questionnaires owner-gate, but no readonly flip this session) and the loud-failure revert (UI logic, not exercised against a forced save-failure). Tracked forward: only the two submission toggles are surfaced — the other ten preference types are DB columns with no UI until their notification features exist; the requireRole owner-gate extraction (§12) now has two more inline call sites wanting it; shared lib/email/resend.ts extract still pending (load-bearing for the Resend-domain pre-launch item).
 
+**Recordings storage + upload/playback** (2026-05-23, migration 018): owner-only audio upload against a response, private-bucket storage, lazy signed-URL playback — audio as interview evidence; the manually-typed answers remain the data (D15). Migration 018 added the security floor: recordings_obj_owner_all RLS on storage.objects (scoped to bucket_id='recordings', owner full / readonly none — the predicate is load-bearing since storage.objects is shared across buckets) + the recordings_require_consent BEFORE INSERT/UPDATE trigger on recordings (refuses audio against a non-consenting OR unverified-consent response; check_violation 23514; SECURITY DEFINER, same pattern as questions_draft_only/017). Both boundaries proven LIVE before any app code: consent trigger 3/3 (false/true/no-row, transactional rollback probe) + storage role-flip 4/4 (owner write+read PASS, readonly write 42501 + read zero-rows, with current_admin_role() INFO rows confirming the flip resolved owner/readonly — not a wrong-reason pass). App layer (all authenticated client — the proven RLS is load-bearing on the real path, never service-role): lib/repos/recordings-storage.ts (upload/delete/sign), lib/actions/recordings.ts (uploadRecordingAction: owner-gate + forbidden-audit + consent pre-check + orphan-safe cleanup on insert-refusal; getRecordingPlaybackUrlAction: lazy 2h signed URL, owner-gate + forbidden-audit; both audited per D54, FILENAME KEPT OUT of audit metadata — could carry a participant name), components/RecordingsSection.tsx (consent-aware upload + lazy per-row playback), and the response detail page wiring (upload shown only when audio_consent=true; "not consented" message when false; absent when no consent record). Existing recordings table/view/repo (002/005) were already transcription-ready — transcription/mapping columns (transcript_*, substitution_key, status enum) untouched, reserved for the backlog feature. Live-smoked end-to-end (browser, owner): upload (1.4MB mp3) → bucket object + recordings row (status audio_only, correct uploaded_by) + recording.upload audit (recordingId+sizeBytes, NO filename) all verified at the data layer; lazy playback works; negative case confirmed (audio_consent=false response shows the declined message, no upload control); cleaned to true-empty incl. the bucket object. Migration count → 18; decisions → D57 (private recordings bucket: dashboard-provisioned 50MB audio-MIME, NOT migration-managed — like Vault secrets), D58 (consent-gate trigger as DB invariant), D59 (upload via Server Action for v1 — see blocker). PRE-LAUNCH BLOCKER (load-bearing): the Server-Action upload transport works locally via next.config.ts serverActions.bodySizeLimit='50mb', but Vercel caps serverless request bodies at 4.5MB — real interview audio will be rejected at the platform layer in production. Rework to a direct-to-Storage signed-upload (browser → bucket, bypassing the Server Action body) before launch; the bucket/RLS/consent-trigger/row-model/playback/audit all carry over — only the upload transport (uploadRecordingAction + the FormData call) changes. Tracked in STATUS.md pre-launch list. Op note: storage.objects can NOT be deleted via SQL (storage.protect_delete trigger raises 42501) — use the Storage API (.remove(), which deleteRecordingObject already does); any future cleanup/backup script must use the API, not SQL. Deferred: audioDurationSeconds extraction (the <audio> element exposes duration client-side — easy follow-up; column stays null) and the whole transcription/mapping backlog feature.
+
 **Dev-admin note:** `salloubani@cybercorrelate.com` is seeded live as a SECOND `owner` for the build (out-of-band, not in any migration). Pre-launch removal blocker — tracked in `docs/STATUS.md` "Known Open Items".
 
 **Next: Session 4 (analytics + exports), or recordings (Session 6)** — **Session 3 is COMPLETE** (3a auth, 3b invitations, 3c responses + tagging + notes, question editor) and the **admin dashboard + sidebar shell** is live. Session 4 is the thesis-analysis deliverable: five analytics dashboards over real SQL, the **ATLAS.ti `.xlsx` export** (3c-ii's tags feed the starter codes, D19), PNG/PDF/Word exports, and the Executive Progress Report. Alternatively Session 6 recordings/import (pending the Sura Whisper auto-vs-manual question). **Both deferrable** — the core operator build (collect → view → code → edit instrument → monitor) is well-advanced. Still pending from 3b: seed the two supervisor admins (readonly) once emails are known (also unblocks the `invitation.*.forbidden` audit rows). Not yet scoped; deliberate planning pass first.
@@ -40,7 +42,7 @@ See `CLAUDE.md` for the framing, `docs/STATUS.md` for build status, `docs/DECISI
 - **Supabase region / tier**: free tier (default Supabase placement)
 - **Branch protection** on `main`: force-push blocked, deletion blocked. Direct pushes still allowed (solo phase).
 - **Vault state**: `pii_key_v1` exists. Verified `decryptable=true`. Backed up in Owner's password manager as `Yarmouk — pii_key_v1 (active)`.
-- **Migrations applied**: all 17 (see §5).
+- **Migrations applied**: all 18 (see §5).
 - **RLS**: enabled on every table. Helpers `current_admin_role()` and `current_admin_id()` resolve admin identity via JWT email lookup (D37).
 - **PII columns ciphertext**: helpers exist (`encrypt_pii` / `decrypt_pii`) but no real PII has been written yet — the only data in user tables is the seed questionnaire content. (2b-2 smoke wrote + cleaned up a test invitation; `inv_left=0`, `resp_left=0`.)
 - **Branch protection on Vault**: Studio access is Owner-only; CLI access via `SUPABASE_DB_PASSWORD` (in Owner's env, not in repo).
@@ -77,7 +79,7 @@ For full architecture, read in this order:
 
 ---
 
-## 5. Migrations applied (17 total)
+## 5. Migrations applied (18 total)
 
 All in `supabase/migrations/`, timestamped `YYYYMMDDHHMMSS_name.sql` (per Supabase CLI requirement — `0001_*` naming would be silently skipped). Applied to live DB in order.
 
@@ -100,6 +102,7 @@ All in `supabase/migrations/`, timestamped `YYYYMMDDHHMMSS_name.sql` (per Supaba
 | `…015_log_audit.sql` | Audit (3b-i): `log_audit()` SECURITY DEFINER granted to authenticated — bypasses audit_log's authenticated-INSERT restriction while the trigger snapshots the acting owner (not 'system'). Pure INSERT, no actor params (D54). |
 | `…016_tighten_researcher_notes_and_tag_dedup.sql` | Annotation layer (3c-ii): replaces `rn_admins_select` (owner+readonly) with `rn_owner_select` (owner-only SELECT on `researcher_notes` — closes a readonly note-read leak found in live `pg_policies`); adds `tags_name_lower_key` UNIQUE INDEX on `lower(name)` for case-insensitive tag dedup (case-sensitive `UNIQUE(name)` retained). Policy + functional index only → no type regen. |
 | `…017_questions_draft_only.sql` | Question editor (Session 3): `questions_draft_only` BEFORE INSERT/UPDATE/DELETE trigger — refuses any question mutation whose parent version isn't `draft` (raises `check_violation` 23514). Makes the D10 freeze a DB invariant (fires regardless of connection role). SECURITY DEFINER + locked search_path; `COALESCE(NEW,OLD)`. Trigger + function only → no type regen. |
+| `…018_recordings_storage_and_consent_gate.sql` | Recordings (Session 6): `recordings_obj_owner_all` RLS on `storage.objects` (owner full / readonly none, scoped to bucket_id='recordings') + `recordings_require_consent` BEFORE INSERT/UPDATE trigger (refuses audio against non-consenting/unverified response, check_violation 23514). Bucket itself is dashboard-provisioned, not in this migration (D57). |
 
 Migrations are forward-only. Don't edit applied migrations; write a new migration that fixes forward.
 
@@ -204,17 +207,17 @@ Migrations are forward-only. Don't edit applied migrations; write a new migratio
 │   ├── exports/                       (empty; Session 4 export tooling)
 │   └── encryption.ts                  NOT created — consent action calls admin.rpc("encrypt_pii") directly (one call site)
 ├── supabase/
-│   └── migrations/                    17 timestamped migration files (see §5)
+│   └── migrations/                    18 timestamped migration files (see §5)
 └── docs/
     ├── SCHEMA.md                      Canonical data model
-    ├── DECISIONS.md                   D1-D56 decision history with rationale
+    ├── DECISIONS.md                   D1-D59 decision history with rationale
     ├── CONVENTIONS.md                 TypeScript/SQL/Git/migration conventions
     └── STATUS.md                      Session-by-session build status + Notes
 ```
 
 ---
 
-## 7. Decisions register (D1-D56)
+## 7. Decisions register (D1-D59)
 
 Full text in `docs/DECISIONS.md`. One-line summaries grouped by topic:
 
@@ -310,6 +313,11 @@ Full text in `docs/DECISIONS.md`. One-line summaries grouped by topic:
 - D55: app invitation emails via the Resend API directly (resend SDK), separate from Supabase auth SMTP; EN final, AR→EN fallback (pre-launch: Sura's Arabic + domain verification)
 - D56: resend = response-aware token rotation — submitted→block, in-progress→resume re-send (work preserved), none→fresh re-send; old link dies on rotation; email-failure loud surface
 
+**Recordings, Session 6 (D57-D59)**
+- D57: private `recordings` Storage bucket — dashboard-provisioned (50MB, audio-MIME allow-list), NOT migration-managed (like Vault secrets, watch-out #7)
+- D58: recording↔consent enforced as a DB trigger (`recordings_require_consent`), not app convention — refuses audio against non-consenting/unverified response
+- D59: v1 audio upload via Server Action (50MB local bodySizeLimit); direct-to-Storage rework deferred to pre-launch (Vercel 4.5MB body cap)
+
 ---
 
 ## 8. Conventions to follow
@@ -352,7 +360,7 @@ Full text in `docs/CONVENTIONS.md`. Load-bearing ones the next session needs to 
 - `NEXT_PUBLIC_SITE_URL` — `http://localhost:3000` for dev, `https://karasneh-research.org` for prod
 
 **Naming conventions**
-- Migration files: `YYYYMMDDHHMMSS_name.sql`. Current latest timestamp range: `2026051917000{1..17}`. Next migration would be `…018_*` or later.
+- Migration files: `YYYYMMDDHHMMSS_name.sql`. Latest applied: `20260523120001` (migration 018); the Session-1 batch is `2026051917000{1..17}`. Next migration would be `…019_*` or later.
 - Vault secrets for PII keys: `pii_key_v<N>`, integer suffix (do not use leading zeros — sort is integer-cast).
 - Question codes: `Q1`-`Q14` for main, `F1`-`F4` for feedback.
 - Ref codes (anonymized display IDs): `{CAT_PREFIX}-{NAT_PREFIX}-{SEQ}` (e.g., `OFF-J-04`). Per CONVENTIONS.md "Reference Code Pattern".
