@@ -1,0 +1,112 @@
+// lib/notifications.ts
+//
+// Notification fan-out orchestrator (Session — notifications). The single
+// entry point the respondent submit path calls after finalizing a response.
+//
+// THE LOAD-BEARING PROPERTY: notifyOwnersOfSubmission CANNOT THROW under any
+// path. The respondent's submit + redirect must be untouchable by a
+// notification failure (in-app OR email). Every step is independently wrapped
+// and only logs; the whole body is additionally wrapped so a failure resolving
+// owners / building content can't escape either. The caller awaits it (a
+// serverless function can't reliably detach background work) BEFORE redirect()
+// — and deliberately NOT inside a try that wraps the redirect, since redirect
+// throws NEXT_REDIRECT.
+//
+// Distinct logs (as specified): "[notify] in-app write failed" vs
+// "[notify] email send failed" / "[notify] email threw".
+//
+// Takes the SERVICE-ROLE admin client (the respondent has no admin JWT):
+// createNotification + getActiveOwners run RLS-bypass; content is identity-free
+// (ref_code, never the respondent's name).
+
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "./supabase/database.types";
+import { createNotification, getActiveOwners } from "./repos/notifications";
+import { sendSubmissionEmail } from "./email/submission";
+
+/**
+ * Notify all active owners that a response was submitted: an in-app row +
+ * a best-effort email each. NEVER throws. Returns void; failures are logged.
+ */
+export async function notifyOwnersOfSubmission(
+  admin: SupabaseClient<Database>,
+  { invitationId, responseId }: { invitationId: string; responseId: string }
+): Promise<void> {
+  try {
+    // 1. ref_code (non-PII, plaintext) for the body. Best-effort: a failure
+    //    falls back to a generic body rather than aborting the fan-out.
+    let refCode: string | null = null;
+    try {
+      const { data } = await admin
+        .from("invitations")
+        .select("ref_code")
+        .eq("id", invitationId)
+        .maybeSingle();
+      refCode = data?.ref_code ?? null;
+    } catch (e) {
+      console.error("[notify] ref_code lookup failed —", (e as Error).message);
+    }
+
+    // 2. Resolve targets.
+    const owners = await getActiveOwners(admin);
+    if (owners.length === 0) {
+      console.error("[notify] no active owners to notify");
+      return;
+    }
+
+    const title = "New response submitted";
+    const body = refCode
+      ? `Response ${refCode} was submitted.`
+      : "A response was submitted.";
+    const relHref = `/admin/responses/${responseId}`;
+
+    // Absolute link for the email (in-app uses the relative href). Optional —
+    // if NEXT_PUBLIC_SITE_URL is unset we simply omit the link (never throw).
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/+$/, "");
+    const emailHref = siteUrl ? `${siteUrl}${relHref}` : undefined;
+
+    for (const owner of owners) {
+      // 2a. In-app row — distinct failure log; one owner failing doesn't
+      //     stop the others.
+      try {
+        await createNotification(admin, {
+          recipientAdminId: owner.id,
+          type: "submission",
+          title,
+          body,
+          href: relHref,
+        });
+      } catch (e) {
+        console.error(
+          "[notify] in-app write failed for owner",
+          owner.id,
+          "—",
+          (e as Error).message
+        );
+      }
+
+      // 2b. Email — best-effort. sendSubmissionEmail self-catches and returns
+      //     { ok }; the extra try guards the missing-API-key throw.
+      try {
+        const sent = await sendSubmissionEmail({
+          to: owner.email,
+          refCode: refCode ?? "—",
+          href: emailHref,
+        });
+        if (!sent.ok) {
+          console.error("[notify] email send failed for owner", owner.id);
+        }
+      } catch (e) {
+        console.error(
+          "[notify] email threw for owner",
+          owner.id,
+          "—",
+          (e as Error).message
+        );
+      }
+    }
+  } catch (e) {
+    // Catch-all backstop: nothing in this function may escape to the caller.
+    console.error("[notify] submission fan-out failed —", (e as Error).message);
+  }
+}
