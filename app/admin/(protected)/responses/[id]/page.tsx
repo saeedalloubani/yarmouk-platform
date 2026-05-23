@@ -32,8 +32,10 @@ import { getConsentForResponse } from "@/lib/repos/consent";
 import { getVisibleQuestions } from "@/lib/repos/questions";
 import { listTagsForResponse, listAllTags } from "@/lib/repos/tags";
 import { getResearcherNote } from "@/lib/repos/notes";
+import { listRecordings } from "@/lib/repos/recordings";
 import ResponseTagEditor from "@/components/ResponseTagEditor";
 import ResearcherNoteEditor from "@/components/ResearcherNoteEditor";
+import RecordingsSection from "@/components/RecordingsSection";
 
 export const dynamic = "force-dynamic";
 
@@ -154,6 +156,14 @@ export default async function ResponseDetailPage({
   const researcherNote = isOwner
     ? await getResearcherNote(supabase, response.id)
     : null;
+
+  // Recordings — OWNER-ONLY, fetched on the owner branch only (like the
+  // researcher note: absent for readonly, not redacted). The list passed to
+  // the client carries NO storage path — playback signs a URL lazily server-
+  // side via getRecordingPlaybackUrlAction.
+  const recordings = isOwner
+    ? await listRecordings(supabase, { responseId: response.id })
+    : [];
   // -----------------------------------------------------------------------
 
   return (
@@ -390,6 +400,44 @@ export default async function ResponseDetailPage({
               responseId={response.id}
               initialNote={researcherNote?.noteText ?? ""}
             />
+          </section>
+        )}
+
+        {/* Recordings — OWNER ONLY, and only when audio was consented. The
+            consent gate here mirrors the upload action + DB trigger
+            (migration 018): no audio surface at all unless audioConsent ===
+            true. When consent was explicitly declined we show a muted note;
+            when there is no consent record yet we render nothing (the Consent
+            section above already states "No consent record"). */}
+        {isOwner && consent?.audioConsent === true && (
+          <section className="card p-5 mt-5">
+            <h2 className="text-[15px] font-semibold text-ink mb-3">
+              Recordings
+            </h2>
+            <p className="text-[12px] text-muted mb-3">
+              Interview audio — owner only. Read-only supervisors never have
+              audio access.
+            </p>
+            <RecordingsSection
+              responseId={response.id}
+              initialRecordings={recordings.map((r) => ({
+                id: r.id,
+                filename: r.audioFilename,
+                sizeBytes: r.audioSizeBytes,
+                uploadedAt: r.uploadedAt,
+              }))}
+            />
+          </section>
+        )}
+
+        {isOwner && consent && consent.audioConsent === false && (
+          <section className="card p-5 mt-5">
+            <h2 className="text-[15px] font-semibold text-ink mb-3">
+              Recordings
+            </h2>
+            <p className="text-[13px] text-muted">
+              Audio recording was not consented for this response.
+            </p>
           </section>
         )}
       </div>
