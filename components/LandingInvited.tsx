@@ -95,10 +95,9 @@ export default async function LandingInvited({
           <Arrow />
         </Link>
 
-        {/* Ethics footer — English-only inline, deferred for Arabic
-            per STATUS.md. */}
+        {/* Ethics footer — follows the active language via ethicsFooter. */}
         <div className="mt-16 pt-8 border-t border-line text-[11px] text-muted-faint">
-          Ethics approval reference on file with the researcher.
+          {t.ethicsFooter}
         </div>
       </div>
     </main>

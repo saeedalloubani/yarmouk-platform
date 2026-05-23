@@ -16,14 +16,12 @@
 //     no retry); only the static "Researcher login" link in the
 //     header and a mailto for direct contact
 //
-// Deferred Arabic translations: `byInvitationOnly` and
-// `contactResearcher` keys live in lib/i18n.ts with sentinel Arabic
-// values rendered inside amber-dashed placeholder boxes so the gap
-// is unmistakable during testing. Pre-launch remediation: Sura
-// supplies real Arabic + we strip the amber-dashed styling here.
-// `ethicsFooter` renders English-only inline (procedural fine print,
-// lower priority for bilingual parity). All three tracked in
-// docs/STATUS.md "Known Open Items".
+// Bilingual: the body stacks English then Arabic. `byInvitationOnly`,
+// `contactResearcher`, and `ethicsFooter` now carry real Arabic from
+// lib/i18n.ts (2026-05-23 pass) and render as normal stacked text — the
+// amber-dashed QA placeholders that previously wrapped the first two are
+// gone. (The header chrome — study label, researcher login — stays
+// English-only by design.)
 
 import Link from "next/link";
 import { translations } from "@/lib/i18n";
@@ -77,15 +75,11 @@ export default function LandingNoSession() {
           </p>
         </div>
 
-        {/* By-invitation-only — Arabic placeholder pending pre-launch
-            translation. Strip amber-dashed treatment when real Arabic
-            arrives in lib/i18n.ts. */}
-        <div
-          lang="ar"
-          dir="rtl"
-          className="font-arabic border border-dashed border-warn bg-warnLight rounded-md p-4 italic text-warn text-[13px] text-center mb-10"
-        >
-          {translations.byInvitationOnly.ar}
+        {/* By-invitation-only — Arabic (real translation, 2026-05-23). */}
+        <div lang="ar" dir="rtl" className="font-arabic mb-10">
+          <p className="text-[15px] text-muted-strong leading-relaxed">
+            {translations.byInvitationOnly.ar}
+          </p>
         </div>
 
         {/* Contact — English (parallel layout to /invitation-invalid) */}
@@ -104,22 +98,19 @@ export default function LandingNoSession() {
           </p>
         </div>
 
-        {/* Contact — Arabic placeholder pending pre-launch translation.
-            Strip amber-dashed treatment when real Arabic arrives in
-            lib/i18n.ts. */}
-        <div
-          lang="ar"
-          dir="rtl"
-          className="font-arabic border border-dashed border-warn bg-warnLight rounded-md p-4 italic text-warn text-[13px] text-center mb-16"
-        >
-          {translations.contactResearcher.ar}
+        {/* Contact — Arabic (real translation, 2026-05-23). */}
+        <div lang="ar" dir="rtl" className="font-arabic mb-16">
+          <p className="text-[15px] text-muted-strong leading-relaxed">
+            {translations.contactResearcher.ar}
+          </p>
         </div>
 
-        {/* Ethics footer — English-only inline, deferred for Arabic
-            per STATUS.md. Procedural fine print; lower priority for
-            bilingual parity. */}
+        {/* Ethics footer — bilingual via the ethicsFooter key. */}
         <div className="pt-8 border-t border-line text-[11px] text-muted-faint">
-          Ethics approval reference on file with the researcher.
+          <span lang="en" dir="ltr">{translations.ethicsFooter.en}</span>
+          <span lang="ar" dir="rtl" className="font-arabic block mt-1">
+            {translations.ethicsFooter.ar}
+          </span>
         </div>
       </div>
     </main>

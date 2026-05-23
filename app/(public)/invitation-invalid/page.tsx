@@ -17,11 +17,12 @@
 //   - Bilingual stack: English first (alphabetical-by-language-
 //     code), Arabic second.
 //
-// Three Arabic strings (invalidTitle, invalidBody, invalidContact-
-// Label) are deferred for pre-launch translation per the row in
-// docs/STATUS.md "Known Open Items". The Arabic block currently
-// renders a visible amber-dashed placeholder so the gap is obvious
-// to anyone testing the page.
+// The Arabic block (title + body + contact-intro) now carries real
+// Arabic (2026-05-23 pass); the amber-dashed QA placeholder is gone.
+// Both blocks are hardcoded here rather than keyed in lib/i18n.ts
+// because this page resolves no Lang (the token failed) — it always
+// shows both languages stacked. The contact line (name/email) appears
+// once, in the English block above.
 //
 // Contact email hardcoded from supabase/migrations/
 // 20260519170007_settings_seed.sql (reply_to). The mailto: link
@@ -69,16 +70,20 @@ export default function InvitationInvalidPage() {
           </p>
         </div>
 
-        {/* Arabic block — visible placeholder pending pre-launch translation.
-            Amber-dashed border + warnLight bg + italic warn text makes the
-            gap unmistakable during QA. Replace with real Arabic strings from
-            i18n.ts when Sura supplies them. */}
-        <div
-          lang="ar"
-          dir="rtl"
-          className="font-arabic border border-dashed border-warn bg-warnLight rounded-md p-4 italic text-warn text-[13px] text-center"
-        >
-          [Arabic text — to be added before launch]
+        {/* Arabic block — mirrors the English block's structure (title +
+            body + contact-intro). The contact line (name/email) is shown
+            once in the English block above — same pattern as the no-session
+            landing. */}
+        <div lang="ar" dir="rtl" className="font-arabic">
+          <h1 className="text-[22px] font-semibold text-ink mb-3 tracking-tight">
+            رابط الدعوة غير صالح
+          </h1>
+          <p className="text-[15px] text-muted-strong leading-relaxed mb-3">
+            لم يعد رابط الدعوة هذا صالحاً.
+          </p>
+          <p className="text-[15px] text-muted-strong leading-relaxed">
+            إذا كنت تعتقد أن هذا خطأ، يُرجى التواصل مع الباحثة:
+          </p>
         </div>
       </div>
     </main>

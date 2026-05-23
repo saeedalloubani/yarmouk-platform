@@ -17,16 +17,15 @@
 // nested t.consent.intro) — premature for ~40 strings; revisit if
 // we cross ~150.
 //
-// Five keys deferred for pre-launch Arabic translation. Two are in
-// this file with sentinel Arabic values that render an amber-dashed
-// visible-placeholder box on the no-session landing variant:
-// `byInvitationOnly` and `contactResearcher`. Three are NOT in this
-// file: `ethicsFooter` (rendered English-only inline on landing
-// variants), `invalidTitle` and `invalidBody` (rendered as a literal
-// amber-dashed placeholder on `/invitation-invalid`). Tracked as a
-// row in docs/STATUS.md "Known Open Items" — Sura supplies Arabic
-// before first real invitation goes out. All Arabic gaps render
-// visibly during testing — no silent English fallbacks.
+// Arabic completeness pass (2026-05-23): the previously-deferred
+// strings now carry Sura-supplied Arabic. `byInvitationOnly` and
+// `contactResearcher` (below) hold real Arabic — the amber-dashed
+// placeholder boxes that wrapped them on the no-session landing have
+// been removed. `ethicsFooter` is now a key in this file (added
+// below), rendered bilingually on both landing variants. `invalidTitle`
+// / `invalidBody` are translated inline on `/invitation-invalid` (that
+// page resolves no Lang, so its strings stay hardcoded there, not keyed
+// here). Provenance rule unchanged: Arabic is Sura's, no AI translation.
 //
 // `Lang` is the canonical literal-union home (server- and client-
 // safe; this file imports nothing from next/headers). lib/cookies.ts
@@ -78,11 +77,17 @@ export const translations = {
   // ---- landing page (no-session variant) ----
   byInvitationOnly: {
     en: "This study is conducted by invitation only. If you received an invitation, please use the link in your email. Otherwise, please contact the researcher.",
-    ar: "[Arabic text — to be added before launch]",
+    ar: "هذه الدراسة بدعوة فقط. إذا تلقيت دعوة، يُرجى استخدام الرابط الموجود في بريدك الإلكتروني. وإلا، يُرجى التواصل مع الباحثة.",
   },
   contactResearcher: {
     en: "Contact the researcher:",
-    ar: "[Arabic text — to be added before launch]",
+    ar: "للتواصل مع الباحثة:",
+  },
+
+  // ---- landing footer (both variants) ----
+  ethicsFooter: {
+    en: "Ethics approval reference on file with the researcher.",
+    ar: "رقم الموافقة الأخلاقية محفوظ لدى الباحثة.",
   },
 
   // ---- consent ----
@@ -209,23 +214,22 @@ export const translations = {
     ar: "أكمل الأسئلة السابقة أولاً",
   },
 
-  // ---- net-new interactive strings, no mock Arabic ----
-  // ENGLISH-FALLBACK (ar mirrors en), NOT a visible sentinel. These
-  // surface in error/friction paths (submit-with-blanks warning,
-  // consent save failure) where a bracketed "[Arabic — to be added]"
-  // placeholder would be the worst possible UX — exactly when the
-  // respondent needs to understand what went wrong. Clear English
-  // beats a sentinel; the audience reads English. Real Arabic before
-  // launch (tracked in STATUS.md "Known Open Items"). Principle:
-  // static dead-end strings get a visible placeholder; interactive
-  // in-flow strings get English-fallback.
+  // ---- net-new interactive strings (error/friction paths) ----
+  // These surface in error/friction paths (submit-with-blanks warning,
+  // consent save failure). They originally shipped English-fallback
+  // (ar mirrored en) rather than a visible sentinel — a bracketed
+  // placeholder at a moment of friction is the worst UX. As of the
+  // 2026-05-23 Arabic pass they now carry real Arabic (Sura-supplied).
+  // Retained principle for any FUTURE deferred key: static dead-end
+  // strings get a visible placeholder; interactive in-flow strings get
+  // English-fallback, never a sentinel.
   submitMissingTitle: {
     en: "Please answer all required questions before submitting. Still blank:",
-    ar: "Please answer all required questions before submitting. Still blank:",
+    ar: "يُرجى الإجابة على جميع الأسئلة المطلوبة قبل الإرسال. الأسئلة غير المُجابة:",
   },
   consentError: {
     en: "Could not save your consent. Please try again.",
-    ar: "Could not save your consent. Please try again.",
+    ar: "تعذّر حفظ موافقتك. يُرجى المحاولة مرة أخرى.",
   },
 } as const;
 
