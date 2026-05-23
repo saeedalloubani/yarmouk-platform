@@ -29,6 +29,8 @@ import { translations } from "@/lib/i18n";
 const CONTACT_EMAIL = "sjkarasneh24@eng.just.edu.jo";
 const CONTACT_HREF =
   `mailto:${CONTACT_EMAIL}?subject=Yarmouk%20Study%20inquiry`;
+const CONTACT_PHONE = "+962 7 9661 0400";
+const CONTACT_PHONE_HREF = "tel:+962796610400";
 
 export default function LandingNoSession() {
   return (
@@ -95,13 +97,41 @@ export default function LandingNoSession() {
             >
               {CONTACT_EMAIL}
             </a>
+            {" — "}
+            <a
+              href={CONTACT_PHONE_HREF}
+              className="mono text-ink underline underline-offset-2 hover:text-brand-700"
+            >
+              {CONTACT_PHONE}
+            </a>
           </p>
         </div>
 
-        {/* Contact — Arabic (real translation, 2026-05-23). */}
+        {/* Contact — Arabic (real translation, 2026-05-23). Email + phone are
+            LTR runs inside this RTL block, so each <a> carries dir="ltr" (a
+            dir'd inline element is bidi-isolated per HTML) — keeps the Latin
+            address, the +962 digits, and the "—" separators from reordering. */}
         <div lang="ar" dir="rtl" className="font-arabic mb-16">
-          <p className="text-[15px] text-muted-strong leading-relaxed">
+          <p className="text-[15px] text-muted-strong leading-relaxed mb-2">
             {translations.contactResearcher.ar}
+          </p>
+          <p className="text-[14px] text-muted">
+            سرى كراسنة —{" "}
+            <a
+              href={CONTACT_HREF}
+              dir="ltr"
+              className="mono text-ink underline underline-offset-2 hover:text-brand-700"
+            >
+              {CONTACT_EMAIL}
+            </a>
+            {" — "}
+            <a
+              href={CONTACT_PHONE_HREF}
+              dir="ltr"
+              className="mono text-ink underline underline-offset-2 hover:text-brand-700"
+            >
+              {CONTACT_PHONE}
+            </a>
           </p>
         </div>
 

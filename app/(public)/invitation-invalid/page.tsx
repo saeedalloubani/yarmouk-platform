@@ -39,6 +39,8 @@ export const metadata: Metadata = {
 const CONTACT_EMAIL = "sjkarasneh24@eng.just.edu.jo";
 const CONTACT_HREF =
   `mailto:${CONTACT_EMAIL}?subject=Invalid%20Yarmouk%20invitation`;
+const CONTACT_PHONE = "+962 7 9661 0400";
+const CONTACT_PHONE_HREF = "tel:+962796610400";
 
 export default function InvitationInvalidPage() {
   return (
@@ -67,13 +69,20 @@ export default function InvitationInvalidPage() {
             >
               {CONTACT_EMAIL}
             </a>
+            {" — "}
+            <a
+              href={CONTACT_PHONE_HREF}
+              className="mono text-ink underline underline-offset-2 hover:text-brand-700"
+            >
+              {CONTACT_PHONE}
+            </a>
           </p>
         </div>
 
-        {/* Arabic block — mirrors the English block's structure (title +
-            body + contact-intro). The contact line (name/email) is shown
-            once in the English block above — same pattern as the no-session
-            landing. */}
+        {/* Arabic block — mirrors the EN structure incl. its own contact line
+            (Arabic name + shared email/phone). The email + phone are LTR runs
+            inside this RTL block, so each <a> carries dir="ltr" to isolate
+            them (Latin address, +962 digits, "—" separators stay in order). */}
         <div lang="ar" dir="rtl" className="font-arabic">
           <h1 className="text-[22px] font-semibold text-ink mb-3 tracking-tight">
             رابط الدعوة غير صالح
@@ -81,8 +90,26 @@ export default function InvitationInvalidPage() {
           <p className="text-[15px] text-muted-strong leading-relaxed mb-3">
             لم يعد رابط الدعوة هذا صالحاً.
           </p>
-          <p className="text-[15px] text-muted-strong leading-relaxed">
+          <p className="text-[15px] text-muted-strong leading-relaxed mb-3">
             إذا كنت تعتقد أن هذا خطأ، يُرجى التواصل مع الباحثة:
+          </p>
+          <p className="text-[14px] text-muted">
+            سرى كراسنة —{" "}
+            <a
+              href={CONTACT_HREF}
+              dir="ltr"
+              className="mono text-ink underline underline-offset-2 hover:text-brand-700"
+            >
+              {CONTACT_EMAIL}
+            </a>
+            {" — "}
+            <a
+              href={CONTACT_PHONE_HREF}
+              dir="ltr"
+              className="mono text-ink underline underline-offset-2 hover:text-brand-700"
+            >
+              {CONTACT_PHONE}
+            </a>
           </p>
         </div>
       </div>
