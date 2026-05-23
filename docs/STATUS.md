@@ -1,14 +1,45 @@
 # Build Status
 
-Last updated: admin dashboard + sidebar shell (2026-05-21).
+Last updated: PRODUCTION DEPLOYED + PROVEN LIVE (2026-05-23) at karasneh-research.org; collection loop complete; 19 migrations; UI bilingual + invitation email bilingual. See ## What's Left for the whole-product backlog.
 
 ## Where We Are
 
-**Phase**: Admin core complete; next is analytics + exports.
+**Phase**: Deployed + proven live at karasneh-research.org; the collection loop is built and proven; next is the data-USE half (export/analysis).
 
-Sessions 1–3 are complete — public respondent flow (2b), admin auth (3a), invitations (3b), responses + tagging + researcher notes (3c), and the question editor — with **17 migrations** applied to the linked Supabase project and smoke tests passing at each step. Next is **Session 4** (analytics dashboards + ATLAS.ti / file exports). The authoritative current-state snapshot lives in **In Progress** (below) and `TASK_STATE.md` §2; this section is orientation only.
+The full respondent + admin collection loop (invite → email → consent → bilingual questionnaire → submit → view/tag/note) is built, deployed, and smoke-proven in production — **19 migrations** applied, DB true-empty, UI + invitation email bilingual. The remaining work is tiered in **## What's Left** immediately below: **Tier 1** go-live gate (backups + Saeed-removal) before real enrollment; **Tier 2** export/analysis led by the **ATLAS.ti `.xlsx`** export; **Tier 3** operational depth. This section is orientation only — see ## What's Left for the backlog and `TASK_STATE.md` §2 for the feature-by-feature snapshot.
 
 A working v3 visual mock exists at `~/Downloads/yarmouk-mock` on the owner's Mac. It demonstrates every screen and interaction. The production build replaces the mock's hardcoded data with real database queries while preserving every visual and behavioral detail.
+
+## What's Left
+
+**The platform has two halves. The collection half is built and live. The data-USE half (export/analysis) is largely unbuilt — and the ATLAS.ti export is the standout gap.** A cold-start reader should not mistake "deployed + collection loop works" for "done": Sura can collect, but as of 2026-05-23 she cannot yet get her data out for analysis.
+
+**Built & live (the collection loop):** respondent flow (invite → email → consent → bilingual questionnaire → submit), admin Overview, invitations (create/send/resend), responses (list/detail with tags + researcher notes + recordings section), draft question editor, settings (notification prefs only), auth, audit logging (written), email both directions (invitation bilingual). Deployed at karasneh-research.org, 19 migrations, true-empty. See the Done checklists below.
+
+Remaining work, tiered by what it unblocks (NOT by session number):
+
+### Tier 1 — before Sura can ENROLL real participants (hard go-live gate)
+- **Backups** — UNBUILT (D27/D28 designed; backups table + BACKUP_PASSPHRASE slot exist; no dump/encrypt/restore/schedule code, no RUNBOOK procedure). Scope decision pending: full D27/D28 vs. minimal-safe v1 (pg_dump → encrypt → offsite copy). Confirm Supabase tier's own backup posture (likely free = none). MUST exist before response #1.
+- **Saeed-removal** — remove salloubani@cybercorrelate.com from admins (the ethics gate: keeps the consent form's "accessible only to the researcher" true). Last, because it locks Saeed out of dev.
+- *(Practical adjuncts: seed supervisor read-only admins — Dr. Obeidat, Dr. Tice — when their emails arrive; rework the recordings upload transport past Vercel's 4.5MB cap ONLY if interviews will be recorded at launch.)*
+
+### Tier 2 — before Sura can ANALYZE (the data-USE half — the platform's actual purpose)
+- **★ ATLAS.ti Survey-Import .xlsx export (D18/D19) — TOP PRIORITY after the go-live gate.** WHY THIS IS #1: Sura's entire analysis happens in ATLAS.ti, and she is NOT fluent in it — so this export→import bridge is what makes the collected data usable at all. Without it, collection is a dead end. Format (D18): ATLAS.ti Survey Import .xlsx, one respondent row → one document; (D19) applied platform tags map to ATLAS.ti starter codes via :code:tag:<name> columns. REFI-QDA is a secondary "advanced" option, not the priority.
+- **KEY PRIORITIZATION INSIGHT (text-first):** the ATLAS.ti export of the TYPED questionnaire answers is buildable INDEPENDENT of the transcription pipeline. The questionnaire answers are already text → directly exportable per D18/D19. The transcribe→anonymize→publish chain (D15/D16/D20) is only needed to get RECORDED-INTERVIEW audio into the same export. Study is text-first (no audio day-one), so transcription is NOT on the critical path to "Sura can analyze." This makes the #1 deliverable achievable without the heavy transcription build.
+- **Basic responses export (CSV/Excel)** — the simpler "get my data out" safety net; smaller than the ATLAS.ti export, good interim.
+- **Transcription pipeline (D15/D16/D20) — CONDITIONAL, not blocking.** Only needed IF/WHEN interviews are recorded. Audio is storage-only (D15); only published anonymized transcripts (status: audio_only→transcribing→transcribed→anonymizing→published, D16) count toward stats/export; substitution key owner-only; audio never exported (D20). Open question: Whisper auto- vs manual transcription (unresolved — needs Sura's call). Deferred while text-first.
+
+### Tier 3 — operational depth (does NOT block collection or analysis)
+- Analytics dashboards — per-question pivot, themes/tags, timeline, demographics, pilot-feedback hub. Currently the ONLY dashboard is Overview (KPI tiles); none of the deeper views exist.
+- Bulk import (D17) — Excel (Q1..Q14 columns + transcript_full) / free-form transcript import; each row → an ATLAS.ti document by ref_code. (Relevant if externally-transcribed interviews need importing.)
+- V2 publish flow (D11) — atomic V1-close/V2-activate + regenerate tokens for non-submitted invitees + migration emails. Editor currently makes drafts only; no activate/publish action.
+- Audit-log viewer — audit rows are WRITTEN everywhere but there's no admin UI to READ them (no security-log screen).
+- Email-template editor (D22) — email_templates table seeded but UNUSED; both emails hardcoded in lib/email/. No editor, no per-template BCC.
+- Fuller notifications — only submission_* of 12 preference toggles is wired (invitation-sent/opened, stalled, failed-login, weekly-digest have no triggering feature).
+- Settings beyond notifications — ethics-ref entry, retention config (D24), sender identity, team management. settings table seeded; UI does notification prefs only.
+- Geo/IP/device capture (D26) — audit_log has ip/country/city/user_agent columns but NO capture is wired; columns unpopulated. (MaxMind only in "Risks to Watch.") Verify if it matters for the ethics/security story.
+
+**Net:** collection loop = done & live. The hard gate to START is Tier 1 (backups + Saeed-removal). The gate to USE the data is Tier 2, led by the ATLAS.ti .xlsx export — and because the study is text-first, that export is buildable without the transcription pipeline.
 
 ## Built (Mock — Visual Only)
 
@@ -40,7 +71,7 @@ All 20 pages designed and clickable in the v3 mock:
 
 ## In Progress
 
-Nothing in flight. **Session 2b** (public respondent flow), **3a** (admin auth), **3b** (invitations — 3b-i mint/list/create + 3b-ii email/resend), **3c-i** (responses list + detail), **3c-ii** (tagging + researcher notes), the **question editor** (Session 3 COMPLETE), the **admin dashboard + sidebar shell**, and **response-submitted notifications** (in-app bell + best-effort email, owner-only — a Session-5 item built early) are complete and verified live. Next is **Session 4** (analytics dashboards + ATLAS.ti / file exports) or **recordings/import** (Session 6) — both deferrable; the core build is well-advanced.
+**Nothing mid-flight as of 2026-05-23.** Sessions 1–3, the admin dashboard + sidebar shell, response-submitted notifications, recordings storage + collection_mode, the production deploy, and the bilingual UI + invitation email have all landed and are verified live. There is no in-progress task to resume — the next work is tiered in **## What's Left** (above).
 
 ## Done
 
@@ -158,9 +189,9 @@ Nothing in flight. **Session 2b** (public respondent flow), **3a** (admin auth),
 - [x] **`lib/repos/notifications.ts` + `lib/notifications.ts` + `lib/email/submission.ts` + `lib/actions/notifications.ts` + `components/NotificationsBell.tsx`** (+ hooks in `lib/actions/answers.ts`, `(protected)/layout.tsx`, `AdminShell.tsx`) — wires the seeded-but-unused `notifications` table for the **response-submitted** event (owner-only). On submit, **`notifyOwnersOfSubmission`** fans out to **all active owners**: an in-app row each + a best-effort email. It is **fire-and-forget and structurally cannot throw** — every step wrapped + logged, hooked AFTER the finalize writes and BEFORE `redirect()` (outside any try wrapping it, since `redirect()` throws `NEXT_REDIRECT`), so a notification failure can never touch the respondent's submit. Insert is **service-role** (RLS-bypass; the no-auth INSERT policy is by design); owner reads via `n_self_select`. **The bell is role-gated, not row-gated** — readonly skips the fetch (layout) AND the render (AdminShell); RLS is identity-scoped, so a flipped owner's rows still match by id but the role gate hides the bell. Content is **identity-free** (ref_code, never the respondent's name). Email reuses the Resend conventions (English; `FROM`/`REPLY_TO` re-declared, `invitation.ts` untouched), returns `{ok}`, fails gracefully under the test sender. Distinct logs: `[notify] in-app write failed` vs `[notify] email send failed`/`threw`. Mark-read/mark-all are owner-gated, **not audited** (D54). Preferences **default-on, not honored this pass** (no rows seeded → no-op).
 - [x] **Full smoke** green against the live DB (2026-05-21): submitted NOTIF-1 → **2 in-app rows written, one per active owner** (owner sees only own via RLS), identity-free body, deep-link href; dashboard moved (Submitted 1/50%); submit completed to the thank-you page. **Email half proven graceful** — `ok=true` to the deliverable Resend account address, `ok=false` (recipient-not-verified) to the non-account owner, **submit unaffected either way**, distinct `[notify]` logs. Readonly role-flip → **no bell / no header strip** (role-gated both layers), no leak. Smoke data cleaned to a **true-empty baseline** (0 invitations / responses / answers / consent / notifications; both admins owner). **No migration** — `notifications`/`notification_preferences` + RLS + indexes were purpose-built in 2a (`'submission'` enum, `recipient_admin_id`, `n_self_select`/`update`, service-role INSERT, unread+recent indexes); migration count stays 17, D-count stays D56.
 
-## Next — Session 4 (analytics + exports), or recordings (Session 6)
+## Next
 
-**Session 3 is complete** (3a auth, 3b invitations, 3c responses + tagging + notes, question editor) and the **admin dashboard** is live. Next is **Session 4**: the five analytics dashboards over real SQL, the **ATLAS.ti `.xlsx` export** (the thesis-analysis deliverable — 3c-ii's tags feed the starter codes, D19), PNG/PDF/Word exports, and the Executive Progress Report. Alternatively **Session 6 recordings/import** (pending the Sura Whisper auto-vs-manual question). Both are **deferrable** — the core operator build (collect → view → code → edit instrument → monitor) is well-advanced. **Carried from 3b:** seed the two supervisor admins (readonly) once emails are known — also unblocks observing the `invitation.*.forbidden` warn audit rows fire.
+**Canonical backlog: see "## What's Left" near the top of this file** (2026-05-23, tiered by what unblocks enrollment vs. analysis). Post-deploy update: production is live (karasneh-research.org), and **recordings storage + collection_mode SHIPPED** (Session-6 items, migrations 18–19) — they are no longer "future." The headline remaining work is the Tier-1 go-live gate (backups + Saeed-removal) then the **ATLAS.ti `.xlsx` export** (the analysis bridge, D18/D19). The session-numbered roadmap in "After That" below predates the deploy and is kept for historical context only.
 
 ## After That (Sessions 4–7)
 
@@ -236,8 +267,8 @@ Deferred to a **v1.1 portal pass after the whole v1 project is complete and live
 | Resend — domain verified + from-swap + invitation-email Arabic | **Done (2026-05-23)** | From-address swapped to noreply@karasneh-research.org in both files (commit d846915); domain verified; delivery proven in prod smoke. Invitation-email Arabic copy shipped (commit e15b01e — redesigned bilingual template). |
 | **RECORDINGS UPLOAD — Vercel 4.5MB body cap (BLOCKER)** | Pre-launch blocker | Audio upload works locally via `next.config.ts` `serverActions.bodySizeLimit='50mb'`, but **Vercel caps serverless request bodies at 4.5MB** — real interview audio (35-50min) will be rejected at the platform layer in production. Fix: rework the upload to a **direct-to-Storage signed-upload URL** (browser → Supabase Storage, bypassing the Server Action body). The bucket, `recordings_obj_owner_all` RLS, `recordings_require_consent` trigger, row model, playback, and audit all carry over — only the upload transport (`uploadRecordingAction` + the FormData call in `RecordingsSection.tsx`) changes. |
 | Recordings — Storage object deletion is API-only | Op note | `storage.objects` cannot be deleted via SQL (`storage.protect_delete` trigger raises 42501). Use the Storage API `.remove()` (which `deleteRecordingObject` already does). Any future cleanup/backup script must use the API, not SQL DELETE. |
-| Supervisor admins (2 × readonly) | Session 3b | Two supervisor admins (Dr. Mutawakkil Obeidat, Dr. Virginia Tice) still need seeding — both `admins` rows (readonly, active) via a 3b migration AND their `auth.users` identities provisioned in the dashboard — once their emails are known. |
-| **HARDENING — `NEXT_PUBLIC_SITE_URL` guard (before 3b-ii)** | Before 3b-ii | The create action builds the token URL as `${NEXT_PUBLIC_SITE_URL}/r/<token>`; when the env var is unset it renders `undefined/r/...` rather than failing (caught in 3b-i smoke; added to `.env.local`). Harmless locally, but in production a missing env var would mint **broken links emailed to real officials**. Fix: throw a clear error at mint time if `NEXT_PUBLIC_SITE_URL` is unset. MUST land before 3b-ii sends any email. |
+| Supervisor admins (2 × readonly) | Open — Tier-1 adjunct | Two supervisor admins (Dr. Mutawakkil Obeidat, Dr. Virginia Tice) still need seeding — both `admins` rows (readonly, active) AND their `auth.users` identities provisioned in the dashboard — once their emails are known. (Practical adjunct to the go-live gate; see "## What's Left" Tier 1.) |
+| `NEXT_PUBLIC_SITE_URL` guard | **Done (3b-ii)** | `buildInvitationUrl()` in `lib/tokens.ts` throws if `NEXT_PUBLIC_SITE_URL` is unset, called before any write/rotation — no `undefined/r/...` links can be minted (smoke a: no orphan row on unset). Prod env var set to `https://karasneh-research.org`. |
 | forbidden-attempt audit verification | Session 3b | `invitation.create.forbidden` (`warn`) audit row is built and composed from live-verified pieces, but not yet observed firing — the page guard bounces a readonly admin before the action runs. Verify the row fires once a real readonly supervisor exists (seed in 3b). |
 | InvitationCreateForm Cancel/Back use `<a href>` | **Done (polish 2026-05-21)** | Both internal-nav `<a href>` (Cancel + the success-state "← Back to invitations") swapped to Next `<Link>` for client-side nav consistency. |
 | Notification preferences — honor toggles + UI | **Done (2026-05-23)** | Shipped: fan-out honors `submission_inapp`/`submission_email` (no-row=ON), Settings UI at `/admin/settings` (owner-only). Commits 293d38d (feat) + c9b3f17 (docs). |
