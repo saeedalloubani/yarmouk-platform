@@ -39,6 +39,12 @@ export function categoryLabel(category: string): string {
   if (category === "ngos") return "NGOs";
   return category.charAt(0).toUpperCase() + category.slice(1);
 }
+
+// Display-only label for a collection mode. Stored value is the snake_case
+// enum; this is purely how it renders.
+export function collectionModeLabel(mode: string): string {
+  return mode === "interview" ? "Interview" : "Self-completed";
+}
 export type InvitationNationality =
   | "jordanian"
   | "syrian"
@@ -50,6 +56,8 @@ export type InvitationStatusValue =
   | "submitted"
   | "expired";
 
+export type InvitationCollectionMode = "self_completed" | "interview";
+
 export type Invitation = {
   id: string;
   refCode: string;
@@ -59,6 +67,7 @@ export type Invitation = {
   recipientEmailEncrypted: string | null;
   category: InvitationCategory;
   nationality: InvitationNationality | null;
+  collectionMode: InvitationCollectionMode;
   preferredLanguage: "en" | "ar";
   questionnaireVersionId: string;
   status: InvitationStatusValue;
@@ -91,6 +100,7 @@ function rowToInvitation(row: DbRow | DbViewRow): Invitation {
     recipientEmailEncrypted: row.recipient_email_encrypted,
     category: r.category,
     nationality: r.nationality,
+    collectionMode: r.collection_mode,
     preferredLanguage: r.preferred_language as "en" | "ar",
     questionnaireVersionId: r.questionnaire_version_id,
     status: r.status,
@@ -203,6 +213,7 @@ export type CreateInvitationInput = {
   recipientEmailEncrypted: string;
   category: InvitationCategory;
   nationality?: InvitationNationality | null;
+  collectionMode?: InvitationCollectionMode;
   preferredLanguage?: "en" | "ar";
   questionnaireVersionId: string;
   expiresAt: string;
@@ -222,6 +233,7 @@ export async function createInvitation(
     recipient_email_encrypted: input.recipientEmailEncrypted,
     category: input.category,
     nationality: input.nationality ?? null,
+    collection_mode: input.collectionMode ?? "self_completed",
     preferred_language: input.preferredLanguage ?? "en",
     questionnaire_version_id: input.questionnaireVersionId,
     expires_at: input.expiresAt,

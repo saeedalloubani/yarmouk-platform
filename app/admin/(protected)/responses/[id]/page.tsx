@@ -27,7 +27,7 @@ import type { Database } from "@/lib/supabase/database.types";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentAdmin } from "@/lib/auth";
 import { getResponse, getAnswersForResponse } from "@/lib/repos/responses";
-import { getInvitation, categoryLabel } from "@/lib/repos/invitations";
+import { getInvitation, categoryLabel, collectionModeLabel } from "@/lib/repos/invitations";
 import { getConsentForResponse } from "@/lib/repos/consent";
 import { getVisibleQuestions } from "@/lib/repos/questions";
 import { listTagsForResponse, listAllTags } from "@/lib/repos/tags";
@@ -217,6 +217,12 @@ export default async function ResponseDetailPage({
               <dt className="text-muted mb-0.5">Nationality</dt>
               <dd className="text-ink capitalize">
                 {invitation?.nationality ?? "—"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted mb-0.5">Collection mode</dt>
+              <dd className="text-ink">
+                {invitation ? collectionModeLabel(invitation.collectionMode) : "—"}
               </dd>
             </div>
             <div>

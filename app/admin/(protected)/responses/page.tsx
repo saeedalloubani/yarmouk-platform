@@ -59,6 +59,7 @@ export default async function ResponsesPage() {
       category: inv?.category ?? null,
       nationality: inv?.nationality ?? null,
       status: inv?.status ?? null,
+      collectionMode: inv?.collectionMode ?? null,
       language: r.language,
       startedAt: r.startedAt,
       submittedAt: r.submittedAt,
@@ -120,6 +121,11 @@ export default async function ResponsesPage() {
                       >
                         {row.refCode}
                       </Link>
+                      {row.collectionMode === "interview" && (
+                        <span className="chip-solid bg-accent-50 text-accent-700 ms-2 text-[10px]">
+                          Interview
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-2.5">{row.category ? categoryLabel(row.category) : "—"}</td>
                     <td className="px-4 py-2.5 capitalize">

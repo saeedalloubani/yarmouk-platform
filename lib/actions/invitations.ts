@@ -41,6 +41,7 @@ const schema = z.object({
   category: z.enum(["officials", "researchers", "donors", "ngos"]),
   nationality: z.enum(["jordanian", "syrian", "not_applicable"]),
   preferredLanguage: z.enum(["en", "ar"]),
+  collectionMode: z.enum(["self_completed", "interview"]).default("self_completed"),
   refCode: z
     .string()
     .trim()
@@ -66,6 +67,10 @@ export type NewInvitationInput = {
   category: string;
   nationality: string;
   preferredLanguage: string;
+  /** Optional from callers until the create-form UI sends it; the zod schema
+   *  defaults an omitted value to "self_completed" (matches the DB column +
+   *  repo default). */
+  collectionMode?: string;
   refCode: string;
   questionnaireVersionId: string;
   expiresAt: string;
@@ -160,6 +165,7 @@ export async function createInvitationAction(
       category: v.category,
       nationality: v.nationality,
       preferredLanguage: v.preferredLanguage,
+      collectionMode: v.collectionMode,
       questionnaireVersionId: v.questionnaireVersionId,
       expiresAt: new Date(v.expiresAt).toISOString(),
       maxUses: v.maxUses,
@@ -174,6 +180,7 @@ export async function createInvitationAction(
       metadata: {
         category: v.category,
         nationality: v.nationality,
+        collectionMode: v.collectionMode,
         questionnaireVersionId: v.questionnaireVersionId,
         invitationId: invitation.id,
       },

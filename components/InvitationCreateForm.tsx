@@ -34,6 +34,7 @@ export default function InvitationCreateForm({
     email: "",
     category: "officials",
     nationality: "jordanian",
+    collectionMode: "self_completed",
     preferredLanguage: "en",
     refCode: "",
     questionnaireVersionId: versions[0]?.id ?? "",
@@ -220,6 +221,17 @@ export default function InvitationCreateForm({
             <option value="jordanian">Jordanian</option>
             <option value="syrian">Syrian</option>
             <option value="not_applicable">Not applicable</option>
+          </select>
+        </div>
+        <div>
+          <label className="label">Collection mode</label>
+          <select
+            className="field"
+            value={form.collectionMode}
+            onChange={(e) => set("collectionMode", e.target.value)}
+          >
+            <option value="self_completed">Self-completed</option>
+            <option value="interview">Interview</option>
           </select>
         </div>
         <div>
