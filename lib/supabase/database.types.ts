@@ -305,6 +305,7 @@ export type Database = {
       invitations: {
         Row: {
           category: Database["public"]["Enums"]["category_type"]
+          collection_mode: Database["public"]["Enums"]["collection_mode"]
           created_at: string
           created_by: string | null
           expires_at: string
@@ -326,6 +327,7 @@ export type Database = {
         }
         Insert: {
           category: Database["public"]["Enums"]["category_type"]
+          collection_mode?: Database["public"]["Enums"]["collection_mode"]
           created_at?: string
           created_by?: string | null
           expires_at: string
@@ -347,6 +349,7 @@ export type Database = {
         }
         Update: {
           category?: Database["public"]["Enums"]["category_type"]
+          collection_mode?: Database["public"]["Enums"]["collection_mode"]
           created_at?: string
           created_by?: string | null
           expires_at?: string
@@ -1033,6 +1036,7 @@ export type Database = {
     Enums: {
       admin_role: "owner" | "readonly"
       category_type: "officials" | "researchers" | "donors" | "ngos"
+      collection_mode: "self_completed" | "interview"
       event_severity: "info" | "warn" | "alert"
       invitation_status: "sent" | "opened" | "started" | "submitted" | "expired"
       nationality_type: "jordanian" | "syrian" | "not_applicable"
@@ -1185,6 +1189,7 @@ export const Constants = {
     Enums: {
       admin_role: ["owner", "readonly"],
       category_type: ["officials", "researchers", "donors", "ngos"],
+      collection_mode: ["self_completed", "interview"],
       event_severity: ["info", "warn", "alert"],
       invitation_status: ["sent", "opened", "started", "submitted", "expired"],
       nationality_type: ["jordanian", "syrian", "not_applicable"],
