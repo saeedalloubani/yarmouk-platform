@@ -77,9 +77,17 @@ export default async function EditVersionPage({
     <main className="min-h-screen bg-white">
       <div className="max-w-3xl mx-auto px-6 py-10">
         <div className="mb-6">
-          <Link href="/admin/questionnaires" className="btn-ghost text-[13px] mb-4 inline-block">
-            ← Questionnaires
-          </Link>
+          <div className="flex items-center justify-between gap-4 mb-4">
+            <Link href="/admin/questionnaires" className="btn-ghost text-[13px] inline-block">
+              ← Questionnaires
+            </Link>
+            <Link
+              href={`/admin/questionnaires/${version.id}/preview`}
+              className="btn-secondary text-[13px]"
+            >
+              Preview as respondent →
+            </Link>
+          </div>
           <div className="eyebrow mb-1">{isDraft ? "Edit draft" : "View version"}</div>
           <h1 className="text-[22px] font-bold text-ink tracking-tight">
             <span className="text-brand-700">{variantLabel(version.variant)}</span>{" "}
