@@ -41,6 +41,9 @@ export default function AdminShell({
     { href: "/admin", label: "Overview" },
     { href: "/admin/invitations", label: "Invitations" },
     { href: "/admin/responses", label: "Responses" },
+    // Both-roles analytics. Single flat entry for now — promote to an
+    // "Analytics" group once a 2nd view lands.
+    { href: "/admin/analytics/feedback", label: "Feedback" },
     // Owner-only: instrument editing (question-editor boundary), self-service
     // settings, and the audit-log viewer.
     ...(admin.role === "owner"
