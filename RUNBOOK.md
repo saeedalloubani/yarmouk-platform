@@ -115,6 +115,26 @@ Produces `backups/yarmouk-YYYYMMDD-HHMM.yarmoukbackup` — an encrypted archive
 backup together. Run a backup **before any significant operation** (migration,
 V2 publish, bulk change) and **periodically once real data exists**.
 
+### During-collection backup routine
+
+While any questionnaire is **active** and respondents may be submitting, the DB
+changes daily but backups are still **manual** (D27 automation not yet wired).
+This routine caps worst-case loss at ~1 day.
+
+- **Who:** the Owner (Saeed during dev hand-off; Sura once sole researcher).
+- **When:** once **daily** on any day responses may have arrived (end of day is
+  fine) — **and** immediately before/after a milestone (activating a variant,
+  closing a variant, a bulk invitation send).
+- **Each run:** `npm run backup` → copy the new `.yarmoukbackup` **offsite**
+  (see "How to back up" above) → keep the three secrets separate (see "The three
+  secrets" below).
+- **Retention:** keep at least the **last 7 daily** backups **+ one per
+  milestone**; prune older ones from the offsite store.
+
+This manual routine is the **FLOOR**. The durable fix is **D27** (scheduled
+automated backup) — until it lands, this daily discipline *is* the data-loss
+guarantee. To recover, see "Restore" below.
+
 ### The three secrets (a backup is useless without ALL THREE — stored SEPARATELY)
 
 1. **The `.yarmoukbackup` file** — the encrypted dump (keep offsite).
