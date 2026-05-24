@@ -95,6 +95,7 @@ export default async function SecurityPage() {
                     Severity
                   </th>
                   <th className="text-start font-semibold px-4 py-2.5">Actor</th>
+                  <th className="text-start font-semibold px-4 py-2.5">IP</th>
                   <th className="text-start font-semibold px-4 py-2.5">Action</th>
                   <th className="text-start font-semibold px-4 py-2.5">
                     Resource
@@ -127,6 +128,18 @@ export default async function SecurityPage() {
                           <span className="block text-[11px] text-muted">
                             {e.actorRole}
                           </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        {e.ip ? (
+                          <span
+                            className="mono text-[12px]"
+                            title={e.userAgent ?? undefined}
+                          >
+                            {e.ip}
+                          </span>
+                        ) : (
+                          <span className="text-muted">—</span>
                         )}
                       </td>
                       <td className="px-4 py-2.5">

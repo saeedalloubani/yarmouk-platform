@@ -10,9 +10,10 @@
 // enforced at every logAudit call site). So we read straight via
 // supabase.from(), no decrypt layer.
 //
-// We deliberately SELECT only the operational columns. ip / country / city /
-// user_agent are omitted: they stay NULL until request-context capture (D26)
-// is wired, so surfacing them now would render empty columns.
+// We SELECT the operational columns plus ip / user_agent (now populated by
+// D26 ① on every audited action; older pre-D26 rows simply read NULL).
+// country / city remain omitted — geo resolution (D26 ③) is deferred, so those
+// columns stay NULL and would render empty.
 //
 // Takes the AUTHENTICATED server client so RLS applies.
 
@@ -31,10 +32,12 @@ export type AuditEventView = {
   action: string; // dotted name, e.g. "invitation.create"
   resource: string; // human-facing id (ref_code); "" when none
   metadata: Json; // non-PII context object
+  ip: string | null; // request IP (D26 ①); NULL on pre-D26 rows
+  userAgent: string | null; // request UA (D26 ①); NULL on pre-D26 rows
 };
 
 const AUDIT_COLS =
-  "id, ts, severity, actor_name, actor_role, action, resource, metadata";
+  "id, ts, severity, actor_name, actor_role, action, resource, metadata, ip, user_agent";
 
 function rowToView(r: {
   id: string;
@@ -45,6 +48,8 @@ function rowToView(r: {
   action: string;
   resource: string;
   metadata: Json;
+  ip: string | null;
+  user_agent: string | null;
 }): AuditEventView {
   return {
     id: r.id,
@@ -55,6 +60,8 @@ function rowToView(r: {
     action: r.action,
     resource: r.resource,
     metadata: r.metadata,
+    ip: r.ip,
+    userAgent: r.user_agent,
   };
 }
 
