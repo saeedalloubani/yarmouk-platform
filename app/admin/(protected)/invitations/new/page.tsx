@@ -12,6 +12,7 @@
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentAdmin } from "@/lib/auth";
+import { variantLabel, variantSortIndex } from "@/lib/repos/questionnaires";
 import InvitationCreateForm from "@/components/InvitationCreateForm";
 
 export const dynamic = "force-dynamic";
@@ -25,14 +26,20 @@ export default async function NewInvitationPage() {
   const { data: versions, error } = await supabase
     .from("questionnaire_versions")
     .select("id, variant, version_number, type")
-    .eq("status", "active")
-    .order("variant", { ascending: true });
+    .eq("status", "active");
   if (error) console.error("[invitations/new] versions load failed", error);
 
-  const versionOptions = (versions ?? []).map((v) => ({
-    id: v.id,
-    label: `${v.variant} · v${v.version_number} (${v.type})`,
-  }));
+  const versionOptions = (versions ?? [])
+    .slice()
+    .sort(
+      (a, b) =>
+        variantSortIndex(a.variant) - variantSortIndex(b.variant) ||
+        a.version_number - b.version_number
+    )
+    .map((v) => ({
+      id: v.id,
+      label: `${variantLabel(v.variant)} · v${v.version_number}`,
+    }));
 
   return (
     <main className="min-h-screen bg-white">

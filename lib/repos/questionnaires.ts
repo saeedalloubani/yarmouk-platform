@@ -37,6 +37,12 @@ export type EditorVersion = {
 // on its own, so it needs no map.)
 const VARIANT_LABELS: Record<string, string> = {
   pilot_officials: "Pilot · Officials",
+  pilot_researchers: "Pilot · Researchers",
+  pilot_donors: "Pilot · Donors",
+  pilot_ngos: "Pilot · NGOs",
+  // Tombstone: the combined pilot variant's ROW was deleted when the pilot
+  // split into 4 (migration 20260524140002); the enum value lingers (Postgres
+  // can't drop enum values). Kept defensively so it never renders raw.
   pilot_researchers_donors_ngos: "Pilot · Researchers, Donors & NGOs",
   main_researchers: "Main · Researchers",
   main_donors: "Main · Donors",
@@ -46,13 +52,45 @@ const VARIANT_LABELS: Record<string, string> = {
 };
 
 export function variantLabel(variant: string): string {
-  return (
-    VARIANT_LABELS[variant] ??
-    variant
+  const mapped = VARIANT_LABELS[variant];
+  if (mapped) return mapped;
+  // Fallback for any FUTURE unmapped variant: "Tier · Rest" (title-cased),
+  // matching the mapped shape (a known variant should always be in the map,
+  // where special casing like "NGOs"/"(Jordanian)" lives).
+  const m = variant.match(/^(pilot|main)_(.+)$/);
+  if (m) {
+    const tier = m[1].charAt(0).toUpperCase() + m[1].slice(1);
+    const rest = m[2]
       .split("_")
       .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1) : w))
-      .join(" ")
-  );
+      .join(" ");
+    return `${tier} · ${rest}`;
+  }
+  return variant
+    .split("_")
+    .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1) : w))
+    .join(" ");
+}
+
+// Display order for variant listings: all pilots first, then all mains, in
+// category order within each tier (officials → researchers → donors → ngos;
+// officials split jordanian→syrian). Unknown variants sort last. Pair with
+// version_number as the tiebreaker.
+const VARIANT_ORDER: readonly string[] = [
+  "pilot_officials",
+  "pilot_researchers",
+  "pilot_donors",
+  "pilot_ngos",
+  "main_officials_jordanian",
+  "main_officials_syrian",
+  "main_researchers",
+  "main_donors",
+  "main_ngos",
+];
+
+export function variantSortIndex(variant: string): number {
+  const i = VARIANT_ORDER.indexOf(variant);
+  return i === -1 ? VARIANT_ORDER.length : i;
 }
 
 export type EditorQuestion = {
@@ -123,17 +161,24 @@ const VERSION_COLS =
 const QUESTION_COLS =
   "id, version_id, question_code, order_index, text_en, text_ar, is_feedback, is_required, visible_nationalities";
 
-/** All versions (drafts + active + closed), ordered for the editor list. */
+/** All versions (drafts + active + closed), ordered for the editor list:
+ *  pilots-then-mains (category order), version_number as tiebreaker. The DB
+ *  sort can only do alphabetical (which interleaves tiers), so the canonical
+ *  order is applied in memory via variantSortIndex. */
 export async function listVersionsForEditor(
   supabase: SupabaseClient<Database>
 ): Promise<EditorVersion[]> {
   const { data, error } = await supabase
     .from("questionnaire_versions")
-    .select(VERSION_COLS)
-    .order("variant", { ascending: true })
-    .order("version_number", { ascending: true });
+    .select(VERSION_COLS);
   if (error) throw error;
-  return (data ?? []).map(rowToVersion);
+  return (data ?? [])
+    .map(rowToVersion)
+    .sort(
+      (a, b) =>
+        variantSortIndex(a.variant) - variantSortIndex(b.variant) ||
+        a.versionNumber - b.versionNumber
+    );
 }
 
 /** Single version by id, or null. */
