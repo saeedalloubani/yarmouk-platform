@@ -27,6 +27,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import type { EmailOtpType } from "@supabase/supabase-js";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { logAudit, logFailedLogin } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
 
@@ -42,9 +43,30 @@ export async function GET(request: NextRequest) {
       token_hash: tokenHash,
     });
     if (!error) {
+      // Success — a session now exists, so audit via the AUTHENTICATED path:
+      // the fill-actor trigger attributes the real admin (actor_admin_id /
+      // actor_name / actor_role) from auth.jwt() on this same request. We log
+      // NO email here — actor_* already identifies who logged in, and the
+      // metadata-no-email contract stays clean. Best-effort wrap so a
+      // near-impossible audit hiccup can't block an otherwise-valid login.
+      try {
+        await logAudit(supabase, {
+          action: "admin.login",
+          severity: "info",
+          metadata: { via: "magic_link" },
+        });
+      } catch (err) {
+        console.error("[admin/callback] login audit failed", err);
+      }
       return NextResponse.redirect(`${origin}/admin`);
     }
+    // Bad / expired / tampered link — no session. Service-role failure write
+    // (no email is recoverable from token_hash).
     console.error("[admin/callback] verifyOtp failed", error);
+    await logFailedLogin("verify_failed");
+  } else {
+    // Link reached the callback without the required params.
+    await logFailedLogin("missing_params");
   }
 
   return NextResponse.redirect(`${origin}/admin/login?error=auth`);

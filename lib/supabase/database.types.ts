@@ -1013,9 +1013,11 @@ export type Database = {
       log_audit: {
         Args: {
           p_action: string
+          p_ip?: string
           p_metadata?: Json
           p_resource?: string
           p_severity?: Database["public"]["Enums"]["event_severity"]
+          p_user_agent?: string
         }
         Returns: undefined
       }

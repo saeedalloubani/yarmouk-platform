@@ -11,6 +11,7 @@
 // audit_log is Owner-readable but is still an operational/analytical
 // surface; keep it to non-identifying context (codes, ids, roles).
 
+import { headers } from "next/headers";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Json } from "./supabase/database.types";
 
@@ -25,7 +26,39 @@ export type AuditEntry = {
   severity?: Severity;
   /** NON-PII context only — never the token, name, or email. */
   metadata?: Json;
+  /**
+   * Optional explicit IP / user-agent override. Normally unset — logAudit
+   * auto-captures both from next/headers headers(). Pass these only from a
+   * context where the request headers aren't the ones you want recorded.
+   */
+  ip?: string | null;
+  userAgent?: string | null;
 };
+
+/**
+ * Best-effort read of the caller's request IP + user-agent (D26 phase ①).
+ * Safe from any Server Action / Route Handler — next/headers headers() is
+ * request-scoped there. Wrapped in try/catch so a non-request context
+ * degrades to nulls instead of throwing: audit capture must never break the
+ * action it follows. IP = first hop of x-forwarded-for (the original client;
+ * Vercel populates it), else x-real-ip. NOTE: an admin IP is operational
+ * security context, NOT respondent PII — D26 is strictly admin-only.
+ */
+async function getRequestMeta(): Promise<{
+  ip: string | null;
+  userAgent: string | null;
+}> {
+  try {
+    const h = await headers();
+    const xff = h.get("x-forwarded-for");
+    const ip =
+      (xff ? xff.split(",")[0]?.trim() : null) || h.get("x-real-ip") || null;
+    const userAgent = h.get("user-agent") || null;
+    return { ip, userAgent };
+  } catch {
+    return { ip: null, userAgent: null };
+  }
+}
 
 /**
  * Append an admin-mutation audit row. Throws on RPC error: a
@@ -38,14 +71,61 @@ export async function logAudit(
   supabase: SupabaseClient<Database>,
   entry: AuditEntry
 ): Promise<void> {
+  const meta = await getRequestMeta();
   const { error } = await supabase.rpc("log_audit", {
     p_action: entry.action,
     p_resource: entry.resource ?? "",
     p_severity: entry.severity ?? "info",
     p_metadata: entry.metadata ?? {},
+    // RPC params are optional string (absent → SQL DEFAULT NULL). Collapse our
+    // string|null to string|undefined so an absent header still lands as NULL.
+    p_ip: entry.ip ?? meta.ip ?? undefined,
+    p_user_agent: entry.userAgent ?? meta.userAgent ?? undefined,
   });
   if (error) {
     console.error("[audit] log_audit failed", error);
     throw error;
+  }
+}
+
+/**
+ * Record a FAILED admin sign-in attempt (D26 phase ②). There is NO
+ * authenticated session here, so this CANNOT use the authenticated log_audit
+ * RPC (granted to `authenticated` only; the fill-actor trigger would resolve
+ * no JWT). It writes directly via the SERVICE-ROLE client, which bypasses
+ * RLS; the BEFORE-INSERT trigger still stamps ts + actor='system' (correct —
+ * there is no real actor).
+ *
+ * DELIBERATELY NARROW — this is the ONLY unauthenticated audit-write path and
+ * must stay a failed-login channel, not a general one:
+ *   - the action is HARD-CODED ("admin.login.failed"); callers cannot pass an
+ *     arbitrary action / severity / resource / metadata;
+ *   - the service-role client is imported DYNAMICALLY and used only inside
+ *     this function (admin.ts is server-only — it THROWS if pulled into a
+ *     client bundle), so the rest of lib/audit.ts never touches the key;
+ *   - NO email is recorded — a failed verifyOtp yields only an opaque
+ *     token_hash, never the attempted address; we do NOT fabricate one.
+ *
+ * Best-effort: fully wrapped so an audit-write hiccup can NEVER block the
+ * auth-failure redirect that follows it. (Contrast logAudit, which throws —
+ * there the mutation already succeeded, so a lost audit row should be loud.)
+ */
+export async function logFailedLogin(
+  reason: "verify_failed" | "missing_params"
+): Promise<void> {
+  try {
+    const { ip, userAgent } = await getRequestMeta();
+    const { createSupabaseAdminClient } = await import("./supabase/admin");
+    const admin = createSupabaseAdminClient();
+    const { error } = await admin.from("audit_log").insert({
+      action: "admin.login.failed",
+      severity: "warn",
+      ip,
+      user_agent: userAgent,
+      metadata: { reason },
+    });
+    if (error) console.error("[audit] logFailedLogin insert failed", error);
+  } catch (err) {
+    console.error("[audit] logFailedLogin threw", err);
   }
 }
