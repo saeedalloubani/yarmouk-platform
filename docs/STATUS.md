@@ -33,7 +33,7 @@ Remaining work, tiered by what it unblocks (NOT by session number):
 - Analytics dashboards — per-question pivot, themes/tags, timeline, demographics, pilot-feedback hub. Currently the ONLY dashboard is Overview (KPI tiles); none of the deeper views exist.
 - Bulk import (D17) — Excel (Q1..Q14 columns + transcript_full) / free-form transcript import; each row → an ATLAS.ti document by ref_code. (Relevant if externally-transcribed interviews need importing.)
 - V2 publish flow (D11) — atomic V1-close/V2-activate + regenerate tokens for non-submitted invitees + migration emails. Editor currently makes drafts only; no activate/publish action.
-- Audit-log viewer — audit rows are WRITTEN everywhere but there's no admin UI to READ them (no security-log screen).
+- Audit-log viewer — ✓ DONE (2026-05-24) — owner-only /admin/security viewer (newest-first, LIMIT 100); commits 4c9630e + eb8e086. NOTE: ip/country/city/user_agent still NOT captured (D26 unwired) — viewer omits them until D26 lands.
 - Email-template editor (D22) — email_templates table seeded but UNUSED; both emails hardcoded in lib/email/. No editor, no per-template BCC.
 - Fuller notifications — only submission_* of 12 preference toggles is wired (invitation-sent/opened, stalled, failed-login, weekly-digest have no triggering feature).
 - Settings beyond notifications — ethics-ref entry, retention config (D24), sender identity, team management. settings table seeded; UI does notification prefs only.
