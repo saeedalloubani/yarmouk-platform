@@ -195,6 +195,8 @@ This document records *why* we made the calls we did. If something seems wrong, 
 
 **Why:** Anomaly detection. If "Sura" suddenly logs in from a country she's never been to, the alert is obvious. Free MaxMind dataset is good enough — we don't need IP precision, just country-level signal.
 
+**Status (2026-05-24): partially implemented.** Phases ①+② shipped + prod-verified (commit `77b00fc`): IP + user-agent captured on every audited action; `admin.login` (success, authenticated) + `admin.login.failed` (no-session, service-role write, actor=`system`) events at the magic-link callback; `/admin/security` viewer surfaces IP. DEFERRED to end-of-project: ③ country/city geo resolution (MaxMind GeoLite2, resolve-on-read — needs a MaxMind account + license key) and ④ unknown-email-request failure logging (needs a login-page Server Action refactor; Supabase dashboard auth logs cover it meanwhile). Hardening done alongside: `log_audit` EXECUTE revoked from `anon`/`service_role` (authenticated-only). Full detail in docs/STATUS.md "What's Left".
+
 ## Operations
 
 ### D27. Daily automated backups, 30-day retention, with pinning
