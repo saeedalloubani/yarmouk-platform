@@ -8,12 +8,12 @@
 // usePathname for active-link highlighting + the admin's {name, role} for
 // the footer and role-gated nav.
 //
-// ROLE GATE: Questionnaires is appended ONLY for owners — a readonly admin's
-// nav array never contains it (absent, not CSS-hidden). The page-level owner
-// gate on /admin/questionnaires remains the real enforcement; this just
-// keeps the link out of sight. Settings is now present (owner-only). The
-// Analytics / Data / Comms / Owner-only groups are still omitted until those
-// pages exist.
+// ROLE GATE: the owner-only nav items (Questionnaires, Settings, Security)
+// are appended ONLY for owners — a readonly admin's nav array never contains
+// them (absent, not CSS-hidden). The page-level owner gates on those routes
+// remain the real enforcement; this just keeps the links out of sight.
+// Security (the audit-log viewer) is now wired. The remaining Analytics /
+// Data / Comms groups are still omitted until those pages exist.
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -41,11 +41,13 @@ export default function AdminShell({
     { href: "/admin", label: "Overview" },
     { href: "/admin/invitations", label: "Invitations" },
     { href: "/admin/responses", label: "Responses" },
-    // Owner-only: instrument editing (question-editor boundary) + self-service settings.
+    // Owner-only: instrument editing (question-editor boundary), self-service
+    // settings, and the audit-log viewer.
     ...(admin.role === "owner"
       ? [
           { href: "/admin/questionnaires", label: "Questionnaires" },
           { href: "/admin/settings", label: "Settings" },
+          { href: "/admin/security", label: "Security" },
         ]
       : []),
   ];
