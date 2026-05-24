@@ -19,7 +19,7 @@ A working v3 visual mock exists at `~/Downloads/yarmouk-mock` on the owner's Mac
 Remaining work, tiered by what it unblocks (NOT by session number):
 
 ### Tier 1 — before Sura can ENROLL real participants (hard go-live gate)
-- **Backups** — UNBUILT (D27/D28 designed; backups table + BACKUP_PASSPHRASE slot exist; no dump/encrypt/restore/schedule code, no RUNBOOK procedure). Scope decision pending: full D27/D28 vs. minimal-safe v1 (pg_dump → encrypt → offsite copy). Confirm Supabase tier's own backup posture (likely free = none). MUST exist before response #1.
+- **Backups — v1 SHIPPED + restore-PROVEN (2026-05-24, commit 8a4c69b).** Manual encrypted DB backup: `npm run backup` → encrypted .yarmoukbackup; restore round-trip proven against a throwaway postgres:17 (all 17 public tables count-match live). RUNBOOK "Backup & restore" documents the three-secrets pairing (file + BACKUP_PASSPHRASE + Vault key) and the procedure. REMAINING CAVEATS (not blocking enrollment, but know them): (a) MANUAL — no scheduling (D27 deferred); (b) DB-ONLY — no Storage/audio (text-first; add when interviews recorded); (c) full project-level DR is DOCUMENTED but NOT yet rehearsed end-to-end; (d) OPERATIONAL — each backup must be copied OFFSITE to the Mac (the script writes project-local/gitignored, which is not offsite). The go-live readiness bar is met (a working, proven recovery path exists); the caveats are follow-ons.
 - **Saeed-removal** — remove salloubani@cybercorrelate.com from admins (the ethics gate: keeps the consent form's "accessible only to the researcher" true). Last, because it locks Saeed out of dev.
 - *(Practical adjuncts: seed supervisor read-only admins — Dr. Obeidat, Dr. Tice — when their emails arrive; rework the recordings upload transport past Vercel's 4.5MB cap ONLY if interviews will be recorded at launch.)*
 
@@ -39,7 +39,7 @@ Remaining work, tiered by what it unblocks (NOT by session number):
 - Settings beyond notifications — ethics-ref entry, retention config (D24), sender identity, team management. settings table seeded; UI does notification prefs only.
 - Geo/IP/device capture (D26) — audit_log has ip/country/city/user_agent columns but NO capture is wired; columns unpopulated. (MaxMind only in "Risks to Watch.") Verify if it matters for the ethics/security story.
 
-**Net:** collection loop = done & live. The hard gate to START is Tier 1 (backups + Saeed-removal). The gate to USE the data is Tier 2, led by the ATLAS.ti .xlsx export — and because the study is text-first, that export is buildable without the transcription pipeline.
+**Net:** collection loop = done & live. The hard gate to START is now just **Saeed-removal** (backups v1 is shipped + restore-proven 2026-05-24; its caveats are follow-ons, not blockers). The gate to USE the data is Tier 2, led by the ATLAS.ti .xlsx export — and because the study is text-first, that export is buildable without the transcription pipeline.
 
 ## Built (Mock — Visual Only)
 
@@ -277,7 +277,7 @@ Deferred to a **v1.1 portal pass after the whole v1 project is complete and live
 
 ## Production Deployment
 
-**Status as of 2026-05-23: DEPLOYED + PROVEN LIVE.** The platform is live at https://karasneh-research.org and the full flow is smoke-proven in production. DB true-empty (no real data yet — real enrollment is gated on the go-live sequence below). Remaining before real participants: backups (unbuilt), Saeed-removal (the gate that keeps consent's 'accessible only to the researcher' true).
+**Status as of 2026-05-23: DEPLOYED + PROVEN LIVE.** The platform is live at https://karasneh-research.org and the full flow is smoke-proven in production. DB true-empty (no real data yet — real enrollment is gated on the go-live sequence below). Remaining before real participants: **Saeed-removal** (the gate that keeps consent's 'accessible only to the researcher' true). Backups v1 is shipped + restore-proven (2026-05-24); its caveats (scheduling, Storage, offsite copy, DR rehearsal) are follow-ons.
 
 ### Done
 
@@ -296,7 +296,7 @@ Deferred to a **v1.1 portal pass after the whole v1 project is complete and live
 
 ### Remaining before real participants (the go-live sequence — do as one linked gate)
 
-1. **BACKUPS — still UNBUILT.** D27/D28 designed (daily 03:00 / 30-day / pinning / encrypted `.yarmoukbackup` ZIP), backups metadata table + `BACKUP_PASSPHRASE` env slot exist, but NO dump/encrypt/restore code, no script, no schedule, no RUNBOOK procedure. "Backups ON" is a BUILD task, not a toggle. Scope decision pending: full D27/D28 vs a minimal-safe v1 (documented `pg_dump` → encrypt-with-passphrase → offsite copy). Free tier likely provides no platform backups either (confirm tier). Must exist before response #1.
+1. **BACKUPS — ✓ v1 SHIPPED + restore-PROVEN (2026-05-24, commit 8a4c69b).** Manual encrypted DB backup (`npm run backup` → encrypted `.yarmoukbackup`); round-trip proven against a throwaway `postgres:17` (all 17 public tables count-match live); RUNBOOK "Backup & restore" documents the procedure + three-secrets pairing. Go-live readiness met. Follow-on caveats (NOT blocking): manual / no schedule (D27 deferred), DB-only (no Storage/audio), full project-level DR documented-but-not-rehearsed, and each backup must be copied OFFSITE. See "## What's Left" Tier 1.
 2. **SAEED-REMOVAL** — remove `salloubani@cybercorrelate.com` from `admins` before real data goes in (see reconciled note below). Account stays during dev only.
 3. **ETHICS/CONSENT** — no consent-language change needed under Sura's decision (single researcher at real-enrollment). The consent form's "accessible only to the researcher" (singular, feminine الباحثة, section 3) stays true PROVIDED Saeed-removal (item 2) happens before any real data. So item 2 is not just cleanup — it's the ethics gate. Verify it's done before response #1.
 
