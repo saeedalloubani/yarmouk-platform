@@ -35,6 +35,13 @@ yarn-error.log*
 .env.development
 .env.production
 
+# Backups (full production dataset — NEVER commit; copy offsite manually)
+backups/
+*.yarmoukbackup
+/schema.sql
+/data.sql
+/dump.tar.gz
+
 # Vercel
 .vercel
 

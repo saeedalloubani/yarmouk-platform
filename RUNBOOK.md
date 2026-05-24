@@ -96,3 +96,135 @@ If the active Vault key is deleted from Vault, **don't generate a replacement un
 **Methodologically**, the thesis defense data is intact. The analytical dataset is anonymized by design (D4) — analysis never depended on the encrypted columns. Losing PII means losing the operational ability to identify which invitation went to which person, not losing any research finding. If new invitations need to be sent (e.g., to continue data collection), generate fresh tokens with fresh PII; the existing analytical data is unaffected and still attributable to its ref_code.
 
 **Then**, and only then, add a new key (`pii_key_v2`) and update the password manager. Existing ciphertext stays unreadable; new writes work normally.
+
+## Backup & restore
+
+Manual, encrypted, DB-only (v1). Free-tier Supabase provides **no** platform
+backups, so this script is the recovery path (see "Limitations" below).
+
+### How to back up
+
+    npm run backup
+
+Produces `backups/yarmouk-YYYYMMDD-HHMM.yarmoukbackup` — an encrypted archive
+(`supabase db dump --linked` schema + data → `tar.gz` → `openssl enc
+-aes-256-cbc -pbkdf2`). The `backups/` dir is **gitignored and project-local**.
+
+**Then copy it OFFSITE** to Saeed's Mac backup location. The project-local
+`backups/` dir is **not** an offsite copy — a disk loss takes the repo and the
+backup together. Run a backup **before any significant operation** (migration,
+V2 publish, bulk change) and **periodically once real data exists**.
+
+### The three secrets (a backup is useless without ALL THREE — stored SEPARATELY)
+
+1. **The `.yarmoukbackup` file** — the encrypted dump (keep offsite).
+2. **`BACKUP_PASSPHRASE`** — password manager: **"Yarmouk — BACKUP_PASSPHRASE"**.
+   Decrypts the archive. **If lost, the file is permanently unrecoverable** (D28)
+   — there is no recovery path for a forgotten passphrase.
+3. **Vault key `pii_key_v1`** — password manager: **"Yarmouk — pii_key_v1
+   (active)"**. Decrypts the PII columns. Without it the analytical data restores
+   fine, but `recipient_name_encrypted` / `recipient_email_encrypted`
+   (invitations) and `signed_name_encrypted` (consent_records) stay unreadable
+   ciphertext. See "Disaster recovery: lost encryption key" above.
+
+Keep them apart — the file offsite, the two secrets in the password manager. No
+single loss should both expose readable PII and destroy recoverability.
+
+### What's IN / NOT IN the backup
+
+**IN** — the `public` schema: **all 17 tables (structure + data)**. PII columns
+are included **as ciphertext** (readable only with the Vault key).
+
+**NOT IN** (recovered separately):
+- **The Vault key** — managed `vault` schema; never dumped. Reinstate from the
+  password manager.
+- **`auth.users`** (admin login identities) — managed `auth` schema;
+  re-provision per "Admin auth bootstrap" above.
+- **Storage objects / recordings audio** — live in Storage, not the DB. Empty
+  now (text-first); **add a Storage backup step here when interviews start
+  being recorded.**
+- **Supabase-managed roles / schemas / RLS-policy grants** — recreated by the
+  platform + `supabase db push` (from migrations), not by this dump.
+
+### Restore — VERIFIED data round-trip (proven 2026-05-24)
+
+The conservative worst case we actually exercised: restore into a **bare**
+throwaway Postgres and confirm the public data comes back.
+
+    # 1. Decrypt + untar into a temp dir (BACKUP_PASSPHRASE from .env.local; never echo it)
+    TMP="$(mktemp -d)"
+    openssl enc -d -aes-256-cbc -pbkdf2 \
+      -in backups/yarmouk-YYYYMMDD-HHMM.yarmoukbackup \
+      -pass env:BACKUP_PASSPHRASE | tar -xzf - -C "$TMP"
+    #   → $TMP/schema.sql + $TMP/data.sql
+
+    # 2. Throwaway postgres:17 (matches live PG major)
+    docker run -d --name yarmouk-restore-test -e POSTGRES_PASSWORD=test postgres:17
+    until docker exec yarmouk-restore-test pg_isready -U postgres >/dev/null 2>&1; do sleep 1; done
+
+    # 3. Restore schema, then data (continue past benign errors)
+    docker exec -i yarmouk-restore-test psql -U postgres -v ON_ERROR_STOP=0 < "$TMP/schema.sql"
+    docker exec -i yarmouk-restore-test psql -U postgres -v ON_ERROR_STOP=0 < "$TMP/data.sql"
+
+    # 4. Verify count(*) per table vs live — expect every one to match
+    docker exec yarmouk-restore-test psql -U postgres -tA -c "
+    select 'admins',count(*) from admins
+    union all select 'answers',count(*) from answers
+    union all select 'audit_log',count(*) from audit_log
+    union all select 'backups',count(*) from backups
+    union all select 'consent_records',count(*) from consent_records
+    union all select 'email_templates',count(*) from email_templates
+    union all select 'invitations',count(*) from invitations
+    union all select 'notification_preferences',count(*) from notification_preferences
+    union all select 'notifications',count(*) from notifications
+    union all select 'questionnaire_versions',count(*) from questionnaire_versions
+    union all select 'questions',count(*) from questions
+    union all select 'recordings',count(*) from recordings
+    union all select 'researcher_notes',count(*) from researcher_notes
+    union all select 'response_tags',count(*) from response_tags
+    union all select 'responses',count(*) from responses
+    union all select 'settings',count(*) from settings
+    union all select 'tags',count(*) from tags"
+    #   Compare against live: supabase db query --linked with the same query.
+
+    # 5. Tear down
+    docker rm -f yarmouk-restore-test ; rm -rf "$TMP"
+
+**Expected-benign errors** (NOT failures): `role "…" does not exist`
+(Supabase-managed roles — `supabase_admin`, `authenticated`, `anon`,
+`service_role`), `schema "auth"/"storage" does not exist`, `extension
+"supabase_vault" is not available`, `publication "supabase_realtime" does not
+exist`, and `COPY`-cascade `syntax error` / `trailing junk` lines from those
+missing-schema blocks. **Only public-schema success matters** — confirm all 17
+tables exist with matching row counts. (2026-05-24: all 17 matched; no error
+touched the public schema.)
+
+### Full disaster recovery (DOCUMENTED — NOT yet rehearsed end-to-end)
+
+A real recovery targets a **Supabase project** (new or reset), where the managed
+roles / schemas / RLS already exist — so the benign bare-postgres errors above
+don't occur. Outline:
+
+1. **Provision the target** — a fresh Supabase project, or reset the existing
+   one. *(Mind the 2-project free-tier limit.)*
+2. **Recreate schema + RLS + roles** — `supabase db push` from
+   `supabase/migrations/` (authoritative), **or** restore the `schema.sql` layer.
+3. **Restore public data** — load `data.sql` from the decrypted backup.
+4. **Re-provision auth identities** — recreate the admin `auth.users` per "Admin
+   auth bootstrap" above (`admins` rows + dashboard auth users, reconciled ids).
+5. **Reinstate the Vault key** — add `pii_key_v1` from the password manager per
+   "Disaster recovery: lost encryption key" above, so PII decrypts.
+6. **Re-link the CLI** — `supabase link --project-ref <ref>`.
+
+**Honesty marker:** the **DATA round-trip is PROVEN** (2026-05-24, bare-postgres
+count-verify). The **full project-level DR above is DOCUMENTED but NOT yet
+rehearsed end-to-end** — rehearse it before relying on it (a future exercise;
+dry-run against a scratch project when one is free).
+
+### Limitations (v1 scope)
+
+- **Manual** — no scheduling. D27's daily-automated / 30-day-retention / pinning
+  is deferred (GitHub Actions or a cron host later).
+- **DB-only** — no Storage / audio (text-first; add when interviews are recorded).
+- **Free-tier Supabase has no platform backups** — which is why this exists. It
+  is currently the **only** backup path.
