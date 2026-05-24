@@ -1052,6 +1052,9 @@ export type Database = {
         | "main_ngos"
         | "main_officials_jordanian"
         | "main_officials_syrian"
+        | "pilot_researchers"
+        | "pilot_donors"
+        | "pilot_ngos"
       transcript_status:
         | "audio_only"
         | "transcribing"
@@ -1205,6 +1208,9 @@ export const Constants = {
         "main_ngos",
         "main_officials_jordanian",
         "main_officials_syrian",
+        "pilot_researchers",
+        "pilot_donors",
+        "pilot_ngos",
       ],
       transcript_status: [
         "audio_only",
