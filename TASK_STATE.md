@@ -32,7 +32,7 @@ BOTH rounds regardless.
 
 ### PARKED #2 — D27 automated backup (paused on Saeed's provisioning)
 Branch `d27-automated-backup`: STEP 1 (29a637b, backup_ro role) + STEP 2 (2fbb90e,
-headless backup.sh env-branch) COMMITTED, not pushed.
+headless backup.sh env-branch) COMMITTED + PUSHED to origin/d27-automated-backup (tracking set), not merged to main.
 - backup_ro role: least-privilege, PROVEN Vault-blind (no vault usage/select, no role
   inheritance, not superuser; BYPASSRLS for complete dump of RLS tables). Password set
   by Saeed (URL-safe hex), in password manager.
