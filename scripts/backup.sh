@@ -25,22 +25,27 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-# --- Read BACKUP_PASSPHRASE from .env.local (value never echoed) ------------
-# Read only the one line rather than sourcing the whole file (sourcing would
-# execute arbitrary content and export every key). openssl reads it via
-# `-pass env:` so the secret never appears in argv / `ps`.
-if [ ! -f .env.local ]; then
-  echo "ERROR: .env.local not found — cannot read BACKUP_PASSPHRASE." >&2
-  exit 1
+# --- BACKUP_PASSPHRASE: env wins (CI), else read from .env.local (local) -----
+# In CI the secret arrives as an env var (a GitHub secret); locally it lives in
+# .env.local. If it's already set in the environment we use it as-is and never
+# touch .env.local (which won't exist in CI). Reading from .env.local parses
+# only the one line rather than sourcing the file (sourcing would execute
+# arbitrary content). openssl reads it via `-pass env:` so the secret never
+# appears in argv / `ps` either way.
+if [ -z "${BACKUP_PASSPHRASE:-}" ]; then
+  if [ ! -f .env.local ]; then
+    echo "ERROR: BACKUP_PASSPHRASE not in env and .env.local not found." >&2
+    exit 1
+  fi
+  BACKUP_PASSPHRASE="$(grep -E '^BACKUP_PASSPHRASE=' .env.local | head -n1 | cut -d= -f2- || true)"
+  # Strip a trailing CR (CRLF files) and any wrapping quotes.
+  BACKUP_PASSPHRASE="${BACKUP_PASSPHRASE%$'\r'}"
+  BACKUP_PASSPHRASE="${BACKUP_PASSPHRASE%\"}"; BACKUP_PASSPHRASE="${BACKUP_PASSPHRASE#\"}"
+  BACKUP_PASSPHRASE="${BACKUP_PASSPHRASE%\'}"; BACKUP_PASSPHRASE="${BACKUP_PASSPHRASE#\'}"
 fi
-BACKUP_PASSPHRASE="$(grep -E '^BACKUP_PASSPHRASE=' .env.local | head -n1 | cut -d= -f2- || true)"
-# Strip a trailing CR (CRLF files) and any wrapping quotes.
-BACKUP_PASSPHRASE="${BACKUP_PASSPHRASE%$'\r'}"
-BACKUP_PASSPHRASE="${BACKUP_PASSPHRASE%\"}"; BACKUP_PASSPHRASE="${BACKUP_PASSPHRASE#\"}"
-BACKUP_PASSPHRASE="${BACKUP_PASSPHRASE%\'}"; BACKUP_PASSPHRASE="${BACKUP_PASSPHRASE#\'}"
 export BACKUP_PASSPHRASE
 if [ -z "${BACKUP_PASSPHRASE:-}" ]; then
-  echo "ERROR: BACKUP_PASSPHRASE is missing/empty in .env.local —" >&2
+  echo "ERROR: BACKUP_PASSPHRASE is missing/empty (checked env and .env.local) —" >&2
   echo "       refusing to write an unencrypted or empty backup." >&2
   exit 1
 fi
@@ -54,11 +59,23 @@ mkdir -p backups
 TS="$(date +%Y%m%d-%H%M)"
 OUT="backups/yarmouk-$TS.yarmoukbackup"
 
+# --- Dump target: BACKUP_DB_URL (CI, backup_ro) wins; else --linked (local) --
+# Same `supabase db dump` + flags either way, so the output shape — and thus the
+# proven restore — is identical. CI passes the least-privilege backup_ro
+# connection string; locally we fall back to the linked CLI state (postgres).
+if [ -n "${BACKUP_DB_URL:-}" ]; then
+  DUMP_TARGET=(--db-url "$BACKUP_DB_URL")
+  echo "[backup] dump target: --db-url (headless / backup_ro)"
+else
+  DUMP_TARGET=(--linked)
+  echo "[backup] dump target: --linked (local CLI state)"
+fi
+
 echo "[backup] dumping schema…"
-supabase db dump --linked -f "$TMP/schema.sql"
+supabase db dump "${DUMP_TARGET[@]}" -f "$TMP/schema.sql"
 
 echo "[backup] dumping data…"
-supabase db dump --linked --data-only --use-copy -f "$TMP/data.sql"
+supabase db dump "${DUMP_TARGET[@]}" --data-only --use-copy -f "$TMP/data.sql"
 
 echo "[backup] compressing…"
 tar -czf "$TMP/dump.tar.gz" -C "$TMP" schema.sql data.sql
