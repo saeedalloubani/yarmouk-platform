@@ -13,15 +13,40 @@ Study is TWO SEQUENTIAL STAGES with a learning loop:
   Between:       revise the draft MAIN variants from that feedback → proof
   Stage 2 Main:  activate mains → invite → collect → export → close
 
-IN PROGRESS: read-only self-service GAP AUDIT (table of UI-path-EXISTS / PARTIAL /
-MISSING-code-or-DB-only for: activate, close, edit-draft-content, create/manage
-invitations, view/export responses, team mgmt [seed supervisor admins — likely
-DB-only = critical gap, Sura can't grant her own supervisors access], settings).
-Output = the build list for what to ship before Saeed-removal. Builds are PARTIALLY
-blocked by the parked pilot-vs-main decision below; the AUDIT itself is not.
-Design rule for all self-service controls: expose SAFE ops (activate/close/resend/
-revoke/add-readonly-admin), keep DANGEROUS ops OUT (demote active→draft / unfreeze
-[guard blocks it], hard-delete responses).
+STATUS (2026-05-26): 3 OF 4 LIFECYCLE-BLOCKERS DONE + PROVEN + MERGED TO MAIN
+(merge commit 1761c8d). Branch self-service-lifecycle retired.
+  ✓ Activate/Close (commit 7a1ae78) — server-action + buttons on /admin/
+    questionnaires/[versionId]. Action machinery (owner-gate / audit /
+    router.refresh / transition guards) end-to-end proven via the Team smoke
+    test (same pattern); the buttons specifically get final confirmation at
+    Sura's first real pilot activation — held until her sign-off on the 4
+    pilot drafts.
+  ✓ Structural admin guards (27da7dc) — Inv1 (no runtime owner-creation,
+    42501) + Inv2 (last-owner protection, 23514). Proven via rolled-back
+    11-case probe matrix pre-apply AND post-apply against live triggers
+    (identical results). The load-bearing check is auth.jwt() IS NOT NULL —
+    empirically verified across three contexts (postgres / authenticated /
+    service-role); current_setting('request.jwt.claim.role') was ruled out
+    because it returns NULL for both postgres AND service-role.
+  ✓ Team mgmt (62cf136 + 473ec46) — /admin/settings/team owner-only;
+    invites read-only supervisors via createUser → admins-INSERT → magic-
+    link, with orphan-cleanup saga (createUser succeeded → admins INSERT
+    failed → deleteUser undo → if THAT fails, warn-severity audit row
+    "admin.invite.orphan" carries email + auth.users id, discoverable in
+    /admin/security). deleteUser itself wrapped against unexpected throws.
+    SMOKE-TESTED LIVE on prod 2026-05-26 (s.lubani@gmail.com): admins row +
+    auth.users + correct audit attribution + branded email + readonly
+    containment (nav-absent + route-level 307s on /admin/security + /admin/
+    settings/team) + clean removal via status='removed' + auth.admin.
+    deleteUser. Cleanup rehearsed the real Saeed-removal mechanism.
+  ✗ #4 REMAINING: Export (Stage-2 deliverable — CSV / ATLAS.ti xlsx /
+    executive report). DATA-BLOCKED on real responses; not lifecycle-
+    blocking for Stage-1 pilot collection, but blocks the final hand-off.
+    Build when needed for the export step.
+
+Design rule (still applies for follow-ups): expose SAFE ops (activate /
+close / resend / revoke / add-readonly-admin), keep DANGEROUS ops OUT
+(demote active→draft / unfreeze [guard blocks it], hard-delete responses).
 
 ### PARKED #1 — Pilot-counts-toward-main (Sura ↔ supervisors)
 Sura is deciding with supervisors whether pilot SME responses fold into the main
