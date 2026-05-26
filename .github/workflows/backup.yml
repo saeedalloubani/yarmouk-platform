@@ -48,6 +48,19 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq postgresql-client-17
 
+          # Diagnostic — show ALL pg_dump binaries actually on disk after the
+          # install. PGDG installs version-specific binaries at
+          # /usr/lib/postgresql/<MAJOR>/bin/. We want to see both the pre-
+          # existing 16 (preinstalled on ubuntu-24.04) AND the freshly-installed
+          # 17 — proves the apt step really put 17 down, AND surfaces it for
+          # future diagnostics if the gate below ever fails.
+          echo "--- pg_dump binaries on disk ---"
+          ls -la /usr/lib/postgresql/*/bin/pg_dump 2>&1 || true
+          echo "--- bare pg_dump resolution (informational) ---"
+          command -v pg_dump || true
+          pg_dump --version || true
+          echo "--------------------------------"
+
           # GATE — not aspirational. The PGDG `postgresql-client-17` package always
           # installs binaries at /usr/lib/postgresql/17/bin/ (stable across Ubuntu
           # releases per PGDG's debian packaging convention). Verify the absolute
@@ -63,15 +76,11 @@ jobs:
             exit 1
           fi
           PG17_VER="$("$PG17_BIN" --version)"
-          echo "$PG17_VER"
+          echo "verified absolute binary: $PG17_VER"
           if ! echo "$PG17_VER" | grep -qE ' 17\.'; then
             echo "ERROR: expected pg_dump 17.x, got: $PG17_VER" >&2
             exit 1
           fi
-
-          # Persist to PATH for subsequent steps (GITHUB_PATH PREPENDS, so the
-          # 17 binary wins over the pre-existing wrapper-resolved 16).
-          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
 
       - name: Dump → tar → encrypt → upload
         env:
@@ -85,17 +94,29 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Preflight: re-assert pg_dump 17 is what PATH actually resolves to.
-          # The install step already gated on this, but PATH is per-step in
-          # GitHub Actions; this is a cheap belt-and-braces guard so if the
-          # GITHUB_PATH mechanism ever fails to persist (or a runner image
-          # change introduces a higher-precedence binary), we fail at line 1
-          # here — not mid-dump with a partial schema.sql on disk.
-          PG_DUMP_VER="$(pg_dump --version)"
+          # ABSOLUTE PATH — never rely on PATH resolution for pg_dump. PGDG's
+          # pg_wrapper at /usr/bin/pg_dump picks the version registered as
+          # default at package-install time; with postgresql-client-16 already
+          # preinstalled on ubuntu-24.04, the wrapper resolves to 16 even after
+          # we install 17 — that's the prior-incident root cause. By binding
+          # PG_DUMP to the version-specific binary path that PGDG guarantees
+          # for postgresql-client-17, we eliminate the resolution surface area
+          # entirely. (GITHUB_PATH is also per-step / per-run-context — using
+          # absolute path here removes any dependence on that mechanism too.)
+          PG_DUMP="/usr/lib/postgresql/17/bin/pg_dump"
+
+          # Preflight: assert the binary exists AND is 17.x. If anything has
+          # drifted (PGDG layout change, install step skipped, wrong dispatch
+          # ref) we fail at line 1 — never mid-dump with a partial schema.sql.
+          if [ ! -x "$PG_DUMP" ]; then
+            echo "ERROR: $PG_DUMP missing / not executable" >&2
+            ls -la /usr/lib/postgresql/ 2>/dev/null || true
+            exit 1
+          fi
+          PG_DUMP_VER="$("$PG_DUMP" --version)"
           echo "$PG_DUMP_VER"
           if ! echo "$PG_DUMP_VER" | grep -qE ' 17\.'; then
-            echo "ERROR: pg_dump 17 not resolved on PATH (got: $PG_DUMP_VER)" >&2
-            command -v pg_dump >&2 || true
+            echo "ERROR: $PG_DUMP is not 17.x (got: $PG_DUMP_VER)" >&2
             exit 1
           fi
 
@@ -130,7 +151,7 @@ jobs:
           # Connection string passed as positional arg; commands are not echoed
           # (no `set -x`), and pg_dump masks the password in any error output.
           echo "[backup] dumping schema (public)…"
-          pg_dump "$BACKUP_DB_URL" \
+          "$PG_DUMP" "$BACKUP_DB_URL" \
             --schema-only \
             --schema=public \
             --no-owner \
@@ -138,7 +159,7 @@ jobs:
             -f "$TMP/schema.sql"
 
           echo "[backup] dumping data (public)…"
-          pg_dump "$BACKUP_DB_URL" \
+          "$PG_DUMP" "$BACKUP_DB_URL" \
             --data-only \
             --schema=public \
             --no-owner \
