@@ -223,6 +223,48 @@ export async function getQuestion(
   return data ? rowToQuestion(data) : null;
 }
 
+/**
+ * Update a version's lifecycle status. Owner-only via RLS qv_owner_update;
+ * the partial-unique `one_active_version_per_variant` index rejects a second
+ * 'active' per variant (23505); `tg_versions_no_unfreeze_with_responses` blocks
+ * the dangerous active→draft path when responses exist (23514). This writer is
+ * intentionally thin — it does NOT enforce allowed transitions in app code; the
+ * DB constraints are the structural enforcers and the calling action maps
+ * SQLSTATEs to typed errors.
+ *
+ * Discriminated `patch` argument shape forces the caller to set the matching
+ * timestamp at the same time:
+ *   - activate → published_at = NOW (mirrors the historical seed convention in
+ *     20260519170011, which set published_at at insert-as-active);
+ *   - close    → closed_at    = NOW;
+ *   - draft    → no timestamp clear (kept for any future draft-restore path;
+ *     the trigger blocks the unsafe variant of that path).
+ *
+ * Caller passes ISO strings so the action layer controls the timestamp source
+ * (consistent with the rest of the codebase — repos don't reach for now()).
+ */
+export async function updateVersionStatus(
+  supabase: SupabaseClient<Database>,
+  versionId: string,
+  patch:
+    | { status: "active"; publishedAt: string }
+    | { status: "closed"; closedAt: string }
+    | { status: "draft" }
+): Promise<void> {
+  const update: {
+    status: VersionStatus;
+    published_at?: string;
+    closed_at?: string;
+  } = { status: patch.status };
+  if (patch.status === "active") update.published_at = patch.publishedAt;
+  if (patch.status === "closed") update.closed_at = patch.closedAt;
+  const { error } = await supabase
+    .from("questionnaire_versions")
+    .update(update)
+    .eq("id", versionId);
+  if (error) throw error;
+}
+
 /** Per-version question counts (for the drafts list). Map keyed by version id. */
 export async function getQuestionCounts(
   supabase: SupabaseClient<Database>
