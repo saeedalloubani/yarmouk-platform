@@ -18,6 +18,7 @@ import {
 import QuestionEditor, {
   type EditorQuestionView,
 } from "@/components/QuestionEditor";
+import VersionLifecycleButton from "@/components/VersionLifecycleButton";
 
 export const dynamic = "force-dynamic";
 
@@ -81,12 +82,31 @@ export default async function EditVersionPage({
             <Link href="/admin/questionnaires" className="btn-ghost text-[13px] inline-block">
               ← Questionnaires
             </Link>
-            <Link
-              href={`/admin/questionnaires/${version.id}/preview`}
-              className="btn-secondary text-[13px]"
-            >
-              Preview as respondent →
-            </Link>
+            <div className="flex items-start gap-3">
+              <Link
+                href={`/admin/questionnaires/${version.id}/preview`}
+                className="btn-secondary text-[13px]"
+              >
+                Preview as respondent →
+              </Link>
+              {version.status === "draft" && (
+                <VersionLifecycleButton
+                  versionId={version.id}
+                  mode="activate"
+                  variantLabel={variantLabel(version.variant)}
+                  versionNumber={version.versionNumber}
+                />
+              )}
+              {version.status === "active" && (
+                <VersionLifecycleButton
+                  versionId={version.id}
+                  mode="close"
+                  variantLabel={variantLabel(version.variant)}
+                  versionNumber={version.versionNumber}
+                />
+              )}
+              {/* status === "closed" → no button (terminal state). */}
+            </div>
           </div>
           <div className="eyebrow mb-1">{isDraft ? "Edit draft" : "View version"}</div>
           <h1 className="text-[22px] font-bold text-ink tracking-tight">
