@@ -8,12 +8,13 @@
 // usePathname for active-link highlighting + the admin's {name, role} for
 // the footer and role-gated nav.
 //
-// ROLE GATE: the owner-only nav items (Questionnaires, Settings, Security)
-// are appended ONLY for owners — a readonly admin's nav array never contains
-// them (absent, not CSS-hidden). The page-level owner gates on those routes
-// remain the real enforcement; this just keeps the links out of sight.
-// Security (the audit-log viewer) is now wired. The remaining Analytics /
-// Data / Comms groups are still omitted until those pages exist.
+// ROLE GATE: the owner-only nav items (Questionnaires, Settings, Team,
+// Security) are appended ONLY for owners — a readonly admin's nav array
+// never contains them (absent, not CSS-hidden). The page-level owner gates
+// on those routes remain the real enforcement; this just keeps the links
+// out of sight. Security (the audit-log viewer) and Team (the supervisor-
+// invite surface) are now wired. The remaining Analytics / Data / Comms
+// groups are still omitted until those pages exist.
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -50,6 +51,7 @@ export default function AdminShell({
       ? [
           { href: "/admin/questionnaires", label: "Questionnaires" },
           { href: "/admin/settings", label: "Settings" },
+          { href: "/admin/settings/team", label: "Team" },
           { href: "/admin/security", label: "Security" },
         ]
       : []),
