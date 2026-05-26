@@ -55,6 +55,14 @@ headless backup.sh env-branch) COMMITTED + PUSHED to origin/d27-automated-backup
   exactly what the self-service workstream addresses.
 - Available unblocked build if wanted: D22 email-template editor (email layer, not core,
   independent of Sura + both parked items).
+- LIVE FINDING (surfaced by the admins-guards probe, 2026-05-26): Saeed
+  (`salloubani@cybercorrelate.com`) is CONFIRMED still `role=owner, status=active` in
+  prod — never cleaned up from his dev-bootstrap. Per ethics gate ("data accessible only
+  to the researcher"), removal MUST land before real participant data. The right
+  removal shape is **demote-to-readonly + status='removed'** (NOT DELETE — `audit_log`
+  FK correctly protects his historical action attribution). Inv2 allows either; Sura
+  stays active owner. Gated behind the self-service workstream completing so Sura isn't
+  stranded the moment Saeed's role flips.
 
 ---
 
