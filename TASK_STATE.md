@@ -44,6 +44,48 @@ STATUS (2026-05-26): 3 OF 4 LIFECYCLE-BLOCKERS DONE + PROVEN + MERGED TO MAIN
     blocking for Stage-1 pilot collection, but blocks the final hand-off.
     Build when needed for the export step.
 
+D22 EMAIL-TEMPLATE EDITOR — DONE (2026-05-26, branch email-templates,
+commits 244965f schema + d1b564a code). Owner-only editor for the
+participant invitation email (bilingual EN/AR), at /admin/settings/
+email-templates. Editable per-section copy with whitelisted placeholders;
+the magic-link URL is the SYSTEM-OWNED button href (never a placeholder),
+structurally impossible to remove from the editor. Validation rejects
+unknown / wrong-section / missing-required placeholders, persisting
+nothing on failure — both rejection paths smoke-proven on prod
+(refresh confirmed nothing persisted). Send-test sends to an owner-
+chosen address with an INERT button (`?preview=invitation-email`, no
+token minted — proven by zero imports of token-flow modules in the
+test-send action), 30s cooldown, [TEST] subject + banner. Reset-to-
+default deletes the row → renderer falls back to bundled defaults that
+are byte-identical to the pre-D22 hard-coded invitation.ts (zero change
+until edited). Sections JSONB reshape (migration 20260527120001):
+applied to empty unused table, lossless, RLS/CHECK unchanged, types
+regenerated identical to the hand-patch. Smoke-tested EN + AR send-test
+on prod against real inboxes. Real-send rendering covered by transitivity
+(same renderer call, only button_href differs — the existing token-mint
++ invitation-create flow was working pre-D22 and is untouched).
+
+Two follow-ups noted:
+  (a) STAGE 2: editors for the admin-invite + submission-notification
+      emails (both EN-only). Schema is forward-compatible (subject_ar +
+      sections_ar are nullable). Each future template needs (i) a
+      TemplateSpec entry, (ii) defaults extracted from the current TS
+      constants byte-for-byte, (iii) an id added to the email_templates
+      CHECK enum migration. Defer until needed.
+  (b) REVOKE-INVITATION GAP (confirmed partial self-service hole,
+      surfaced during D22 smoke cleanup): the /admin/invitations list
+      exposes Resend but NOT Revoke. Resend rotates the token (old link
+      dies, new one issued, same record); there's no UI path to
+      DEACTIVATE an existing invitation outright. Acceptable today
+      because invitations only matter while their token can be
+      consumed, and a wrong-recipient invitation can be neutralized by
+      letting it expire OR by Resend-rotating then ignoring the new
+      URL. Worth surfacing a "Revoke" action that sets expires_at = NOW
+      (or sets used_count = max_uses) so the link goes inert
+      immediately — a 1-action build behind the existing owner-gate
+      pattern. Build when a misdirected real invitation creates the
+      need.
+
 Design rule (still applies for follow-ups): expose SAFE ops (activate /
 close / resend / revoke / add-readonly-admin), keep DANGEROUS ops OUT
 (demote active→draft / unfreeze [guard blocks it], hard-delete responses).
@@ -78,8 +120,8 @@ headless backup.sh env-branch) COMMITTED + PUSHED to origin/d27-automated-backup
   sign-off). All 4 pilots DRAFT + uninvitable.
 - Activation is currently DB-only (UPDATE status='active'); no UI button yet — this is
   exactly what the self-service workstream addresses.
-- Available unblocked build if wanted: D22 email-template editor (email layer, not core,
-  independent of Sura + both parked items).
+- D22 email-template editor: DONE 2026-05-26 (see STATUS block above). Stage 2 +
+  revoke-invitation gap remain — both noted under D22 follow-ups.
 - LIVE FINDING (surfaced by the admins-guards probe, 2026-05-26): Saeed
   (`salloubani@cybercorrelate.com`) is CONFIRMED still `role=owner, status=active` in
   prod — never cleaned up from his dev-bootstrap. Per ethics gate ("data accessible only
