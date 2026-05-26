@@ -258,36 +258,36 @@ export type Database = {
       email_templates: {
         Row: {
           bcc_owner: boolean
-          body_ar: string
-          body_en: string
           description: string
           id: string
           name: string
-          subject_ar: string
+          sections_ar: Json | null
+          sections_en: Json
+          subject_ar: string | null
           subject_en: string
           updated_at: string
           updated_by: string | null
         }
         Insert: {
           bcc_owner?: boolean
-          body_ar: string
-          body_en: string
           description?: string
           id: string
           name: string
-          subject_ar: string
+          sections_ar?: Json | null
+          sections_en?: Json
+          subject_ar?: string | null
           subject_en: string
           updated_at?: string
           updated_by?: string | null
         }
         Update: {
           bcc_owner?: boolean
-          body_ar?: string
-          body_en?: string
           description?: string
           id?: string
           name?: string
-          subject_ar?: string
+          sections_ar?: Json | null
+          sections_en?: Json
+          subject_ar?: string | null
           subject_en?: string
           updated_at?: string
           updated_by?: string | null
