@@ -1,0 +1,140 @@
+name: Automated database backup
+
+# D27 STEP 3 — daily encrypted PII-ciphertext-only dump of the public schema,
+# uploaded to the offsite S3-compatible bucket. Vault-blind by construction:
+# backup_ro (the CI credential) has NO grants on the `vault` schema, so the
+# pii_key cannot enter this dump. Restore needs THREE things, stored separately:
+#   1. the .yarmoukbackup blob (this job's output)
+#   2. BACKUP_PASSPHRASE  — decrypts the archive
+#   3. pii_key_v1         — decrypts PII columns inside the archive
+# See RUNBOOK "Backup & restore".
+
+on:
+  schedule:
+    # 03:00 UTC daily = 06:00 Jordan local (low-traffic window).
+    - cron: '0 3 * * *'
+  workflow_dispatch: {}
+
+# Block overlapping runs so two dumps never compete.
+concurrency:
+  group: backup
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # postgresql-client-17 — Supabase runs PG 17; pg_dump must be >= server
+      # version. ubuntu-latest ships PG 16 by default, so pull 17 from the
+      # PGDG apt repo. Pinned to client-17 (not 'postgresql-client') so a future
+      # apt default bump can't silently swap versions.
+      - name: Install postgresql-client-17
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl --fail -sS \
+            -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+          pg_dump --version  # sanity: must report 17.x
+
+      - name: Dump → tar → encrypt → upload
+        env:
+          BACKUP_DB_URL:         ${{ secrets.BACKUP_DB_URL }}
+          BACKUP_PASSPHRASE:     ${{ secrets.BACKUP_PASSPHRASE }}
+          BACKUP_S3_BUCKET:      ${{ secrets.BACKUP_S3_BUCKET }}
+          BACKUP_S3_ENDPOINT:    ${{ secrets.BACKUP_S3_ENDPOINT }}
+          AWS_ACCESS_KEY_ID:     ${{ secrets.BACKUP_S3_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.BACKUP_S3_SECRET }}
+          AWS_DEFAULT_REGION:    ${{ secrets.BACKUP_S3_REGION }}
+        run: |
+          set -euo pipefail
+
+          # Fail fast — and without echoing values — if any secret is missing.
+          for v in BACKUP_DB_URL BACKUP_PASSPHRASE BACKUP_S3_BUCKET BACKUP_S3_ENDPOINT AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION; do
+            if [ -z "${!v:-}" ]; then
+              echo "ERROR: required secret '$v' is missing." >&2
+              exit 1
+            fi
+          done
+
+          TMP="$(mktemp -d)"
+          trap 'rm -rf "$TMP"' EXIT
+
+          TS="$(date -u +%Y%m%d-%H%M)"
+          OUT_NAME="yarmouk-${TS}.yarmoukbackup"
+          OUT="${TMP}/${OUT_NAME}"
+
+          # --- Dump (raw pg_dump, two passes — schema-only + data-only) ----------
+          # Why raw pg_dump (vs supabase db dump as in scripts/backup.sh): the
+          # supabase CLI dump path spins up Docker locally; that's flaky in CI
+          # and unnecessary here — the dump is literally pg_dump under the hood.
+          #
+          # --schema=public — backup_ro has SELECT only on `public`; trying to
+          #   dump auth/storage/realtime/vault would fail anyway. Explicit filter
+          #   = matches the Vault-blind premise; no surprises if grants change.
+          # --no-owner --no-privileges — restore is independent of source-DB
+          #   role identities; GRANTs come back via migrations at restore time.
+          # --use-copy is a supabase-CLI flag with no raw-pg_dump equivalent;
+          #   raw pg_dump --data-only already emits COPY format by default, so
+          #   the output shape is functionally identical to backup.sh.
+          # Connection string passed as positional arg; commands are not echoed
+          # (no `set -x`), and pg_dump masks the password in any error output.
+          echo "[backup] dumping schema (public)…"
+          pg_dump "$BACKUP_DB_URL" \
+            --schema-only \
+            --schema=public \
+            --no-owner \
+            --no-privileges \
+            -f "$TMP/schema.sql"
+
+          echo "[backup] dumping data (public)…"
+          pg_dump "$BACKUP_DB_URL" \
+            --data-only \
+            --schema=public \
+            --no-owner \
+            --no-privileges \
+            -f "$TMP/data.sql"
+
+          # --- Compress (SAME tar layout as scripts/backup.sh) -------------------
+          # schema.sql + data.sql at archive root — existing restore proof
+          # (decrypt → tar -xzf → psql schema.sql → psql data.sql) transfers.
+          echo "[backup] compressing…"
+          tar -czf "$TMP/dump.tar.gz" -C "$TMP" schema.sql data.sql
+
+          # --- Encrypt (BYTE-IDENTICAL cipher/flags to scripts/backup.sh:84-87) --
+          # AES-256-CBC, pbkdf2 KDF, random salt, passphrase via env (never argv).
+          echo "[backup] encrypting (AES-256-CBC, pbkdf2)…"
+          openssl enc -aes-256-cbc -pbkdf2 -salt \
+            -in  "$TMP/dump.tar.gz" \
+            -out "$OUT" \
+            -pass env:BACKUP_PASSPHRASE
+
+          SIZE_BYTES="$(stat -c%s "$OUT")"
+          echo "[backup] encrypted blob: ${OUT_NAME} (${SIZE_BYTES} bytes)"
+
+          # --- Upload (S3-compatible; AWS CLI is preinstalled on ubuntu-latest) -
+          # --endpoint-url overrides AWS S3 with the configured endpoint
+          # (Cloudflare R2 / Backblaze B2 / Supabase Storage / AWS S3). Region
+          # is provider-specific (R2 = "auto"; B2/S3 = actual region) and comes
+          # from BACKUP_S3_REGION so the signer matches the bucket — no guess.
+          # Credentials are scoped to this single bucket.
+          echo "[backup] uploading to S3…"
+          aws --endpoint-url "$BACKUP_S3_ENDPOINT" \
+            s3 cp \
+            "$OUT" \
+            "s3://${BACKUP_S3_BUCKET}/${OUT_NAME}" \
+            --no-progress
+
+          echo "[backup] DONE — uploaded ${OUT_NAME}"
