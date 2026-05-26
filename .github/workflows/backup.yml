@@ -47,7 +47,31 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
           sudo apt-get update -qq
           sudo apt-get install -y -qq postgresql-client-17
-          pg_dump --version  # sanity: must report 17.x
+
+          # GATE — not aspirational. The PGDG `postgresql-client-17` package always
+          # installs binaries at /usr/lib/postgresql/17/bin/ (stable across Ubuntu
+          # releases per PGDG's debian packaging convention). Verify the absolute
+          # binary exists AND reports 17.x; without this gate, the previously-
+          # installed client-16 (preinstalled on ubuntu-latest, reached via the
+          # pg_wrapper at /usr/bin/pg_dump) wins resolution and the dump step
+          # aborts mid-stream with "server version mismatch". Prior incident
+          # confirmed this exact failure mode — never again silent.
+          PG17_BIN="/usr/lib/postgresql/17/bin/pg_dump"
+          if [ ! -x "$PG17_BIN" ]; then
+            echo "ERROR: $PG17_BIN missing after install; PGDG layout changed?" >&2
+            ls -la /usr/lib/postgresql/ 2>/dev/null || true
+            exit 1
+          fi
+          PG17_VER="$("$PG17_BIN" --version)"
+          echo "$PG17_VER"
+          if ! echo "$PG17_VER" | grep -qE ' 17\.'; then
+            echo "ERROR: expected pg_dump 17.x, got: $PG17_VER" >&2
+            exit 1
+          fi
+
+          # Persist to PATH for subsequent steps (GITHUB_PATH PREPENDS, so the
+          # 17 binary wins over the pre-existing wrapper-resolved 16).
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
 
       - name: Dump → tar → encrypt → upload
         env:
@@ -60,6 +84,20 @@ jobs:
           AWS_DEFAULT_REGION:    ${{ secrets.BACKUP_S3_REGION }}
         run: |
           set -euo pipefail
+
+          # Preflight: re-assert pg_dump 17 is what PATH actually resolves to.
+          # The install step already gated on this, but PATH is per-step in
+          # GitHub Actions; this is a cheap belt-and-braces guard so if the
+          # GITHUB_PATH mechanism ever fails to persist (or a runner image
+          # change introduces a higher-precedence binary), we fail at line 1
+          # here — not mid-dump with a partial schema.sql on disk.
+          PG_DUMP_VER="$(pg_dump --version)"
+          echo "$PG_DUMP_VER"
+          if ! echo "$PG_DUMP_VER" | grep -qE ' 17\.'; then
+            echo "ERROR: pg_dump 17 not resolved on PATH (got: $PG_DUMP_VER)" >&2
+            command -v pg_dump >&2 || true
+            exit 1
+          fi
 
           # Fail fast — and without echoing values — if any secret is missing.
           for v in BACKUP_DB_URL BACKUP_PASSPHRASE BACKUP_S3_BUCKET BACKUP_S3_ENDPOINT AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION; do
