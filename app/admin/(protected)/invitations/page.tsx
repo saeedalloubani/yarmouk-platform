@@ -12,6 +12,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentAdmin } from "@/lib/auth";
 import { listInvitations, categoryLabel } from "@/lib/repos/invitations";
 import InvitationResendButton from "@/components/InvitationResendButton";
+import InvitationRevokeButton from "@/components/InvitationRevokeButton";
 
 export const dynamic = "force-dynamic";
 
@@ -74,7 +75,27 @@ export default async function InvitationsPage() {
                 </tr>
               </thead>
               <tbody>
-                {invitations.map((inv) => (
+                {invitations.map((inv) => {
+                  // Terminal states (submitted = respondent finalised;
+                  // revoked = owner killed). Neither Resend nor Revoke
+                  // applies — the action would reject anyway, but
+                  // hiding the controls keeps the UI honest. We rely on
+                  // inv.status here; in the rare edge where the
+                  // invitation hasn't caught up to a submitted response
+                  // (the resend code reads responses as the source of
+                  // truth for that reason), the action's own
+                  // "already_submitted" check is the backstop.
+                  const isTerminal =
+                    inv.status === "submitted" || inv.status === "revoked";
+                  // Revoked chip uses the danger tokens; everything else
+                  // keeps the brand-50 chip. Submitted stays brand for
+                  // now (it's a success-terminal); change if Sura wants
+                  // a distinct treatment.
+                  const chipClass =
+                    inv.status === "revoked"
+                      ? "chip-solid bg-dangerLight text-danger"
+                      : "chip-solid bg-brand-50 text-brand-700";
+                  return (
                   <tr key={inv.id} className="border-t border-line">
                     <td className="px-4 py-2.5">
                       <span className="mono font-semibold text-brand-700">
@@ -86,9 +107,7 @@ export default async function InvitationsPage() {
                       {inv.nationality ?? "—"}
                     </td>
                     <td className="px-4 py-2.5">
-                      <span className="chip-solid bg-brand-50 text-brand-700">
-                        {inv.status}
-                      </span>
+                      <span className={chipClass}>{inv.status}</span>
                     </td>
                     <td className="px-4 py-2.5 mono">
                       {inv.useCount}/{inv.maxUses}
@@ -97,14 +116,27 @@ export default async function InvitationsPage() {
                     <td className="px-4 py-2.5">{fmtDate(inv.createdAt)}</td>
                     {isOwner && (
                       <td className="px-4 py-2.5 align-top">
-                        <InvitationResendButton
-                          invitationId={inv.id}
-                          refCode={inv.refCode}
-                        />
+                        {/* Hide both controls on terminal rows. Render
+                            nothing rather than a disabled stub — cleaner
+                            than dimmed UI for a row that needs no
+                            further owner action. */}
+                        {!isTerminal && (
+                          <div className="flex items-start gap-3">
+                            <InvitationResendButton
+                              invitationId={inv.id}
+                              refCode={inv.refCode}
+                            />
+                            <InvitationRevokeButton
+                              invitationId={inv.id}
+                              refCode={inv.refCode}
+                            />
+                          </div>
+                        )}
                       </td>
                     )}
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
