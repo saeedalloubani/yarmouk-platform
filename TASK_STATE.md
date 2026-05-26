@@ -97,23 +97,52 @@ handling + the exact shape of the self-service controls. Don't build lifecycle/
 content controls until resolved. Data-SAFETY care (backups, no-unfreeze) applies to
 BOTH rounds regardless.
 
-### PARKED #2 — D27 automated backup (paused on Saeed's provisioning)
-Branch `d27-automated-backup`: STEP 1 (29a637b, backup_ro role) + STEP 2 (2fbb90e,
-headless backup.sh env-branch) COMMITTED + PUSHED to origin/d27-automated-backup (tracking set), not merged to main.
-- backup_ro role: least-privilege, PROVEN Vault-blind (no vault usage/select, no role
-  inheritance, not superuser; BYPASSRLS for complete dump of RLS tables). Password set
-  by Saeed (URL-safe hex), in password manager.
-- BACKUP_DB_URL (backup_ro via SHARED/session pooler, port 5432, user
-  backup_ro.trvxugvkesfcopwdtdey): PROVEN working — psql returned count=57.
-- FINDING: `supabase db dump` needs Docker (flaky) → STEP 3 workflow should use RAW
-  pg_dump + postgresql-client-17, NOT the Docker-wrapped CLI dump.
-- PENDING (Saeed, out-of-band): create external bucket (lean Cloudflare R2 — zero
-  egress, 10GB free) + put-only API creds + 30-day lifecycle rule; add 6 GH secrets
-  (BACKUP_DB_URL, BACKUP_PASSPHRASE [MUST match local value], BACKUP_S3_BUCKET,
-  BACKUP_S3_ENDPOINT, BACKUP_S3_KEY_ID, BACKUP_S3_SECRET). pii_key NOT in CI.
-- THEN: STEP 3 dev writes workflow (daily cron + workflow_dispatch dry-run, raw
-  pg_dump); STEP 4 prove a CI-produced blob RESTORES (download→decrypt→restore
-  throwaway postgres:17→count-verify→teardown). NEVER use --dry-run (leaks password).
+### D27 AUTOMATED BACKUP — COMPLETE (2026-05-27, all 4 steps, RESTORE-PROVEN)
+
+Daily cron live at 03:00 UTC, encrypted blob lands in Cloudflare R2
+(`yarmouk-backups` bucket, 30-day rolling lifecycle). Branch merged to main +
+pruned. Restore-proven via the rehearsed procedure in RUNBOOK "Rehearsed
+restore — CI-produced blob (proven 2026-05-27)".
+
+  ✓ STEP 1 — backup_ro role (29a637b). Least-privilege, PROVEN Vault-blind
+    (no vault usage/select, no role inheritance, not superuser; BYPASSRLS for
+    complete dump of RLS tables). Password URL-safe hex, in password manager.
+  ✓ STEP 2 — headless backup.sh env-branch (2fbb90e). `BACKUP_DB_URL` overrides
+    `--linked`; output shape identical either way → existing restore proof
+    transfers. `BACKUP_DB_URL` (backup_ro via shared/session pooler, port 5432,
+    user backup_ro.trvxugvkesfcopwdtdey): PROVEN working.
+  ✓ STEP 3 — workflow (dfa92e9 + 4e3bb04 + f0e921a, merge d547c43). Raw
+    pg_dump 17 (NOT supabase db dump — needs Docker, flaky in CI). Encrypts
+    with the SAME cipher/flags as scripts/backup.sh (byte-shape-compatible).
+    Uploads to R2 via aws-cli + endpoint override + `BACKUP_S3_REGION=auto`
+    (R2 idiom). All 7 GH secrets provisioned by Saeed; first dry-run from
+    branch went green (post structural pg_dump-17 fix — absolute path
+    `/usr/lib/postgresql/17/bin/pg_dump`, not PATH-based). 20.86 KB blob
+    `yarmouk-20260526-1709.yarmoukbackup` landed in R2.
+  ✓ STEP 4 — restore-proof (2026-05-27). Downloaded the CI blob from R2,
+    decrypted with `openssl -pass file:~/.restore-proof.passphrase` (proved
+    GH secret ≡ password-manager value), spun docker postgres:17 throwaway,
+    pre-seeded REQUIRED stubs (`authenticated` role, `auth/vault/extensions`
+    schemas, `auth.users` / `vault.decrypted_secrets` tables, `auth.uid()` /
+    `auth.jwt()` / `auth.role()` functions — vanilla pg lacks them; without
+    them ~50 RLS/GRANT errors silently skip). Schema apply: 1 benign error
+    (`schema "public" already exists`). Data apply: 0 errors with
+    `session_replication_role = replica` deferring the
+    admins.id→empty-auth.users FK. Count diff JOIN-BY-NAME (not
+    paste-by-line, which hits locale-collation false-mismatches on
+    `response_tags`/`responses`): all 17 tables matched (98 rows across 6
+    non-zero tables: admins=3, audit_log=19, email_templates=1,
+    questionnaire_versions=9, questions=57, settings=9).
+
+Procedure documented step-exact in RUNBOOK "Rehearsed restore" — the
+emergency runbook a future-you (or Sura post-handoff) follows in a real
+recovery. Stub SQL block + FK deferral + join-by-name diff all baked in.
+
+Follow-ups parked (NOT blocking):
+  (a) Verify R2 lifecycle rule actually purges objects after the 30-day
+      window — one-off check ~30 days after first cron blob (~2026-06-26).
+  (b) Stage 2 — add `recordings` Storage bucket to the dump when interviews
+      start being recorded (the per scripts/backup.sh comment).
 
 ### OTHER OPEN
 - Sura PROOFING the 4 pilot drafts via the preview (her gate; nothing activates until

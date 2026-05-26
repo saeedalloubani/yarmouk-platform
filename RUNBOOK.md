@@ -99,8 +99,19 @@ If the active Vault key is deleted from Vault, **don't generate a replacement un
 
 ## Backup & restore
 
-Manual, encrypted, DB-only (v1). Free-tier Supabase provides **no** platform
-backups, so this script is the recovery path (see "Limitations" below).
+Encrypted, DB-only. Two paths coexist:
+
+- **Automated daily backup (D27 — live since 2026-05-27, restore-proven).** A
+  GitHub Actions workflow dumps as `backup_ro` (Vault-blind), encrypts, and
+  uploads to Cloudflare R2 every day at 03:00 UTC. This is the durable
+  data-loss guarantee. See "Rehearsed restore — CI-produced blob" below.
+- **Manual on-demand backup.** `npm run backup` — the runbook for ad-hoc
+  rehearsals, milestone snapshots before risky operations, and any moment
+  you want a fresh blob NOW rather than waiting for the cron. Stays useful
+  as the FLOOR even though the cron is the durable fix.
+
+Free-tier Supabase provides **no** platform backups, so these two paths are
+the recovery path (see "Limitations" below for what's still v1-scope).
 
 ### How to back up
 
@@ -117,23 +128,23 @@ V2 publish, bulk change) and **periodically once real data exists**.
 
 ### During-collection backup routine
 
-While any questionnaire is **active** and respondents may be submitting, the DB
-changes daily but backups are still **manual** (D27 automation not yet wired).
-This routine caps worst-case loss at ~1 day.
+D27's daily cron (03:00 UTC, encrypted blob to R2) is the durable data-loss
+guarantee. This manual routine is no longer the floor — it's a SUSPENDERS
+to the cron's belt: useful when you want a fresh blob BEFORE/AFTER a
+milestone (rather than waiting for the next 03:00 UTC), or to keep a local
+copy on Saeed's Mac as an extra offsite layer.
 
 - **Who:** the Owner (Saeed during dev hand-off; Sura once sole researcher).
-- **When:** once **daily** on any day responses may have arrived (end of day is
-  fine) — **and** immediately before/after a milestone (activating a variant,
-  closing a variant, a bulk invitation send).
+- **When (optional, not required):** immediately before/after a milestone
+  (activating a variant, closing a variant, a bulk invitation send). The
+  daily cron already covers the steady-state daily floor.
 - **Each run:** `npm run backup` → copy the new `.yarmoukbackup` **offsite**
   (see "How to back up" above) → keep the three secrets separate (see "The three
   secrets" below).
-- **Retention:** keep at least the **last 7 daily** backups **+ one per
-  milestone**; prune older ones from the offsite store.
+- **Retention (manual blobs):** keep the milestone snapshots; the R2-side
+  30-day rolling lifecycle handles the daily-cron blobs.
 
-This manual routine is the **FLOOR**. The durable fix is **D27** (scheduled
-automated backup) — until it lands, this daily discipline *is* the data-loss
-guarantee. To recover, see "Restore" below.
+To recover, see "Restore" below.
 
 ### The three secrets (a backup is useless without ALL THREE — stored SEPARATELY)
 
@@ -219,6 +230,178 @@ missing-schema blocks. **Only public-schema success matters** — confirm all 17
 tables exist with matching row counts. (2026-05-24: all 17 matched; no error
 touched the public schema.)
 
+### Rehearsed restore — CI-produced blob (proven 2026-05-27)
+
+The full procedure exercised against an actual D27 CI-produced blob from
+R2. **This is the emergency runbook** for the durable backup path: download
+the most recent blob from R2, restore to a throwaway `postgres:17`, and
+verify counts against live. Step-exact — vanilla `postgres:17` will NOT
+restore clean without the role + cross-schema stubs in step 5.
+
+**Prerequisites on the machine you restore from:** `docker` (daemon
+running), `openssl` (any 3.x), `psql` (any version ≥ 14 — restoring plain
+SQL is forward-compatible). Plus the three secrets, each from its
+separate store (see "The three secrets" above).
+
+#### 1. Download the most recent blob from R2
+
+Cloudflare dashboard → R2 → `yarmouk-backups` bucket → click the
+top-of-list `yarmouk-YYYYMMDD-HHMM.yarmoukbackup` (newest by timestamp) →
+Download. Place at any local path; this runbook assumes
+`~/Downloads/yarmouk-YYYYMMDD-HHMM.yarmoukbackup`.
+
+(CLI alternative: `aws --endpoint-url $R2_ENDPOINT s3 cp s3://yarmouk-backups/<name> ./`
+with R2 creds temporarily in env. The UI path is preferred — keeps R2
+write/list creds off the recovering machine.)
+
+#### 2. Write the passphrase to a 0600 file (we use `openssl -pass file:`)
+
+Use `printf` (not `echo`) so there's no trailing newline — a stray `\n`
+flips the passphrase by one byte and decrypt silently fails:
+
+    printf '%s' '<the BACKUP_PASSPHRASE>' > ~/.restore-proof.passphrase
+    chmod 600 ~/.restore-proof.passphrase
+    # Quick sanity (does NOT print the value):
+    wc -c ~/.restore-proof.passphrase
+    # byte count must equal passphrase length EXACTLY (+1 = trailing newline)
+
+#### 3. Decrypt + extract
+
+    mkdir -p /tmp/restore-proof
+    openssl enc -d -aes-256-cbc -pbkdf2 \
+      -pass file:$HOME/.restore-proof.passphrase \
+      -in $HOME/Downloads/yarmouk-YYYYMMDD-HHMM.yarmoukbackup \
+      -out /tmp/restore-proof/dump.tar.gz
+    tar -xzf /tmp/restore-proof/dump.tar.gz -C /tmp/restore-proof/
+    # → /tmp/restore-proof/schema.sql + /tmp/restore-proof/data.sql
+
+Decrypt failure here means the local passphrase file diverged from the
+GitHub `BACKUP_PASSPHRASE` secret used by CI at encryption time. Fix both
+to match, re-dispatch the workflow to produce a new blob, retry.
+
+#### 4. Spin throwaway `postgres:17`
+
+    docker run --rm -d --name yarmouk-restore-proof \
+      -e POSTGRES_PASSWORD=throwaway -p 55432:5432 postgres:17
+    until docker exec yarmouk-restore-proof pg_isready -U postgres -q; do sleep 1; done
+
+#### 5. Pre-seed cross-schema + role stubs — REQUIRED
+
+Vanilla `postgres:17` lacks the Supabase-provided `authenticated` role and
+the `auth` / `vault` / `extensions` schemas the public-schema dump
+references. Without these stubs, schema apply throws ~50 errors on RLS
+policies + GRANTs (silently skipped → a restored DB with no RLS, a real
+correctness gap if you trusted it). Apply BEFORE `schema.sql`:
+
+    PGPASSWORD=throwaway psql -h localhost -p 55432 -U postgres -d postgres -v ON_ERROR_STOP=on <<'SQL'
+    CREATE ROLE authenticated;
+    CREATE EXTENSION IF NOT EXISTS pgcrypto;
+    CREATE SCHEMA IF NOT EXISTS extensions;
+    CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;
+    CREATE SCHEMA IF NOT EXISTS auth;
+    CREATE SCHEMA IF NOT EXISTS vault;
+    CREATE TABLE IF NOT EXISTS auth.users (id UUID PRIMARY KEY DEFAULT gen_random_uuid());
+    CREATE TABLE IF NOT EXISTS vault.decrypted_secrets (id UUID PRIMARY KEY, name TEXT, decrypted_secret TEXT);
+    CREATE OR REPLACE FUNCTION auth.uid()  RETURNS UUID  LANGUAGE sql AS $$ SELECT NULL::UUID  $$;
+    CREATE OR REPLACE FUNCTION auth.jwt()  RETURNS JSONB LANGUAGE sql AS $$ SELECT NULL::JSONB $$;
+    CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT  LANGUAGE sql AS $$ SELECT NULL::TEXT  $$;
+    SQL
+
+Runtime behavior of these stubs returns NULL — fine, since this restore-
+proof is count-verify, not RLS / encryption exercise.
+
+#### 6. Apply schema with errors-don't-stop; classify any error
+
+    PGPASSWORD=throwaway psql -h localhost -p 55432 -U postgres -d postgres \
+      -v ON_ERROR_STOP=off \
+      -f /tmp/restore-proof/schema.sql \
+      2> /tmp/restore-proof/schema-apply.stderr
+    grep -E 'ERROR' /tmp/restore-proof/schema-apply.stderr \
+      | sed 's/.*ERROR:  //' | sort | uniq -c
+
+Expected after stubs: **exactly one benign error** — `schema "public"
+already exists` (postgres:17 ships `public`; dump's `CREATE SCHEMA public`
+is redundant; a real Supabase restore target also has it). Anything else
+is a real signal — likely a stub gap from a new Supabase role/schema
+referenced upstream.
+
+#### 7. Apply data with FK deferral (`session_replication_role = replica`)
+
+The `admins.id → auth.users(id)` FK has no target rows in our empty stub
+`auth.users`. Without deferral, the COPY would FK-fail and admins rows
+would silently NOT load — a false-pass risk on a count-verify. Use the
+standard pg_restore idiom:
+
+    (
+      echo "SET session_replication_role = replica;"
+      cat /tmp/restore-proof/data.sql
+      echo "SET session_replication_role = origin;"
+    ) | PGPASSWORD=throwaway psql -h localhost -p 55432 -U postgres -d postgres \
+          -v ON_ERROR_STOP=off \
+          2> /tmp/restore-proof/data-apply.stderr
+    grep -E 'ERROR' /tmp/restore-proof/data-apply.stderr | sed 's/.*ERROR:  //' | sort | uniq -c
+
+Expected: ZERO errors. The orphan `admins.id → empty auth.users` FK is
+expected and explained — Supabase's `auth` schema is managed separately
+and populated by re-provisioning admins in a real restore target.
+
+#### 8. Count-verify against live — JOIN BY NAME (not paste-by-line)
+
+In Supabase Studio → SQL Editor, run the live UNION:
+
+    SELECT 'admins'                  AS t, COUNT(*)::int FROM admins
+    UNION ALL SELECT 'answers',                COUNT(*)::int FROM answers
+    UNION ALL SELECT 'audit_log',              COUNT(*)::int FROM audit_log
+    UNION ALL SELECT 'backups',                COUNT(*)::int FROM backups
+    UNION ALL SELECT 'consent_records',        COUNT(*)::int FROM consent_records
+    UNION ALL SELECT 'email_templates',        COUNT(*)::int FROM email_templates
+    UNION ALL SELECT 'invitations',            COUNT(*)::int FROM invitations
+    UNION ALL SELECT 'notification_preferences', COUNT(*)::int FROM notification_preferences
+    UNION ALL SELECT 'notifications',          COUNT(*)::int FROM notifications
+    UNION ALL SELECT 'questionnaire_versions', COUNT(*)::int FROM questionnaire_versions
+    UNION ALL SELECT 'questions',              COUNT(*)::int FROM questions
+    UNION ALL SELECT 'recordings',             COUNT(*)::int FROM recordings
+    UNION ALL SELECT 'researcher_notes',       COUNT(*)::int FROM researcher_notes
+    UNION ALL SELECT 'response_tags',          COUNT(*)::int FROM response_tags
+    UNION ALL SELECT 'responses',              COUNT(*)::int FROM responses
+    UNION ALL SELECT 'settings',               COUNT(*)::int FROM settings
+    UNION ALL SELECT 'tags',                   COUNT(*)::int FROM tags
+    ORDER BY t;
+
+Save the result as `/tmp/restore-proof/live.csv` (one `table,count` per
+line). Same UNION against the restored DB:
+
+    PGPASSWORD=throwaway psql -h localhost -p 55432 -U postgres -d postgres -t -A -F',' -c \
+      "<same UNION>" > /tmp/restore-proof/restored.csv
+
+Diff JOIN-BY-NAME (NOT paste-by-line — postgres `ORDER BY` is
+locale-aware; the alphabetic order of `response_tags` vs `responses`
+differs between byte-order and en_US.UTF-8 collation, so a line-paste
+diff produces FALSE mismatches):
+
+    join -t',' <(sort /tmp/restore-proof/live.csv) <(sort /tmp/restore-proof/restored.csv) \
+      | awk -F',' '{ printf "%-25s %4d %4d  %s\n", $1, $2, $3, ($2==$3?"✓":"✗ MISMATCH") }'
+    # Set-completeness sanity:
+    diff <(cut -d',' -f1 live.csv | sort) <(cut -d',' -f1 restored.csv | sort)
+
+**Pass condition:** all 17 tables match. A mismatch on any table — even a
+zero-table going non-zero, or a non-zero coming up short — is a real
+finding and must be chased, NOT waved away.
+
+#### 9. Teardown
+
+    docker rm -f yarmouk-restore-proof
+    rm -rf /tmp/restore-proof
+    rm ~/.restore-proof.passphrase     # passphrase footprint back to zero
+
+#### Last full rehearsal
+
+2026-05-27 — CI-produced blob `yarmouk-20260526-1709.yarmoukbackup` (20.86 KB).
+Decrypt: OK. Schema apply: 1 benign error (`schema "public" already exists`).
+Data apply: 0 errors. Count diff: all 17 tables matched (98 rows across 6
+non-zero tables: admins=3, audit_log=19, email_templates=1, questionnaire_versions=9,
+questions=57, settings=9). D27 STEP 4 closed.
+
 ### Full disaster recovery (DOCUMENTED — NOT yet rehearsed end-to-end)
 
 A real recovery targets a **Supabase project** (new or reset), where the managed
@@ -236,15 +419,17 @@ don't occur. Outline:
    "Disaster recovery: lost encryption key" above, so PII decrypts.
 6. **Re-link the CLI** — `supabase link --project-ref <ref>`.
 
-**Honesty marker:** the **DATA round-trip is PROVEN** (2026-05-24, bare-postgres
-count-verify). The **full project-level DR above is DOCUMENTED but NOT yet
-rehearsed end-to-end** — rehearse it before relying on it (a future exercise;
-dry-run against a scratch project when one is free).
+**Honesty marker:** the **DATA round-trip is PROVEN** twice — 2026-05-24
+(manual-blob count-verify) and 2026-05-27 (CI-blob from R2, full procedure
+with stubs + `session_replication_role` deferral, see "Rehearsed restore"
+above). The **full project-level DR above is DOCUMENTED but NOT yet
+rehearsed end-to-end** — rehearse it before relying on it (a future
+exercise; dry-run against a scratch project when one is free).
 
 ### Limitations (v1 scope)
 
-- **Manual** — no scheduling. D27's daily-automated / 30-day-retention / pinning
-  is deferred (GitHub Actions or a cron host later).
 - **DB-only** — no Storage / audio (text-first; add when interviews are recorded).
-- **Free-tier Supabase has no platform backups** — which is why this exists. It
-  is currently the **only** backup path.
+- **Free-tier Supabase has no platform backups** — which is why this exists.
+  The D27 daily cron + manual `npm run backup` are the only backup paths.
+- **Recordings bucket NOT in dump** — Stage 2 item; add a Storage download step
+  to the workflow when interviews start being recorded.
