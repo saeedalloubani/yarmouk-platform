@@ -52,6 +52,7 @@ export default function AdminShell({
           { href: "/admin/questionnaires", label: "Questionnaires" },
           { href: "/admin/settings", label: "Settings" },
           { href: "/admin/settings/team", label: "Team" },
+          { href: "/admin/settings/email-templates", label: "Email templates" },
           { href: "/admin/security", label: "Security" },
         ]
       : []),
