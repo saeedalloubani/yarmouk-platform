@@ -1040,7 +1040,7 @@ export type Database = {
       category_type: "officials" | "researchers" | "donors" | "ngos"
       collection_mode: "self_completed" | "interview"
       event_severity: "info" | "warn" | "alert"
-      invitation_status: "sent" | "opened" | "started" | "submitted" | "expired"
+      invitation_status: "sent" | "opened" | "started" | "submitted" | "expired" | "revoked"
       nationality_type: "jordanian" | "syrian" | "not_applicable"
       notification_type: "submission" | "invitation" | "system"
       questionnaire_type: "pilot" | "main"
@@ -1196,7 +1196,7 @@ export const Constants = {
       category_type: ["officials", "researchers", "donors", "ngos"],
       collection_mode: ["self_completed", "interview"],
       event_severity: ["info", "warn", "alert"],
-      invitation_status: ["sent", "opened", "started", "submitted", "expired"],
+      invitation_status: ["sent", "opened", "started", "submitted", "expired", "revoked"],
       nationality_type: ["jordanian", "syrian", "not_applicable"],
       notification_type: ["submission", "invitation", "system"],
       questionnaire_type: ["pilot", "main"],

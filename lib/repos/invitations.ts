@@ -54,7 +54,12 @@ export type InvitationStatusValue =
   | "opened"
   | "started"
   | "submitted"
-  | "expired";
+  | "expired"
+  // Terminal owner-driven kill — set by revokeInvitationAction alongside
+  // token_hash rotation + is_locked=TRUE on any in-progress response.
+  // See migration 20260527130001_invitation_status_revoked.sql and
+  // lib/actions/invitations.ts revokeInvitationAction.
+  | "revoked";
 
 export type InvitationCollectionMode = "self_completed" | "interview";
 

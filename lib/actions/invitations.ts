@@ -389,3 +389,253 @@ export async function resendInvitationAction(
     mode: inProgress ? "resume" : "fresh",
   };
 }
+
+// ---------------------------------------------------------------------------
+// revokeInvitationAction — owner-only terminal kill.
+//
+// Three operations performed together (all-or-none-by-effect):
+//   1. Rotate token_hash to a freshly-minted hash whose PLAINTEXT IS
+//      DISCARDED. The new hash has no plaintext that can produce it, so
+//      validate_invitation_token (which hashes incoming plaintext + looks
+//      up by hash) will never match. Old link permanently dead.
+//   2. Set status='revoked' (terminal label for the admin UI).
+//   3. Lock any in-progress (non-submitted) response — is_locked=TRUE
+//      kicks any active session at next page load (lib/cookies.ts
+//      getSession filters by is_locked; lib/actions/answers.ts saveAnswer
+//      refuses on is_locked). Saved answers are RETAINED — is_locked is
+//      a gate flag, not a CASCADE; the owner can still read everything
+//      that was saved.
+//
+// Block-then-confirm gate: if a non-submitted response exists, refuses
+// with error:"in_progress" UNLESS the caller passes confirmHardRevoke=
+// true. The UI catches that, surfaces the honest confirmation ("their
+// saved answers are retained but they cannot continue"), and re-calls
+// with the flag. Default revoke never silently destroys a participant's
+// in-flight work.
+//
+// Submitted-response block (unconditional, mirrors resend's
+// already_submitted): an answered invitation is a research artifact;
+// revoking it would be withdrawing data — a different operation (not
+// built; tied to consent withdrawal).
+//
+// Terminal: revoke is one-way. Re-inviting = create a fresh invitation
+// (owner picks a new ref_code; ref_code UNIQUE blocks reuse).
+//
+// RACE: validate_invitation_token is the SOLE creator of response rows
+// (only INSERT INTO responses anywhere in the codebase or migrations,
+// inside that SECURITY DEFINER function; RLS rejects all other inserts).
+// Between the pre-rotation gate read (step 5) and the rotation (step 8)
+// there is a sub-second window where the OLD token is still valid and
+// a respondent could click /r/<old-token>, triggering validate to INSERT
+// a fresh response. We close the window by re-reading the in-progress
+// set AFTER rotation (step 9): validate's SELECT…FOR UPDATE on the
+// invitation row serialises against step 8's UPDATE, so either the new
+// response committed before rotation (visible to the post-rotation
+// re-read) or validate sees the new hash and creates nothing. The lock
+// step (step 10) operates on the post-rotation canonical set. The
+// pre-rotation read remains useful for the UX gate (step 6 confirm
+// dialog); a tiny residual edge — pre-read clean → respondent clicks
+// → post-read finds one — silently locks that respondent without a
+// confirm prompt, which is correct behaviour (they clicked AFTER the
+// owner decided to revoke; they are already in the kill zone).
+// ---------------------------------------------------------------------------
+
+export type RevokeInvitationOptions = {
+  /**
+   * Set TRUE to override the in-progress-response block. The UI sets
+   * this on the second call after surfacing the honest confirmation
+   * ("their saved answers are retained but they cannot continue").
+   * Default revoke (no flag) refuses with error:"in_progress" when any
+   * non-submitted response exists for the invitation.
+   */
+  confirmHardRevoke?: boolean;
+};
+
+export type RevokeInvitationResult =
+  | {
+      ok: true;
+      refCode: string;
+      /** Final post-rotation reality: did we lock any response rows? */
+      hadInProgressResponse: boolean;
+      /** Final post-rotation reality: the IDs we set is_locked=TRUE on. */
+      lockedResponseIds: string[];
+    }
+  | {
+      ok: false;
+      error:
+        | "forbidden"
+        | "not_found"
+        | "already_submitted"
+        | "already_revoked"
+        | "in_progress"
+        | "server";
+    };
+
+export async function revokeInvitationAction(
+  invitationId: string,
+  options: RevokeInvitationOptions = {}
+): Promise<RevokeInvitationResult> {
+  const supabase = await createSupabaseServerClient();
+
+  // 1. Owner gate (+ forbidden audit for an authenticated non-owner —
+  //    mirrors resend's pattern; RLS invitations_owner_all is the DB
+  //    backstop).
+  const admin = await getCurrentAdmin(supabase);
+  if (!admin || admin.role !== "owner") {
+    if (admin) {
+      await logAudit(supabase, {
+        action: "invitation.revoke.forbidden",
+        resource: "",
+        severity: "warn",
+        metadata: { attemptedBy: admin.id, role: admin.role, invitationId },
+      });
+    }
+    return { ok: false, error: "forbidden" };
+  }
+
+  // 2. Load invitation (owner repo path; PII ciphertext available though
+  //    revoke doesn't need it — we never email, never decrypt).
+  const inv = await getInvitation(supabase, invitationId);
+  if (!inv) return { ok: false, error: "not_found" };
+
+  // 3. Terminal-state pre-check. Idempotent: re-revoking does nothing
+  //    but report the existing state so a stale UI tab gets a clean
+  //    signal instead of a silent re-rotation of an already-dead link.
+  if (inv.status === "revoked") {
+    return { ok: false, error: "already_revoked" };
+  }
+
+  // 4. Submitted-response block (unconditional). Same shape as resend's
+  //    already_submitted: an answered invitation is a research artifact;
+  //    revoking it would be withdrawing data, a separate operation tied
+  //    to consent withdrawal.
+  const { data: submittedRows, error: subErr } = await supabase
+    .from("responses")
+    .select("id")
+    .eq("invitation_id", inv.id)
+    .not("submitted_at", "is", null)
+    .limit(1);
+  if (subErr) {
+    console.error("[invitations] revoke responses(submitted) read failed", subErr);
+    return { ok: false, error: "server" };
+  }
+  if ((submittedRows ?? []).length > 0) {
+    return { ok: false, error: "already_submitted" };
+  }
+
+  // 5. PRE-ROTATION in-progress detection — feeds the gate decision in
+  //    step 6 (the UI confirm dialog needs this). NOT the canonical set
+  //    for the lock; that comes from step 9's post-rotation re-read.
+  const { data: preRows, error: preErr } = await supabase
+    .from("responses")
+    .select("id")
+    .eq("invitation_id", inv.id)
+    .is("submitted_at", null);
+  if (preErr) {
+    console.error("[invitations] revoke responses(in-progress, pre) read failed", preErr);
+    return { ok: false, error: "server" };
+  }
+  const preInProgress = (preRows ?? []).length > 0;
+
+  // 6. Block-then-confirm gate. Default revoke refuses if a response is
+  //    in flight; the UI catches this, shows the honest confirmation,
+  //    and re-calls with confirmHardRevoke=true. We do NOT audit the
+  //    block — it's a UI gate, not a destructive action; auditing every
+  //    "what's the state?" probe would flood the log. The actual
+  //    revoke (step 11) is what gets audited, and it carries
+  //    hadInProgressResponse so the audit reflects whether work was
+  //    locked.
+  if (preInProgress && !options.confirmHardRevoke) {
+    return { ok: false, error: "in_progress" };
+  }
+
+  // 7. Mint a fresh token hash — PLAINTEXT IS DISCARDED (destructure
+  //    picks `hash` only; `plaintext` falls out of scope untouched).
+  //
+  //    We intentionally do NOT call buildInvitationUrl — there is no
+  //    link to issue. Side-benefit: a missing NEXT_PUBLIC_SITE_URL
+  //    cannot block a revoke (a security-relevant op shouldn't depend
+  //    on an env var only the reissue path needs).
+  const { hash } = mintInvitationToken();
+
+  // 8. ROTATION + STATUS COMMIT — one UPDATE, atomic at the row level
+  //    (Postgres applies multi-column updates atomically). Link dies
+  //    AND terminal status set in a single write. AFTER this point,
+  //    validate_invitation_token cannot create new responses for this
+  //    invitation — the lookup hashes incoming plaintext and finds no
+  //    match (the new hash has no known plaintext).
+  try {
+    await updateInvitation(supabase, inv.id, {
+      tokenHash: hash,
+      status: "revoked",
+    });
+  } catch (err) {
+    console.error("[invitations] revoke rotation/status update failed", err);
+    return { ok: false, error: "server" };
+  }
+
+  // 9. POST-ROTATION re-read — canonical in-progress set. Closes the
+  //    race window between step 5 and step 8: any validate call that
+  //    snuck in with the old token between those points either
+  //    committed its INSERT BEFORE step 8's UPDATE (visible here) or
+  //    saw the new hash and inserted nothing. Either way this read is
+  //    the final truth.
+  const { data: finalRows, error: finalErr } = await supabase
+    .from("responses")
+    .select("id")
+    .eq("invitation_id", inv.id)
+    .is("submitted_at", null);
+  if (finalErr) {
+    console.error("[invitations] revoke responses(in-progress, post) read failed", finalErr);
+    return { ok: false, error: "server" };
+  }
+  const lockedResponseIds = (finalRows ?? []).map((r) => r.id);
+  const hadInProgressResponse = lockedResponseIds.length > 0;
+
+  // 10. Lock the canonical set. Kicks active sessions at next page
+  //     load (getSession filters by is_locked); saveAnswer also
+  //     refuses on is_locked. Idempotent: is_locked=TRUE on an
+  //     already-locked row is a no-op, so a retry after a transient
+  //     failure is safe.
+  //
+  //     ORDERING: rotation+status (step 8) FIRST, lock (this step)
+  //     SECOND. If the lock fails, the link is already dead and the
+  //     status is terminal — soft-failure mode where the respondent
+  //     can finish their current draft via the existing cookie but
+  //     cannot re-enter via the link. Surfaced as server error so the
+  //     owner can re-try.
+  if (hadInProgressResponse) {
+    const { error: lockErr } = await supabase
+      .from("responses")
+      .update({ is_locked: true })
+      .in("id", lockedResponseIds);
+    if (lockErr) {
+      console.error("[invitations] revoke is_locked update failed", lockErr);
+      return { ok: false, error: "server" };
+    }
+  }
+
+  // 11. Audit — severity=warn. Terminal cut-off is security-relevant;
+  //     the actor identity is filled by the trigger in
+  //     20260519170003_functions.sql (tg_audit_log_fill_actor). No PII
+  //     in metadata — invitationId/refCode/response IDs only.
+  //     hadInProgressResponse reflects the POST-rotation reality (what
+  //     we actually locked), not the pre-rotation gate read.
+  await logAudit(supabase, {
+    action: "invitation.revoke",
+    resource: inv.refCode,
+    severity: "warn",
+    metadata: {
+      invitationId: inv.id,
+      hadInProgressResponse,
+      lockedResponseIds,
+    },
+  });
+
+  return {
+    ok: true,
+    refCode: inv.refCode,
+    hadInProgressResponse,
+    lockedResponseIds,
+  };
+}

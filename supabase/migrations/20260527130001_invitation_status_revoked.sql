@@ -1,0 +1,46 @@
+-- 20260527130001_invitation_status_revoked.sql
+--
+-- Adds 'revoked' to the invitation_status enum (paired with
+-- lib/actions/invitations.ts revokeInvitationAction).
+--
+-- WHY: revoke is the terminal "kill this invitation" operation for the
+-- owner (Sura). Distinct from 'submitted' (the respondent's terminal)
+-- and 'expired' (a time-bound terminal — unused by any code path today,
+-- pure enum slot). The revoke action sets this value ALONGSIDE two
+-- other operations performed together:
+--
+--   1. token_hash rotation — kills the magic link. validate_invitation_
+--      token hashes incoming plaintext and looks up by hash; the new
+--      hash has no plaintext that can produce it, so the lookup never
+--      matches. (Same primitive resend uses to invalidate the old link
+--      on token rotation — see lib/actions/invitations.ts D56 notes.)
+--
+--   2. is_locked=TRUE on any in-progress response — kicks any active
+--      session. lib/cookies.ts getSession() filters by is_locked, and
+--      lib/actions/answers.ts saveAnswer refuses on is_locked.
+--
+-- Status alone does NOTHING — neither validate_invitation_token nor
+-- getSession() checks the status column. The 'revoked' value exists to
+-- LABEL the terminal state in the admin UI (chip + button-visibility
+-- gating), not to enforce the kill.
+--
+-- PG NOTES:
+--   * ALTER TYPE ADD VALUE was strict-in-tx pre-PG12; PG12 relaxed this
+--     so the statement can run inside a transaction block as long as
+--     the new value isn't USED in the same transaction. This migration
+--     only adds the value (no INSERT/UPDATE references it), so it is
+--     tx-safe.
+--   * IF NOT EXISTS (PG12+) makes the statement idempotent — safe to
+--     re-apply, safe to land in a partial supabase db push.
+--
+-- DEPLOY ORDER (matters): this migration MUST COMMIT before the code
+-- that writes 'revoked' goes live. Natural order:
+--   1. Saeed runs `supabase db push` → this migration commits.
+--   2. Saeed runs `supabase gen types typescript` against prod → the
+--      regenerated lib/supabase/database.types.ts wins over the
+--      hand-edited values in this commit (we hand-edit so the branch
+--      typechecks before Saeed's gen-types run; they will match).
+--   3. Vercel deploys the code (which now references 'revoked').
+-- No coordination hazard.
+
+ALTER TYPE invitation_status ADD VALUE IF NOT EXISTS 'revoked';
