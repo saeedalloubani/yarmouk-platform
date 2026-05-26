@@ -1,3 +1,63 @@
+## ⚠️ SESSION CARRYOVER (2026-05-24) — read first
+
+### NEW WORKSTREAM: Self-service readiness (gates Saeed-removal)
+Saeed-removal (ethics gate, "data accessible only to the researcher") has a HIDDEN
+PREREQUISITE discovered this session: once Saeed is removed, Sura operates the
+platform UI-ONLY (no code/DB). Every operation she needs across the two-stage study
+must be a UI action first, or she's stranded (and recalling Saeed re-opens the access
+the ethics gate closed). So: build Sura's self-service controls → Sura is independent →
+THEN remove Saeed → THEN real data flows.
+
+Study is TWO SEQUENTIAL STAGES with a learning loop:
+  Stage 1 Pilot: activate 4 pilot variants → invite → collect → read F1–F4 feedback → close
+  Between:       revise the draft MAIN variants from that feedback → proof
+  Stage 2 Main:  activate mains → invite → collect → export → close
+
+IN PROGRESS: read-only self-service GAP AUDIT (table of UI-path-EXISTS / PARTIAL /
+MISSING-code-or-DB-only for: activate, close, edit-draft-content, create/manage
+invitations, view/export responses, team mgmt [seed supervisor admins — likely
+DB-only = critical gap, Sura can't grant her own supervisors access], settings).
+Output = the build list for what to ship before Saeed-removal. Builds are PARTIALLY
+blocked by the parked pilot-vs-main decision below; the AUDIT itself is not.
+Design rule for all self-service controls: expose SAFE ops (activate/close/resend/
+revoke/add-readonly-admin), keep DANGEROUS ops OUT (demote active→draft / unfreeze
+[guard blocks it], hard-delete responses).
+
+### PARKED #1 — Pilot-counts-toward-main (Sura ↔ supervisors)
+Sura is deciding with supervisors whether pilot SME responses fold into the main
+dataset (they're SMEs who've effectively answered). Affects between-stages data
+handling + the exact shape of the self-service controls. Don't build lifecycle/
+content controls until resolved. Data-SAFETY care (backups, no-unfreeze) applies to
+BOTH rounds regardless.
+
+### PARKED #2 — D27 automated backup (paused on Saeed's provisioning)
+Branch `d27-automated-backup`: STEP 1 (29a637b, backup_ro role) + STEP 2 (2fbb90e,
+headless backup.sh env-branch) COMMITTED, not pushed.
+- backup_ro role: least-privilege, PROVEN Vault-blind (no vault usage/select, no role
+  inheritance, not superuser; BYPASSRLS for complete dump of RLS tables). Password set
+  by Saeed (URL-safe hex), in password manager.
+- BACKUP_DB_URL (backup_ro via SHARED/session pooler, port 5432, user
+  backup_ro.trvxugvkesfcopwdtdey): PROVEN working — psql returned count=57.
+- FINDING: `supabase db dump` needs Docker (flaky) → STEP 3 workflow should use RAW
+  pg_dump + postgresql-client-17, NOT the Docker-wrapped CLI dump.
+- PENDING (Saeed, out-of-band): create external bucket (lean Cloudflare R2 — zero
+  egress, 10GB free) + put-only API creds + 30-day lifecycle rule; add 6 GH secrets
+  (BACKUP_DB_URL, BACKUP_PASSPHRASE [MUST match local value], BACKUP_S3_BUCKET,
+  BACKUP_S3_ENDPOINT, BACKUP_S3_KEY_ID, BACKUP_S3_SECRET). pii_key NOT in CI.
+- THEN: STEP 3 dev writes workflow (daily cron + workflow_dispatch dry-run, raw
+  pg_dump); STEP 4 prove a CI-produced blob RESTORES (download→decrypt→restore
+  throwaway postgres:17→count-verify→teardown). NEVER use --dry-run (leaks password).
+
+### OTHER OPEN
+- Sura PROOFING the 4 pilot drafts via the preview (her gate; nothing activates until
+  sign-off). All 4 pilots DRAFT + uninvitable.
+- Activation is currently DB-only (UPDATE status='active'); no UI button yet — this is
+  exactly what the self-service workstream addresses.
+- Available unblocked build if wanted: D22 email-template editor (email layer, not core,
+  independent of Sura + both parked items).
+
+---
+
 # Task State — Handoff Snapshot
 
 Last updated: PRODUCTION DEPLOYED + PROVEN LIVE (2026-05-23) at karasneh-research.org — auth (token_hash/verifyOtp), email both directions from verified domain, full respondent flow smoke-proven, true-empty. UI bilingual pass done (commit d87d1e1). Remaining before real participants: backups (unbuilt), Saeed-removal, invitation-email Arabic copy. See docs/STATUS.md Production Deployment.
