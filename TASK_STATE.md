@@ -13,14 +13,16 @@ Study is TWO SEQUENTIAL STAGES with a learning loop:
   Between:       revise the draft MAIN variants from that feedback → proof
   Stage 2 Main:  activate mains → invite → collect → export → close
 
-STATUS (2026-05-26): 3 OF 4 LIFECYCLE-BLOCKERS DONE + PROVEN + MERGED TO MAIN
-(merge commit 1761c8d). Branch self-service-lifecycle retired.
+STATUS (2026-05-31): 4 OF 4 SELF-SERVICE LIFECYCLE-BLOCKERS DONE + PROVEN.
+Export remains separate (Stage-2 hand-off deliverable, data-blocked on
+real responses — not lifecycle-blocking for Stage-1 collection).
   ✓ Activate/Close (commit 7a1ae78) — server-action + buttons on /admin/
     questionnaires/[versionId]. Action machinery (owner-gate / audit /
     router.refresh / transition guards) end-to-end proven via the Team smoke
-    test (same pattern); the buttons specifically get final confirmation at
-    Sura's first real pilot activation — held until her sign-off on the 4
-    pilot drafts.
+    test (same pattern). UI button FINAL CONFIRMATION 2026-05-31 — exercised
+    on main_researchers v1 (revoke-invitation smoke setup) and the accidental
+    pilot_officials flip during the same smoke. Button correctly flips status
+    + the row updates in both cases. STANDING ITEM RETIRED.
   ✓ Structural admin guards (27da7dc) — Inv1 (no runtime owner-creation,
     42501) + Inv2 (last-owner protection, 23514). Proven via rolled-back
     11-case probe matrix pre-apply AND post-apply against live triggers
@@ -39,10 +41,26 @@ STATUS (2026-05-26): 3 OF 4 LIFECYCLE-BLOCKERS DONE + PROVEN + MERGED TO MAIN
     containment (nav-absent + route-level 307s on /admin/security + /admin/
     settings/team) + clean removal via status='removed' + auth.admin.
     deleteUser. Cleanup rehearsed the real Saeed-removal mechanism.
-  ✗ #4 REMAINING: Export (Stage-2 deliverable — CSV / ATLAS.ti xlsx /
-    executive report). DATA-BLOCKED on real responses; not lifecycle-
-    blocking for Stage-1 pilot collection, but blocks the final hand-off.
-    Build when needed for the export step.
+  ✓ #4 Revoke-invitation (commits baef0f3 + ca48e96 + 6981fd7 types regen)
+    — three-op terminal kill: token_hash rotation (link dies) + status=
+    'revoked' (terminal label) + is_locked=TRUE on non-submitted response
+    (active session kicked; saved answers RETAINED). Block-then-confirm UI
+    gate on in-progress responses (honest wording: "saved answers retained
+    and visible to you, but they cannot add more or submit"). Post-rotation
+    re-read closes the sub-second race between gate read and rotation. SMOKE-
+    PROVEN on prod 2026-05-31 — Cases 1/2/4 pass against throwaway main_
+    researchers v1 (Case 3 skipped, already_submitted ≡ resend's). Cleanup
+    reversed via the 4-count residue gate (invs/resps/answs/qns all zero)
+    then DB-direct re-draft — main_researchers state byte-identical pre/
+    post. Decision D61. Audit residue: 3 × invitation.revoke (warn) + the
+    version.activate/re-draft pair on main_researchers + the accidental
+    pair on pilot_officials (truthful append-only, PII-free).
+
+EXPORT (separate, NOT a self-service blocker):
+  ✗ Export (Stage-2 deliverable — CSV / ATLAS.ti xlsx / executive report).
+    DATA-BLOCKED on real responses; not lifecycle-blocking for Stage-1
+    pilot collection, but blocks the final hand-off. Build when needed
+    for the export step.
 
 D22 EMAIL-TEMPLATE EDITOR — DONE (2026-05-26, branch email-templates,
 commits 244965f schema + d1b564a code). Owner-only editor for the
@@ -72,19 +90,14 @@ Two follow-ups noted:
       TemplateSpec entry, (ii) defaults extracted from the current TS
       constants byte-for-byte, (iii) an id added to the email_templates
       CHECK enum migration. Defer until needed.
-  (b) REVOKE-INVITATION GAP (confirmed partial self-service hole,
-      surfaced during D22 smoke cleanup): the /admin/invitations list
-      exposes Resend but NOT Revoke. Resend rotates the token (old link
-      dies, new one issued, same record); there's no UI path to
-      DEACTIVATE an existing invitation outright. Acceptable today
-      because invitations only matter while their token can be
-      consumed, and a wrong-recipient invitation can be neutralized by
-      letting it expire OR by Resend-rotating then ignoring the new
-      URL. Worth surfacing a "Revoke" action that sets expires_at = NOW
-      (or sets used_count = max_uses) so the link goes inert
-      immediately — a 1-action build behind the existing owner-gate
-      pattern. Build when a misdirected real invitation creates the
-      need.
+  (b) REVOKE-INVITATION — ✓ DONE + SMOKE-PROVEN (2026-05-31). See the
+      "4 OF 4 SELF-SERVICE LIFECYCLE-BLOCKERS DONE" block above for the
+      full ✓ entry (commits baef0f3 + ca48e96 + 6981fd7, decision D61,
+      RUNBOOK "Revoking an invitation"). Shipped as a richer surface
+      than the original gap sketch — three-op kill (rotation + status +
+      is_locked), not a single column flip — because validate_invitation_
+      token and getSession() don't check status, so a status-only "revoke"
+      would have been theatre.
 
 Design rule (still applies for follow-ups): expose SAFE ops (activate /
 close / resend / revoke / add-readonly-admin), keep DANGEROUS ops OUT
@@ -149,8 +162,11 @@ Follow-ups parked (NOT blocking):
   sign-off). All 4 pilots DRAFT + uninvitable.
 - Activation is currently DB-only (UPDATE status='active'); no UI button yet — this is
   exactly what the self-service workstream addresses.
-- D22 email-template editor: DONE 2026-05-26 (see STATUS block above). Stage 2 +
-  revoke-invitation gap remain — both noted under D22 follow-ups.
+- D22 email-template editor: DONE 2026-05-26 (see STATUS block above).
+  Revoke-invitation gap CLOSED 2026-05-31 (D61, see "4 OF 4 SELF-SERVICE
+  LIFECYCLE-BLOCKERS DONE" block above). Stage 2 email templates
+  (admin-invite + submission-notification editors) remain the only D22
+  follow-up — defer until needed.
 - LIVE FINDING (surfaced by the admins-guards probe, 2026-05-26): Saeed
   (`salloubani@cybercorrelate.com`) is CONFIRMED still `role=owner, status=active` in
   prod — never cleaned up from his dev-bootstrap. Per ethics gate ("data accessible only
@@ -598,7 +614,7 @@ These are in `docs/STATUS.md` Notes section and `docs/DECISIONS.md` D38-D39, but
 7. **Vault secrets aren't migration-managed.** Bootstrap via Studio UI before migrations that reference them. Rotation also via Studio (or Vault API). Document in RUNBOOK.md.
 8. **`encrypt_pii('')` produces non-NULL ciphertext.** Empty string is distinct from NULL. Don't compress them in app code.
 9. **`validate_invitation_token` is resumption-aware.** Don't assume a successful call means "fresh response" — check the returned `response_id`. Null = fresh, non-null = resume.
-10. **Email resend requires token rotation** (since plaintext is never stored). Mint new plaintext, hash it, UPDATE `invitations.token_hash`. The old link stops working — intentional, documented in Task #11 reminder.
+10. **Email resend AND revoke share the token-rotation-as-kill primitive** (since plaintext is never stored). Mint a new plaintext, hash it, UPDATE `invitations.token_hash` — the old link stops working immediately. Resend (D56) keeps the new plaintext + emails it; revoke (D61) discards it (no reissue). Both actions' header comments + RUNBOOK "Revoking an invitation" document the mechanic; the UI confirm dialogs warn the user that the magic link will stop working. (Task #11 retired 2026-05-31 — see section 13.)
 11. **`CREATE OR REPLACE FUNCTION` can't change return type.** Adding/removing/reordering a `RETURNS TABLE` column (or changing a scalar return type) is rejected at push time with SQLSTATE 42P13. Use `DROP FUNCTION IF EXISTS …(exact-arg-types); CREATE FUNCTION …` + restate REVOKE/GRANT. Check `pg_depend` first to confirm no dependents. Body-only changes still use `CREATE OR REPLACE`. (D45, caught on migration 012.)
 12. **Redaction is at the VIEW layer — never PostgREST-embed a PII base table.** Readonly admins keep a base-table SELECT policy on the PII tables (`invitations_readonly_select` etc.) — that policy is what lets the `security_invoker` redacted views return rows. A PostgREST embed like `responses.select("*, invitations(...)")` resolves against the **base** `invitations`, not `invitations_redacted`, handing readonly the ciphertext PII. Always fetch PII context (invitation/consent identity) through the role-routed repos (`lib/repos/{invitations,consent}.ts`) and join in memory by id. (Session 3c-i.)
 13. **A redacted view doesn't cover owner-ONLY tables — they need an owner-only RLS SELECT.** `researcher_notes` shipped with `rn_admins_select` (owner+readonly SELECT, from migration 004), so readonly supervisors could read note bodies via direct PostgREST even though the UI hid the section — found by reading live `pg_policies`, not the migration source. Owner-only surfaces need an owner-only SELECT policy (migration 016's `rn_owner_select`). **Verify such a fix with an owner-vs-readonly contrast under `SET ROLE authenticated`** (RLS enforced; set `request.jwt.claims` so `current_admin_role()` resolves per-admin) — NOT as postgres/service-role, which bypasses RLS and shows the row in both cases, masking the bug. (Session 3c-ii.)
@@ -633,7 +649,7 @@ When starting the next session, expect the user to first ask for a scope-narrowi
 These exist in the task list and are scoped for future sessions:
 
 - **Task #9** — Remind Owner to connect Vercel + set Node 24 in project settings before any deploy. Not yet wired to Vercel; will surface when we approach Session 7 (or earlier if Owner wants preview deploys).
-- **Task #11** — Session 4 admin docs: "Resend invitation" requires token rotation. Document in the Invitations admin UI as user-facing notice.
+- ~~**Task #11** — Session 4 admin docs: "Resend invitation" requires token rotation. Document in the Invitations admin UI as user-facing notice.~~ **RETIRED 2026-05-31** at revoke-invitation close-out. Token-rotation-as-kill is documented in the action header comments (`lib/actions/invitations.ts` for both `resendInvitationAction` D56 and `revokeInvitationAction` D61) + the migration comment + RUNBOOK "Revoking an invitation". The UI text in `InvitationResendButton` / `InvitationRevokeButton` confirm dialogs ("the magic link will stop working") is the load-bearing user-facing surface; no separate /admin notice needed.
 
 **Closed:** Task #10 (`opened`→`started` transition) — done in Session 2b-3 as an idempotent guarded UPDATE in the `saveAnswer` action (fires on first answer, smoke E verified). Task #12 (SQLSTATE-verify note) — done at 2b-1 close-out; note in `docs/STATUS.md` cross-session observations.
 
