@@ -49,7 +49,7 @@ const SECTION_LABELS: Record<SectionKey, { title: string; hint: string }> = {
   cta: {
     title: "Button label",
     hint:
-      "The text on the sign-in button. The URL is fixed by the system — only the label is editable.",
+      "The text on the button. The URL is fixed by the system — only the label is editable.",
   },
   personal: {
     title: "Personal-link note",
@@ -65,6 +65,21 @@ const SECTION_LABELS: Record<SectionKey, { title: string; hint: string }> = {
     title: "Contact line",
     hint:
       "Closing line with how to reach you. Any email or international phone (+962 …) you type here is automatically linkified.",
+  },
+  greeting: {
+    title: "Greeting",
+    hint:
+      'Opener — must contain "{name}" so the recipient sees their own name. Example: "Hello {name},".',
+  },
+  notice: {
+    title: "Fine-print notice",
+    hint:
+      "Short fine-print paragraph below the button — security/expiry hint, what to do if unexpected, etc.",
+  },
+  lead: {
+    title: "Body",
+    hint:
+      'Single-paragraph body of the notification — must contain "{ref_code}" so you can identify which response landed.',
   },
 };
 
@@ -82,9 +97,9 @@ export default function EmailTemplateEditor(props: {
   ownerEmail: string;
   customized: boolean;
   initialEnSubject: string;
-  initialEnSections: Record<string, string>;
+  initialEnSections: Partial<Record<SectionKey, string>>;
   initialArSubject: string | null;
-  initialArSections: Record<string, string> | null;
+  initialArSections: Partial<Record<SectionKey, string>> | null;
   enPreview: RenderedPreview;
   arPreview: RenderedPreview | null;
 }) {
@@ -270,9 +285,9 @@ export default function EmailTemplateEditor(props: {
               <code key={t} className="ms-1">{`{${t}}`}</code>
             ))}
             <div className="mt-1">
-              The recipient name, ref code, and a working sign-in button are
-              always supplied by the system — the button URL is not a
-              placeholder you can break.
+              The button URL is system-owned (never a placeholder, never
+              editable). Named placeholders above are filled in per
+              recipient at send time.
             </div>
           </div>
         )}

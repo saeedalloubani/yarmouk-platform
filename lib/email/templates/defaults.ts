@@ -1,18 +1,42 @@
 // lib/email/templates/defaults.ts
 //
-// D22 — canonical defaults bundled with the codebase. These are the
-// strings that ship if no email_templates row exists, or that fill in any
-// section the row left blank ("reset to default" deletes the row, so the
-// renderer falls back to these).
+// D22 + Stage 2 — canonical defaults bundled with the codebase. These
+// are the strings that ship if no email_templates row exists, or that
+// fill in any section the row left blank ("reset to default" deletes
+// the row, so the renderer falls back to these).
 //
-// EXTRACTED BYTE-FOR-BYTE from the pre-D22 lib/email/invitation.ts EN/AR
-// objects. The function-shaped `expiry` field becomes a string with the
-// {expiry_date} placeholder — once interpolated, the rendered output is
-// IDENTICAL to today's hard-coded email. Shipping D22 with no DB row in
-// place must not change a single character of what Sura's invitees see.
+// EXTRACTED BYTE-FOR-BYTE from the corresponding pre-Stage-2 modules:
+//   - INVITATION       ← lib/email/invitation.ts (Stage 1 — already
+//                        extracted in D22; unchanged here).
+//   - ADMIN_INVITE     ← lib/email/admin-invite.ts (subject, greeting
+//                        "Hello {input.name},", intro, cta "Sign in",
+//                        fine → renamed to 'notice', contact).
+//   - SUBMISSION       ← lib/email/submission.ts (subject, lead
+//                        "A new questionnaire response (…) was
+//                        submitted." → ${input.refCode} expressed as
+//                        the {ref_code} placeholder, cta "Review it in
+//                        the admin console" — trailing period dropped
+//                        because the renderer renders the button label
+//                        followed by ":" + URL on the next line; a
+//                        ".:" pair would read poorly).
 //
-// The HTML chrome (card, button color, line-heights, bidi-isolate spans)
-// lives in render.ts, NOT here — defaults carry text only.
+// Function-shaped placeholders in the source modules become
+// {placeholder_token} strings here:
+//   - admin-invite "Hello ${input.name},"  →  greeting "Hello {name},"
+//   - submission   "(${input.refCode})"     →  lead "({ref_code})"
+//
+// Once the renderer substitutes runtime values, the rendered EMAIL
+// BODY TEXT is byte-equivalent to the pre-Stage-2 hardcoded output for
+// every template. The HTML CHROME (card, button, divider) unifies to
+// the Stage 1 invitation shell — see lib/email/templates/render.ts
+// header for the chrome-delta notes (admin-invite intro paragraph
+// font-size 15→16 px; greeting paragraph adopts the intro paragraph's
+// 26px bottom margin; submission gains the white card + divider-less
+// fine block). All deltas are typographic / imperceptible / brand-
+// uniform improvements.
+//
+// The HTML chrome lives in render.ts, NOT here — defaults carry text
+// only.
 
 import type { TemplateDefaults, TemplateId } from "./types";
 
@@ -46,8 +70,44 @@ const INVITATION: TemplateDefaults = {
   },
 };
 
+const ADMIN_INVITE: TemplateDefaults = {
+  name: "Supervisor invitation",
+  description:
+    "Sent when you add a read-only supervisor. English only. Includes the magic-link sign-in button.",
+  en: {
+    subject: "You've been added as a supervisor on the Yarmouk Study",
+    sections: {
+      greeting: "Hello {name},",
+      intro:
+        "Sura Karasneh has added you as a read-only supervisor on the Yarmouk Study research platform. You'll be able to review responses, themes, and analytics — but not edit questionnaires or send invitations.",
+      cta: "Sign in",
+      notice:
+        "This link signs you in. It expires shortly — open it on a device you'll use for the admin console. If you weren't expecting this, ignore it; no account is active until you click.",
+      contact:
+        "Questions? Reply to this email or contact Sura at sjkarasneh24@eng.just.edu.jo.",
+    },
+  },
+  ar: null,
+};
+
+const SUBMISSION: TemplateDefaults = {
+  name: "Submission notification",
+  description:
+    "Sent to active owners when a respondent submits. English only. Identity-free — references the response by ref code.",
+  en: {
+    subject: "New response submitted — Yarmouk Study",
+    sections: {
+      lead: "A new questionnaire response ({ref_code}) was submitted.",
+      cta: "Review it in the admin console",
+    },
+  },
+  ar: null,
+};
+
 export const TEMPLATE_DEFAULTS: Record<TemplateId, TemplateDefaults> = {
   invitation: INVITATION,
+  "admin-invite": ADMIN_INVITE,
+  submission: SUBMISSION,
 };
 
 export function getDefaults(id: TemplateId): TemplateDefaults {
