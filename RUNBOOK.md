@@ -50,7 +50,7 @@ The owner can revoke any non-submitted invitation from `/admin/invitations` — 
 
 ### What revoke does NOT do
 
-- **Saved answers are retained.** A respondent's in-progress answers are NOT deleted — `is_locked` is a gate flag, not a CASCADE. The owner still reads them via `/admin/responses/<id>`. *If you want to delete the data too, that's "withdraw response", a separate operation tied to consent withdrawal — not built yet; for now do it via Studio `DELETE FROM responses WHERE id='<id>'` (CASCADE wipes answers).*
+- **Saved answers are retained.** A respondent's in-progress answers are NOT deleted — `is_locked` is a gate flag, not a CASCADE. The owner still reads them via `/admin/responses/<id>`. *If you want to remove a submitted response from research, see [Withdrawing a response](#withdrawing-a-response-owner-driven-research-data-removal) below — that's the right tool for the post-submission case.*
 - **Not reversible.** Revoke is terminal. To re-invite, create a fresh invitation; pick a new `ref_code` (the original code is now permanently taken by the revoked row).
 - **Does not email anything.** No notification to the recipient — they simply find the old link dead next time they click. (If you want them informed, send a manual email out-of-band.)
 
@@ -75,6 +75,48 @@ Read it carefully — the wording matches reality. The kick is silent from the r
 ### Stale-tab self-correction
 
 If two admin tabs both show the same invitation as revocable and one revokes it, the other tab will surface `already_revoked` on the next click and **auto-refresh** to the canonical terminal state (chip flips, buttons vanish). No manual reload needed. This is intentional — when the app knows the display is stale, it self-corrects rather than instructing the user.
+
+## Withdrawing a response (owner-driven research-data removal)
+
+The owner can withdraw any **submitted** response from `/admin/responses/<id>` — Withdraw button inside the new "Withdrawal" section card, between Consent and Answers, owner-only. Withdraw is the right tool when:
+
+- A participant retracts their consent post-submission.
+- An ethics issue surfaces with a specific response (e.g. the respondent admits the answers weren't really theirs).
+- The wrong recipient submitted under a ref_code intended for someone else.
+
+For in-progress (not-yet-submitted) responses, use **Revoke invitation** instead — that locks the session and retains the draft for owner inspection. The withdraw action returns `not_submitted` with explicit on-screen guidance if you try to withdraw an in-progress response.
+
+### What withdraw does (one atomic UPDATE — D63)
+
+1. **Flips `responses.status` to `'withdrawn'`** and **sets `responses.withdrawn_at = NOW()`** in a single statement. The structural CHECK `responses_withdrawn_state_consistent` enforces these two columns stay in sync; any future code path that flips one without the other gets a 23514 at write time.
+2. **Writes an audit row at `alert` severity** — `action='response.withdraw'`, resource=ref_code, metadata=`{ responseId, invitationId, refCode, consentSignedAt }`. This is the FIRST `alert`-severity action in the system; the tier is reserved for data-altering admin actions on submitted research data.
+3. **Refreshes the detail page** — the header status badge flips to "Withdrawn", the Withdrawal section card switches from button-mode to timestamp-mode ("Withdrawn at \<ts\>"), and the action button is unmounted. No manual reload needed.
+
+### What withdraw does NOT do
+
+- **No data deletion.** This is a SOFT delete — the response row, its answers, consent record, applied tags, researcher notes, and any recordings ALL survive. Withdrawn responses are excluded from exports, ATLAS.ti, analytics, dashboards, and feedback hubs (filter pass at every aggregating read site — D63). The consent_records row stays as cryptographic proof of consent (IRB chain-of-custody).
+- **Not reversible via the UI.** The semantic withdrawal is final — there is no Un-withdraw button. If you genuinely need to restore a row to active (e.g. you withdrew the wrong refCode), do it via Studio: `UPDATE responses SET status='active', withdrawn_at=NULL WHERE id='<id>';` — but record the reason somewhere outside the audit_log (the audit chain will show withdraw+restore as two separate events and may need narrative context for IRB).
+- **Does not notify the participant.** No email; no terminal page. Their /r/\<token\> link is unaffected.
+
+### Withdraw-then-resend re-opens the invitation slot (intentional)
+
+This is the load-bearing behavior to know about. After you withdraw a response, the invitation's resend and revoke gates BOTH treat the slot as if no submitted response existed — they filter to `status='active'`. Concretely:
+
+- **Resend after withdraw** rotates the token and fires a fresh email to the same recipient under the same ref_code. Slot re-opens.
+- **Revoke after withdraw** works (because the gate no longer sees a submitted response). Invitation flips to revoked terminal.
+
+The audit chain (`response.withdraw` at alert → subsequent `invitation.resend` or `invitation.revoke`) preserves the full history. **To prevent re-use after a withdraw, follow with revoke.** This is the right pattern when the recipient retracted consent and shouldn't be re-invited; without the revoke, the rotated link is still claimable if you later resend.
+
+**Note: invitation status doesn't update on withdraw.** A submitted invitation with all responses withdrawn will still show `submitted` status in the invitations list — the invitation lifecycle is independent of response withdrawal (no cascade by design — D63). The mixed signal (submitted chip + active Resend button) is semantically correct: the invitation DID produce a submission, AND that submission was retracted so the slot is back in play. The authoritative withdrawal state is on the response detail page (header "Withdrawn" chip + the Withdrawal section card's timestamp view); the audit chain (`invitation.create` → `invitation.send` → `response.submit` → `response.withdraw`) preserves the full history.
+
+### List view + audit surface
+
+- `/admin/responses` defaults to hiding withdrawn rows. Click **Show withdrawn** to opt in — withdrawn rows appear with a danger-styled "Withdrawn" chip alongside the invitation status. URL is `?withdrawn=show` (bookmarkable).
+- `/admin/security` shows the `response.withdraw` row at `alert` severity; the `forbidden`-attempt variant (`response.withdraw.forbidden` at `warn`) appears if a readonly admin tries to invoke the action directly.
+
+### Stale-tab self-correction
+
+Same as revoke — if two admin tabs both show the same response as withdrawable and one withdraws it, the other tab surfaces `already_withdrawn` on the next click and **auto-refreshes** to the withdrawn state.
 
 ## Email templates (the 3 editable templates + reset path)
 
