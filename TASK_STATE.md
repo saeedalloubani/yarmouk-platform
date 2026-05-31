@@ -85,11 +85,24 @@ on prod against real inboxes. Real-send rendering covered by transitivity
 
 Two follow-ups noted:
   (a) STAGE 2: editors for the admin-invite + submission-notification
-      emails (both EN-only). Schema is forward-compatible (subject_ar +
-      sections_ar are nullable). Each future template needs (i) a
-      TemplateSpec entry, (ii) defaults extracted from the current TS
-      constants byte-for-byte, (iii) an id added to the email_templates
-      CHECK enum migration. Defer until needed.
+      emails. ✓ DONE + SMOKE-PROVEN (2026-05-31, decision D62). All 3
+      platform-sent emails are now editor-managed (invitation bilingual,
+      admin-invite EN-only, submission EN-only). Renderer generalised
+      (renderInvitationEmail → renderEmailTemplate); invitation output
+      byte-equivalent to pre-Stage-2; admin-invite accepts +1px font /
+      -2px greeting margin as brand-unification; submission gains the
+      branded card chrome + structural button guarantee (B(i)). Wrappers
+      preserve caller signatures (zero ripple in admins.ts and
+      notifications.ts). EN-only support via TemplateSpec.bilingual=false
+      cascades through editor (AR column HIDDEN) + action validation.
+      Commits: 28d0951 (migration id-widen) + 8a96e89 (code), PR merged
+      as 55002f2. Smoke: 3 templates list, EN-only UI hides AR, branded
+      chrome unified, placeholders substitute, [TEST] subject + banner +
+      inert URL all confirmed. Leftover Stage 1 customization on
+      Participant invitation cleared via UI Reset (exercised the
+      resetTemplateAction path one more time). See STATUS "Email-
+      template editor — Stage 2 done" block + DECISIONS D62 + RUNBOOK
+      "Email templates" entry.
   (b) REVOKE-INVITATION — ✓ DONE + SMOKE-PROVEN (2026-05-31). See the
       "4 OF 4 SELF-SERVICE LIFECYCLE-BLOCKERS DONE" block above for the
       full ✓ entry (commits baef0f3 + ca48e96 + 6981fd7, decision D61,
@@ -162,11 +175,13 @@ Follow-ups parked (NOT blocking):
   sign-off). All 4 pilots DRAFT + uninvitable.
 - Activation is currently DB-only (UPDATE status='active'); no UI button yet — this is
   exactly what the self-service workstream addresses.
-- D22 email-template editor: DONE 2026-05-26 (see STATUS block above).
-  Revoke-invitation gap CLOSED 2026-05-31 (D61, see "4 OF 4 SELF-SERVICE
-  LIFECYCLE-BLOCKERS DONE" block above). Stage 2 email templates
-  (admin-invite + submission-notification editors) remain the only D22
-  follow-up — defer until needed.
+- D22 email-template editor: DONE 2026-05-26 (Stage 1, invitation) +
+  Stage 2 DONE 2026-05-31 (D62, admin-invite + submission editors,
+  commits 28d0951 + 8a96e89 merged as 55002f2). All 3 platform-sent
+  emails are editor-managed. Revoke-invitation gap CLOSED 2026-05-31
+  (D61, see "4 OF 4 SELF-SERVICE LIFECYCLE-BLOCKERS DONE" block above).
+  Per-template BCC owner toggle + global override is the only un-built
+  tail of D22 — not blocking; defer to post-launch.
 - LIVE FINDING (surfaced by the admins-guards probe, 2026-05-26): Saeed
   (`salloubani@cybercorrelate.com`) is CONFIRMED still `role=owner, status=active` in
   prod — never cleaned up from his dev-bootstrap. Per ethics gate ("data accessible only

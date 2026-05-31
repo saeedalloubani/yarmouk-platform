@@ -76,6 +76,45 @@ Read it carefully — the wording matches reality. The kick is silent from the r
 
 If two admin tabs both show the same invitation as revocable and one revokes it, the other tab will surface `already_revoked` on the next click and **auto-refresh** to the canonical terminal state (chip flips, buttons vanish). No manual reload needed. This is intentional — when the app knows the display is stale, it self-corrects rather than instructing the user.
 
+## Email templates (the 3 editable templates + reset path)
+
+The platform sends 3 emails, all editable at `/admin/settings/email-templates` (owner-only). The button URL in each is **system-owned** (Sura edits only the LABEL — the link itself cannot be removed or broken from the editor).
+
+| Template | Bilingual? | Recipient | Trigger |
+|---|---|---|---|
+| **Participant invitation** (`invitation`) | EN + AR | Invited expert | Owner clicks "Send" on a new or resent invitation (`lib/actions/invitations.ts`). |
+| **Supervisor invitation** (`admin-invite`) | EN only | Read-only supervisor | Owner adds a supervisor via Settings → Team Access (`lib/actions/admins.ts`). |
+| **Submission notification** (`submission`) | EN only | Active owner(s) | Respondent submits; fan-out via `lib/notifications.ts`. |
+
+EN-only templates HIDE the Arabic column in the editor (NOT render empty AR fields). Same Send-test path on all three — inert button URL lands on `/?preview=<id>-email` (the public landing ignores all query strings; no token is ever consumed by a test click).
+
+### Resetting a template to defaults
+
+Use this when an edit needs undoing, or to clear smoke-test customization before launch (as Saeed did 2026-05-31 to clear the leftover D22 Stage 1 customization on Participant invitation).
+
+1. `/admin/settings/email-templates` → click the template (e.g. **Participant invitation**).
+2. The form pre-fills with the saved customization; the badge reads `customized`.
+3. Scroll to the editor footer. Beside **Save changes** is **Reset to default** (muted, hover turns red).
+4. Click it. Browser `window.confirm`: *"Discard your customizations for this template? The default English/Arabic copy will be restored."* Click OK.
+5. Banner reads "Reset to default." The list page now shows the `default` chip and "shipping defaults" in the right column.
+6. Audit log at `/admin/security` shows `template.reset` (severity=info) with `metadata.adminId`. **The deletion is auditable** — that's why we use the UI button, not a repo-level DELETE.
+
+### Sending a test email
+
+Each editor page has a **Send test** panel below Save / Reset. It sends the *currently edited* copy (not the saved version) to an email address of your choice — defaults to your own owner email.
+
+- Subject prefixed `[TEST]`; body carries a banner reminding the recipient that the button is inert.
+- 30-second cooldown per actor between test sends (logged via `audit_log.action='template.test_send'`).
+- Bilingual templates show a language picker (EN / AR); EN-only templates skip it.
+- **Creates nothing**: no token minted, no invitation row, no response row. Click-tracking is the inert URL → public landing only.
+
+### What's NOT editable
+
+- The button URL on any template (system-owned `button_href`).
+- The HTML chrome (card / button colors / layout). Brand-uniform by design.
+- The per-template structural sections (e.g. invitation always has `intro / cta / personal / expiry / contact`; can't add a new section or rename one without a code change).
+- BCC owner toggle / global override — un-built tail of D22; not blocking; deferred to post-launch.
+
 ## First-time setup: Vault keys
 
 Required before applying any migration that references `pii_key_v*`. Without this, `decrypt_pii` finds no key in Vault and PII reads/writes fail.
