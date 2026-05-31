@@ -10,9 +10,16 @@
 // memory by invitation_id — NOT via a PostgREST embed, which would hit the
 // invitations base table and leak ciphertext PII to readonly admins.
 //
-// "status" is invitation.status (responses has no status column); it's a
-// display value in a list, not a correctness gate, so the denormalized
-// invitation field is fine.
+// Two STATUS dimensions are now relevant:
+//   - invitation.status (sent / opened / started / submitted / revoked) —
+//     the historical "Status" column display, denormalized from the
+//     role-branching invitations repo. Unchanged.
+//   - response.status (active / withdrawn, post-D63) — soft-delete
+//     lifecycle on the response itself. Rendered as an ADDITIONAL chip
+//     next to the invitation status when withdrawn (visible to both
+//     roles; status is non-PII). Default-hidden via the ?withdrawn=show
+//     toggle so the list shows research-relevant data by default; Sura
+//     opts in when auditing.
 
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -32,12 +39,27 @@ function fmtDate(iso: string | null): string {
   });
 }
 
-export default async function ResponsesPage() {
+export default async function ResponsesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ withdrawn?: string }>;
+}) {
   const supabase = await createSupabaseServerClient();
   const admin = await getCurrentAdmin(supabase);
   if (!admin) redirect("/admin/login"); // defensive; layout already guards
 
-  const responses = await listResponses(supabase);
+  // Default-OFF: the list hides withdrawn rows unless ?withdrawn=show.
+  // Filter is applied at the QUERY layer (listResponses passes the flag
+  // to PostgREST), not in-memory — D63 cross-cutting filter discipline:
+  // when filtering, do it at the read so we never load rows we won't
+  // render. The MUST-RETAIN classification only means the REPO doesn't
+  // bake the filter in; the PAGE can opt in.
+  const { withdrawn } = await searchParams;
+  const showWithdrawn = withdrawn === "show";
+
+  const responses = await listResponses(supabase, {
+    hideWithdrawn: !showWithdrawn,
+  });
 
   // Invitation context via the role-branching repo (NOT an embed). ref_code,
   // category, nationality, status are non-PII — present and identical on both
@@ -65,6 +87,7 @@ export default async function ResponsesPage() {
       submittedAt: r.submittedAt,
       durationMinutes: r.durationMinutes,
       answerCount: counts.get(r.id) ?? 0,
+      responseStatus: r.status,
     };
   });
 
@@ -81,14 +104,28 @@ export default async function ResponsesPage() {
   return (
     <main className="min-h-screen bg-white">
       <div className="max-w-5xl mx-auto px-6 py-10">
-        <div className="mb-6">
-          <div className="eyebrow mb-1">Admin</div>
-          <h1 className="text-[24px] font-bold text-ink tracking-tight">
-            Responses
-          </h1>
-          <p className="text-[13px] text-muted mt-1">
-            {rows.length} total · signed in as {admin.name} ({admin.role})
-          </p>
+        <div className="flex items-end justify-between mb-6">
+          <div>
+            <div className="eyebrow mb-1">Admin</div>
+            <h1 className="text-[24px] font-bold text-ink tracking-tight">
+              Responses
+            </h1>
+            <p className="text-[13px] text-muted mt-1">
+              {rows.length} {showWithdrawn ? "total" : "active"} · signed in as{" "}
+              {admin.name} ({admin.role})
+            </p>
+          </div>
+          {/* Default-OFF withdrawn-hide toggle. Query-string driven so
+              the chosen view survives a refresh / can be bookmarked.
+              Same chip-link idiom as other admin filters. */}
+          <Link
+            href={
+              showWithdrawn ? "/admin/responses" : "/admin/responses?withdrawn=show"
+            }
+            className="btn-ghost text-[12px]"
+          >
+            {showWithdrawn ? "Hide withdrawn" : "Show withdrawn"}
+          </Link>
         </div>
 
         {rows.length === 0 ? (
@@ -138,6 +175,16 @@ export default async function ResponsesPage() {
                         </span>
                       ) : (
                         "—"
+                      )}
+                      {/* Withdrawn chip rides alongside invitation
+                          status (e.g. "submitted · Withdrawn"). Visible
+                          to both roles; appears only when the
+                          show-withdrawn toggle is on, since the default
+                          query already filtered these out. */}
+                      {row.responseStatus === "withdrawn" && (
+                        <span className="chip-solid bg-dangerLight text-danger ms-2">
+                          Withdrawn
+                        </span>
                       )}
                     </td>
                     <td className="px-4 py-2.5 uppercase mono">{row.language}</td>

@@ -117,11 +117,20 @@ export async function getDashboardData(
   const recentActivity = events.slice(0, 6);
 
   // ---- Responses (non-PII): avg duration + languages ------------------
+  // D63 PARENT FILTER: only active responses count for any dashboard
+  // aggregation. We also build `activeResponseIds` here — the Set is the
+  // CASCADE BRIDGE for the answers + response_tags loops below, whose
+  // queries don't join responses and would otherwise silently include
+  // withdrawn responses' children in the word-count and tag-frequency
+  // totals. ORDERING IS LOAD-BEARING: this query + Set MUST land before
+  // either child loop runs. `id` is added to the select for the Set.
   const { data: respRows, error: respErr } = await supabase
     .from("responses")
-    .select("started_at, submitted_at, language");
+    .select("id, started_at, submitted_at, language")
+    .eq("status", "active");
   if (respErr) throw respErr;
   const responses = respRows ?? [];
+  const activeResponseIds = new Set(responses.map((r) => r.id));
 
   const durations: number[] = [];
   for (const r of responses) {
@@ -147,6 +156,10 @@ export async function getDashboardData(
 
   const wordsByResponse = new Map<string, number>();
   for (const a of ansRows ?? []) {
+    // D63 CASCADE: skip answers whose parent response was withdrawn.
+    // activeResponseIds is built from the parent query above; without
+    // this guard, withdrawn responses' word counts leak into the totals.
+    if (!activeResponseIds.has(a.response_id)) continue;
     wordsByResponse.set(
       a.response_id,
       (wordsByResponse.get(a.response_id) ?? 0) + (a.word_count ?? 0)
@@ -160,13 +173,18 @@ export async function getDashboardData(
       : null;
 
   // ---- Most-applied tag (response_tags → tags; both non-PII) ----------
+  // D63: `response_id` added to the select so the cascade guard below
+  // can skip rows whose parent response was withdrawn.
   const { data: tagRows, error: tagErr } = await supabase
     .from("response_tags")
-    .select("tag_id, tags(name)");
+    .select("tag_id, response_id, tags(name)");
   if (tagErr) throw tagErr;
 
   const tagCounts = new Map<string, { name: string; count: number }>();
   for (const row of tagRows ?? []) {
+    // D63 CASCADE: skip tags whose parent response was withdrawn (same
+    // pattern as the answers loop above).
+    if (!activeResponseIds.has(row.response_id)) continue;
     const name = row.tags?.name;
     if (!name) continue;
     const cur = tagCounts.get(row.tag_id);

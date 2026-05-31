@@ -36,6 +36,7 @@ import { listRecordings } from "@/lib/repos/recordings";
 import ResponseTagEditor from "@/components/ResponseTagEditor";
 import ResearcherNoteEditor from "@/components/ResearcherNoteEditor";
 import RecordingsSection from "@/components/RecordingsSection";
+import WithdrawResponseButton from "@/components/WithdrawResponseButton";
 
 export const dynamic = "force-dynamic";
 
@@ -180,6 +181,15 @@ export default async function ResponseDetailPage({
           <div className="eyebrow mb-1">Response</div>
           <h1 className="text-[24px] font-bold text-ink tracking-tight">
             <span className="mono text-brand-700">{refCode}</span>
+            {/* Withdrawal status badge — visible to BOTH roles (status
+                is non-PII; the marker tells supervisors this row is
+                excluded from analytics/exports). Same chip idiom as
+                invitations list's revoked badge. */}
+            {response.status === "withdrawn" && (
+              <span className="chip-solid bg-dangerLight text-danger ms-3 text-[12px] align-middle">
+                Withdrawn
+              </span>
+            )}
           </h1>
           <p className="text-[13px] text-muted mt-1">
             Signed in as {admin.name} ({admin.role})
@@ -323,6 +333,49 @@ export default async function ResponseDetailPage({
             <p className="text-[13px] text-muted">No consent record.</p>
           )}
         </section>
+
+        {/* Withdrawal — OWNER-ONLY section, only meaningful for a
+            submitted response (in-progress responses get the wrong-tool
+            error via the action's not_submitted gate). Status-aware
+            render:
+              - status='active'    → explanation + WithdrawResponseButton
+              - status='withdrawn' → withdrawn timestamp + audit pointer
+            The header badge above makes the withdrawn state visible to
+            readonly supervisors too; this owner-only card is where the
+            action lives. */}
+        {isOwner && response.submittedAt && (
+          <section className="card p-5 mb-5">
+            <h2 className="text-[15px] font-semibold text-ink mb-3">
+              Withdrawal
+            </h2>
+            {response.status === "withdrawn" ? (
+              <div className="text-[13px] text-ink">
+                <p>
+                  Withdrawn at{" "}
+                  <span className="mono">
+                    {fmtDateTime(response.withdrawnAt)}
+                  </span>
+                </p>
+                <p className="text-[12px] text-muted mt-1">
+                  (audit log records the action)
+                </p>
+              </div>
+            ) : (
+              <div>
+                <p className="text-[13px] text-muted mb-3">
+                  Remove this response from research data. Soft-deletes
+                  the response: the consent record is retained as audit
+                  proof, but the row is excluded from exports, ATLAS.ti,
+                  and analytics. The action is logged at alert severity.
+                </p>
+                <WithdrawResponseButton
+                  responseId={response.id}
+                  refCode={refCode}
+                />
+              </div>
+            )}
+          </section>
+        )}
 
         {/* Answers */}
         <section className="card p-5">

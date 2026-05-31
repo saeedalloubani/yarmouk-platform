@@ -278,10 +278,17 @@ export async function resendInvitationAction(
   //    truth (not invitations.status). Submitted → block (a new link would
   //    be dead-on-arrival: validate rejects on submitted_at regardless of
   //    token). In-progress → resume re-send (preserve work). None → fresh.
+  //    D63: both reads filter to status='active' — a withdrawn response
+  //    no longer represents research data, so it shouldn't gate resend.
+  //    Withdraw-then-resend re-opens the invitation slot intentionally
+  //    (D63 decision). The audit chain — response.withdraw at 'alert' +
+  //    the subsequent invitation.resend — preserves the full history.
+  //    To prevent re-use after a withdraw, follow with revoke.
   const { data: submittedRows, error: subErr } = await supabase
     .from("responses")
     .select("id")
     .eq("invitation_id", inv.id)
+    .eq("status", "active")
     .not("submitted_at", "is", null)
     .limit(1);
   if (subErr) {
@@ -296,6 +303,7 @@ export async function resendInvitationAction(
     .from("responses")
     .select("id")
     .eq("invitation_id", inv.id)
+    .eq("status", "active")
     .is("submitted_at", null)
     .limit(1);
   if (ipErr) {
@@ -509,10 +517,16 @@ export async function revokeInvitationAction(
   //    already_submitted: an answered invitation is a research artifact;
   //    revoking it would be withdrawing data, a separate operation tied
   //    to consent withdrawal.
+  //    D63: filter to status='active' — a WITHDRAWN submitted response
+  //    is no longer research data, so it doesn't block revoke. The
+  //    withdraw flow (lib/actions/responses.ts) is the right tool for
+  //    the post-submission data-removal half; revoke covers the
+  //    pre-submission link-kill half. Together they cover all states.
   const { data: submittedRows, error: subErr } = await supabase
     .from("responses")
     .select("id")
     .eq("invitation_id", inv.id)
+    .eq("status", "active")
     .not("submitted_at", "is", null)
     .limit(1);
   if (subErr) {
@@ -526,10 +540,16 @@ export async function revokeInvitationAction(
   // 5. PRE-ROTATION in-progress detection — feeds the gate decision in
   //    step 6 (the UI confirm dialog needs this). NOT the canonical set
   //    for the lock; that comes from step 9's post-rotation re-read.
+  //    D63: filter to status='active' (in-progress withdrawn responses
+  //    are impossible by the action's not_submitted gate, but defense
+  //    in depth — the responses_withdrawn_state_consistent CHECK doesn't
+  //    enforce status vs submitted_at, so a future bug could create the
+  //    impossible row; this filter catches it).
   const { data: preRows, error: preErr } = await supabase
     .from("responses")
     .select("id")
     .eq("invitation_id", inv.id)
+    .eq("status", "active")
     .is("submitted_at", null);
   if (preErr) {
     console.error("[invitations] revoke responses(in-progress, pre) read failed", preErr);
@@ -580,10 +600,14 @@ export async function revokeInvitationAction(
   //    committed its INSERT BEFORE step 8's UPDATE (visible here) or
   //    saw the new hash and inserted nothing. Either way this read is
   //    the final truth.
+  //    D63: filter to status='active' (same defensive logic as step 5
+  //    — keeps `lockedResponseIds` clean of any impossible withdrawn
+  //    in-progress row).
   const { data: finalRows, error: finalErr } = await supabase
     .from("responses")
     .select("id")
     .eq("invitation_id", inv.id)
+    .eq("status", "active")
     .is("submitted_at", null);
   if (finalErr) {
     console.error("[invitations] revoke responses(in-progress, post) read failed", finalErr);

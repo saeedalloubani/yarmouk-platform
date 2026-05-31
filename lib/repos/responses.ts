@@ -24,6 +24,11 @@ import type { Database } from "../supabase/database.types";
 
 type DbRow = Database["public"]["Tables"]["responses"]["Row"];
 
+// responses.status is a TEXT CHECK ('active','withdrawn') — the DB enforces
+// it but Supabase gen types widen it to string, so we narrow at the boundary
+// (same pattern as tags.category in lib/repos/tags.ts).
+export type ResponseStatus = "active" | "withdrawn";
+
 export type ResponseRow = {
   id: string;
   invitationId: string;
@@ -32,6 +37,8 @@ export type ResponseRow = {
   submittedAt: string | null;
   durationMinutes: number | null;
   isLocked: boolean;
+  status: ResponseStatus;
+  withdrawnAt: string | null;
 };
 
 export type AnswerDetail = {
@@ -41,8 +48,8 @@ export type AnswerDetail = {
 };
 
 function rowToResponse(r: DbRow): ResponseRow {
-  // language is narrowed via `as 'en' | 'ar'` because the DB CHECK enforces
-  // this but Supabase gen types widen it to string.
+  // language + status are narrowed via `as` because the DB CHECKs enforce
+  // the value sets but Supabase gen types widen both to string.
   return {
     id: r.id,
     invitationId: r.invitation_id,
@@ -51,17 +58,34 @@ function rowToResponse(r: DbRow): ResponseRow {
     submittedAt: r.submitted_at,
     durationMinutes: r.duration_minutes,
     isLocked: r.is_locked,
+    status: r.status as ResponseStatus,
+    withdrawnAt: r.withdrawn_at,
   };
 }
 
-/** All responses (unordered here — callers sort). Non-PII; both roles. */
+/**
+ * All responses (caller sorts). Non-PII; both roles.
+ *
+ * `options.hideWithdrawn` (default false) — when true, applies
+ * `.eq("status", "active")` at the query layer. The DEFAULT is
+ * UNFILTERED because this read is in the MUST-RETAIN classification
+ * (D63 cross-cutting filter map): admin surfaces (list page + detail
+ * page) need access to withdrawn rows so Sura can manage them and
+ * supervisors can see the withdrawn marker. Filtering is opt-IN via
+ * the page-level toggle (?withdrawn=show), not baked into the repo.
+ */
 export async function listResponses(
-  supabase: SupabaseClient<Database>
+  supabase: SupabaseClient<Database>,
+  options?: { hideWithdrawn?: boolean }
 ): Promise<ResponseRow[]> {
-  const { data, error } = await supabase
+  let q = supabase
     .from("responses")
-    .select("id, invitation_id, language, started_at, submitted_at, duration_minutes, is_locked")
+    .select("id, invitation_id, language, started_at, submitted_at, duration_minutes, is_locked, status, withdrawn_at")
     .order("started_at", { ascending: false });
+  if (options?.hideWithdrawn) {
+    q = q.eq("status", "active");
+  }
+  const { data, error } = await q;
   if (error) throw error;
   return (data ?? []).map(rowToResponse);
 }
@@ -73,7 +97,7 @@ export async function getResponse(
 ): Promise<ResponseRow | null> {
   const { data, error } = await supabase
     .from("responses")
-    .select("id, invitation_id, language, started_at, submitted_at, duration_minutes, is_locked")
+    .select("id, invitation_id, language, started_at, submitted_at, duration_minutes, is_locked, status, withdrawn_at")
     .eq("id", id)
     .maybeSingle();
   if (error) throw error;

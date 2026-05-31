@@ -71,11 +71,17 @@ export async function getPilotFeedback(
   if (aErr) throw aErr;
   const answers = aRows ?? [];
 
-  // 3. SUBMITTED responses only — draft/in-progress feedback isn't final.
+  // 3. SUBMITTED + ACTIVE responses only — draft/in-progress feedback
+  //    isn't final (D9), and withdrawn responses are excluded from
+  //    pilot-feedback aggregation (D63). The in-memory orphan-drop at
+  //    step 5's grouping loop cascades the filter to the answers fetched
+  //    in step 2 (any answer whose response isn't in respById is
+  //    skipped), so no extra answers-query change is needed.
   const { data: rRows, error: rErr } = await supabase
     .from("responses")
     .select("id, invitation_id, language, submitted_at")
-    .not("submitted_at", "is", null);
+    .not("submitted_at", "is", null)
+    .eq("status", "active");
   if (rErr) throw rErr;
   const respById = new Map((rRows ?? []).map((r) => [r.id, r] as const));
 
