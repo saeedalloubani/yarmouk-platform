@@ -716,7 +716,9 @@ export type Database = {
           is_locked: boolean
           language: string
           started_at: string
+          status: string
           submitted_at: string | null
+          withdrawn_at: string | null
         }
         Insert: {
           duration_minutes?: number | null
@@ -725,7 +727,9 @@ export type Database = {
           is_locked?: boolean
           language: string
           started_at?: string
+          status?: string
           submitted_at?: string | null
+          withdrawn_at?: string | null
         }
         Update: {
           duration_minutes?: number | null
@@ -734,7 +738,9 @@ export type Database = {
           is_locked?: boolean
           language?: string
           started_at?: string
+          status?: string
           submitted_at?: string | null
+          withdrawn_at?: string | null
         }
         Relationships: [
           {
