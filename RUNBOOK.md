@@ -34,6 +34,48 @@ When a resend (`resendInvitationAction`) returns `emailed: false`, the UI shows 
 
 Same user-facing surface (loud panel + `tokenUrl`), very different operational severity. The log line is how you tell them apart.
 
+## Revoking an invitation (owner-driven terminal kill)
+
+The owner can revoke any non-submitted invitation from `/admin/invitations` — Revoke button beside Resend, owner-only, both hidden once a row is terminal (`status='submitted'` or `status='revoked'`). Revoke is the right tool when:
+
+- The invitation went to the wrong recipient (typo, wrong person).
+- The recipient is no longer eligible (withdrew interest, ineligible per the recruitment criteria).
+- A security concern (link suspected leaked or shared beyond the intended recipient).
+
+### What revoke does (three ops, atomic by effect — D61)
+
+1. **Kills the magic link.** `token_hash` rotates to a freshly-minted hash whose plaintext is discarded — no one (including the owner) can ever produce a URL that validates against it. The old `/r/<token>` URL stops working immediately and redirects to `/invitation-invalid` on any future click.
+2. **Sets `status='revoked'`.** The row's chip flips to the danger styling (`bg-dangerLight text-danger`). Resend and Revoke both vanish on the row (terminal state).
+3. **Locks any in-progress response.** If the recipient already clicked the link and started answering, `responses.is_locked` flips to `TRUE`. Their session is invalid at the next page load (`getSession()` returns `null` → bounces them to landing).
+
+### What revoke does NOT do
+
+- **Saved answers are retained.** A respondent's in-progress answers are NOT deleted — `is_locked` is a gate flag, not a CASCADE. The owner still reads them via `/admin/responses/<id>`. *If you want to delete the data too, that's "withdraw response", a separate operation tied to consent withdrawal — not built yet; for now do it via Studio `DELETE FROM responses WHERE id='<id>'` (CASCADE wipes answers).*
+- **Not reversible.** Revoke is terminal. To re-invite, create a fresh invitation; pick a new `ref_code` (the original code is now permanently taken by the revoked row).
+- **Does not email anything.** No notification to the recipient — they simply find the old link dead next time they click. (If you want them informed, send a manual email out-of-band.)
+
+### The block-then-confirm gate (the in-progress case)
+
+If the recipient is mid-flow (a response exists with `submitted_at IS NULL`), the first revoke click hits a UI gate. After the generic "Revoke X?" confirm, a SECOND confirmation fires with the honest wording:
+
+> "X has started answering. Revoking will lock them out of continuing — their saved answers are retained and visible to you, but they cannot add more or submit. The magic link will also stop working. Continue?"
+
+Read it carefully — the wording matches reality. The kick is silent from the respondent's side (their next page load bounces them to landing, no terminal page that says "your invitation was revoked"). Click through only if the kick is intentional.
+
+### Handling a misdirected real invitation
+
+1. Open `/admin/invitations`.
+2. Find the row by `ref_code`. **Confirm it's the wrong one before clicking Revoke** — the action is terminal, no undo.
+3. Click **Revoke**. First confirm: read + OK.
+4. If the recipient already clicked: the second honest confirm fires. Read + OK (or cancel if you'd rather let them submit).
+5. The row flips to `status=revoked` with the danger chip; both action buttons vanish.
+6. To send to the correct recipient: `/admin/invitations/new`, pick a fresh `ref_code` (the original is taken by the revoked row).
+7. Audit row appears at `/admin/security` as `invitation.revoke` (severity=warn) with `hadInProgressResponse` + `lockedResponseIds` metadata.
+
+### Stale-tab self-correction
+
+If two admin tabs both show the same invitation as revocable and one revokes it, the other tab will surface `already_revoked` on the next click and **auto-refresh** to the canonical terminal state (chip flips, buttons vanish). No manual reload needed. This is intentional — when the app knows the display is stale, it self-corrects rather than instructing the user.
+
 ## First-time setup: Vault keys
 
 Required before applying any migration that references `pii_key_v*`. Without this, `decrypt_pii` finds no key in Vault and PII reads/writes fail.

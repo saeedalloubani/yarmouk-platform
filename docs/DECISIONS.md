@@ -628,6 +628,24 @@ A `collection_mode` enum (`self_completed` | `interview`) on `invitations`, NOT 
 
 **Orthogonality:** independent of `audio_consent` (D58) — collection_mode is how-gathered, audio_consent is whether-recorded.
 
+### D61. Revoke invitation = three-op terminal kill (token rotation + status + lock), block-then-confirm
+
+Revoke is the owner's terminal "kill this invitation" operation (wrong recipient, recipient no longer eligible, suspected leak). Status alone does NOTHING — neither `validate_invitation_token` nor `getSession()` checks `invitations.status`. A status-only "revoke" would have been theatre. So revoke performs three operations, together, all-or-none-by-effect:
+
+1. **Rotate `token_hash`** to a freshly-minted hash whose plaintext is **discarded**. The new hash has no plaintext that can produce it, so validate's hash-then-lookup never matches. Old link permanently dead. (Same primitive resend uses to invalidate the old link on token rotation — D56.)
+2. **Set `status='revoked'`** — terminal label for the admin UI's chip + button-visibility gating (Resend and Revoke both hide on terminal rows).
+3. **Set `responses.is_locked = TRUE`** on every non-submitted response for this invitation. Kicks any active session at next page load — `getSession()` and `saveAnswer` both filter by `is_locked`. **Saved answers are RETAINED** — `is_locked` is a gate flag, not a CASCADE; the owner still reads everything that was saved (the data is intact, just write-unreachable from the respondent side).
+
+**Block-then-confirm gate (the UX call):** if a non-submitted response exists, the action returns `error: "in_progress"` UNLESS the caller passes `confirmHardRevoke=true`. The UI catches this and surfaces an honest second confirmation: *"X has started answering. Revoking will lock them out of continuing — their saved answers are retained and visible to you, but they cannot add more or submit. The magic link will also stop working. Continue?"* The honest wording is load-bearing: the alternative (generic single-click revoke that silently destroys in-flight work) is worse than asking once. The submitted-response block is unconditional (same shape as resend's `already_submitted`) — an answered invitation is a research artifact; *withdrawing data* is a separate operation tied to consent withdrawal (not built).
+
+**Race closure (the correctness call):** the pre-rotation in-progress read drives the gate decision; the **post-rotation re-read is the canonical lock target**. `validate_invitation_token` is the sole creator of `responses` rows (only INSERT INTO responses in the codebase, inside that SECURITY DEFINER function; RLS rejects all other inserts), and its `SELECT … FOR UPDATE` on the invitation row serialises against the rotation UPDATE — so any validate call that sneaks in during the gap either commits its INSERT before rotation (visible to the re-read) or sees the new hash and creates nothing. Without the post-rotation re-read, a sub-second window between gate read and rotation could leak an unlocked response.
+
+**Terminal:** revoke is one-way. Re-inviting = create a fresh invitation (owner picks a new `ref_code`; uniqueness blocks reuse). Same call as resend's "no un-resend" — terminal operations stay terminal; reversal complicates the state space for negligible UX gain.
+
+**Audit:** `invitation.revoke` (severity=warn — terminal cut-off is security-relevant), metadata is `invitationId` + `hadInProgressResponse` + `lockedResponseIds`. No PII (no email, name, or token). The pre-rotation block is NOT audited — UI gates are not destructive actions; auditing every "what's the state?" probe would flood the log.
+
+**Smoke-proven on prod 2026-05-31** — Cases 1 (no-response), 2 (in-progress hard-revoke), 4 (already_revoked staleness via `router.refresh()`). Case 3 skipped because `already_submitted` is identical to resend's exercised path.
+
 ## Out of Scope (Explicitly)
 
 - **AI translation** between EN/AR. Button exists in mock as placeholder; clicking does nothing. Real translation would require GPT-4 or DeepL API; deferred.

@@ -44,7 +44,19 @@ function asSections(
 ): TemplateFields["sections"] | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const out: Partial<Record<SectionKey, string>> = {};
-  const known: SectionKey[] = ["intro", "cta", "personal", "expiry", "contact"];
+  // Union of section keys across all templates (invitation, admin-invite,
+  // submission). Keys not in this list are silently dropped — defensive
+  // against hand-edited rows or future-template residue.
+  const known: SectionKey[] = [
+    "intro",
+    "cta",
+    "personal",
+    "expiry",
+    "contact",
+    "greeting",
+    "notice",
+    "lead",
+  ];
   for (const k of known) {
     const v = (raw as Record<string, unknown>)[k];
     if (typeof v === "string") out[k] = v;

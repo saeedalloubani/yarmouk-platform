@@ -16,7 +16,7 @@ import { getCurrentAdmin } from "@/lib/auth";
 import { getTemplate } from "@/lib/repos/email-templates";
 import { getDefaults } from "@/lib/email/templates/defaults";
 import {
-  renderInvitationEmail,
+  renderEmailTemplate,
   resolveTemplate,
 } from "@/lib/email/templates/render";
 import {
@@ -35,9 +35,12 @@ const SAMPLE = {
   name: "Dr. Example",
 };
 
-function inertButtonHref(): string {
+function inertButtonHref(id: TemplateId): string {
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/+$/, "") ?? "";
-  return `${siteUrl}/?preview=invitation-email`;
+  // Per-template suffix mirrors the action's inert href — see
+  // lib/actions/email-templates.ts inertButtonHref(). The public
+  // landing page ignores all query strings.
+  return `${siteUrl}/?preview=${id}-email`;
 }
 
 export default async function EmailTemplateEditorPage({
@@ -66,7 +69,7 @@ export default async function EmailTemplateEditorPage({
 
   const stored = await getTemplate(supabase, templateId);
   const defaults = getDefaults(templateId);
-  const inertHref = inertButtonHref();
+  const inertHref = inertButtonHref(templateId);
 
   // Resolved + rendered EN preview (always present).
   const enTemplate = resolveTemplate({
@@ -77,7 +80,7 @@ export default async function EmailTemplateEditorPage({
     overlaySubject: stored?.subjectEn ?? null,
     overlaySections: stored?.sectionsEn ?? null,
   });
-  const enRendered = renderInvitationEmail({
+  const enRendered = renderEmailTemplate({
     template: enTemplate,
     values: {
       name: SAMPLE.name,
@@ -102,7 +105,7 @@ export default async function EmailTemplateEditorPage({
       overlaySubject: stored?.subjectAr ?? null,
       overlaySections: stored?.sectionsAr ?? null,
     });
-    const r = renderInvitationEmail({
+    const r = renderEmailTemplate({
       template: arTemplate,
       values: {
         name: SAMPLE.name,

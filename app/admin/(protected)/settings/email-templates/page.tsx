@@ -1,9 +1,10 @@
 // app/admin/(protected)/settings/email-templates/page.tsx
 //
-// D22 — owner-only list page for email templates. Stage 1 lists the
-// 'invitation' template only; admin-invite + submission notification
-// templates land in Stage 2. The page mirrors the team page shape (card,
-// list, header).
+// D22 + Stage 2 — owner-only list page for email templates. Lists all
+// three editable templates: invitation (bilingual participant invite),
+// admin-invite (EN-only supervisor magic-link), submission (EN-only
+// owner-side "a response was submitted" notification). Mirrors the
+// team page shape (card, list, header).
 
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -15,7 +16,10 @@ import type { TemplateId } from "@/lib/email/templates/types";
 
 export const dynamic = "force-dynamic";
 
-const TEMPLATES: TemplateId[] = ["invitation"];
+// Declaration order = display order. Invitation first (most-edited,
+// participant-facing), then admin-invite (supervisor-facing), then
+// submission (operational notification to Sura).
+const TEMPLATES: TemplateId[] = ["invitation", "admin-invite", "submission"];
 
 function formatDate(iso: string | null): string {
   if (!iso) return "—";

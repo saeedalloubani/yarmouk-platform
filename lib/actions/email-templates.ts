@@ -50,7 +50,7 @@ import {
 } from "@/lib/repos/email-templates";
 import { getDefaults } from "@/lib/email/templates/defaults";
 import {
-  renderInvitationEmail,
+  renderEmailTemplate,
   resolveTemplate,
   validateSections,
 } from "@/lib/email/templates/render";
@@ -264,7 +264,7 @@ export async function previewTemplateAction(
   try {
     const row = await getTemplate(supabase, id);
     const defaults = getDefaults(id);
-    const inertHref = inertButtonHref();
+    const inertHref = inertButtonHref(id);
 
     const enTemplate = resolveTemplate({
       templateId: id,
@@ -274,7 +274,7 @@ export async function previewTemplateAction(
       overlaySubject: row?.subjectEn ?? null,
       overlaySections: row?.sectionsEn ?? null,
     });
-    const enRendered = renderInvitationEmail({
+    const enRendered = renderEmailTemplate({
       template: enTemplate,
       values: {
         name: SAMPLE_VALUES.name,
@@ -294,7 +294,7 @@ export async function previewTemplateAction(
         overlaySubject: row?.subjectAr ?? null,
         overlaySections: row?.sectionsAr ?? null,
       });
-      const r = renderInvitationEmail({
+      const r = renderEmailTemplate({
         template: arTemplate,
         values: {
           name: SAMPLE_VALUES.name,
@@ -459,12 +459,12 @@ export async function sendTestEmailAction(
 
   // 5. Render. button_href is the SAFE INERT URL — clicking it takes you
   //    to the public landing page with no token consumed.
-  const inertHref = inertButtonHref();
+  const inertHref = inertButtonHref(input.id);
   const expiry_date =
     input.lang === "ar"
       ? SAMPLE_VALUES.expiry_date_ar
       : SAMPLE_VALUES.expiry_date_en;
-  const { subject, text, html } = renderInvitationEmail({
+  const { subject, text, html } = renderEmailTemplate({
     template,
     values: {
       name: SAMPLE_VALUES.name,
@@ -536,9 +536,13 @@ export async function sendTestEmailAction(
 // Helpers
 // ============================================================================
 
-function inertButtonHref(): string {
+function inertButtonHref(id: TemplateId): string {
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/+$/, "") ?? "";
-  return `${siteUrl}/?preview=invitation-email`;
+  // Per-template suffix so audit-log / mail-client URL inspection can
+  // distinguish which template's test was sent. The public landing page
+  // ignores all query strings — verified in app/(public)/page.tsx (no
+  // searchParams prop, no useSearchParams).
+  return `${siteUrl}/?preview=${id}-email`;
 }
 
 async function checkTestSendCooldown(

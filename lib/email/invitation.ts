@@ -32,7 +32,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getTemplate } from "@/lib/repos/email-templates";
 import { getDefaults } from "@/lib/email/templates/defaults";
 import {
-  renderInvitationEmail,
+  renderEmailTemplate,
   resolveTemplate,
 } from "@/lib/email/templates/render";
 
@@ -114,7 +114,7 @@ export async function sendInvitationEmail(
   // 4. Render. button_href is system-owned — it's the real token URL the
   //    caller built via lib/tokens.ts. The renderer wraps it in the
   //    fixed-shell button; the editor surface never sees it.
-  const { subject, text, html } = renderInvitationEmail({
+  const { subject, text, html } = renderEmailTemplate({
     template,
     values: {
       expiry_date,
