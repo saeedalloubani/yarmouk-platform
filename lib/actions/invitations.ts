@@ -197,14 +197,24 @@ export async function createInvitationAction(
   }
 
   // 4. Encrypt PII via the owner's authenticated client.
+  //
+  // D64 — third encrypt_pii call: the plaintext invitation TOKEN. Stored
+  // alongside token_hash so the reminder cron (D64 STEP 7) can decrypt +
+  // reuse the same URL without rotating the token (Path B locked).
+  // Without this, reminders would have to rotate (killing the original
+  // invitation email's link). Three Vault encrypts in a row keeps all
+  // create-time PII handling co-located. NEVER logged or returned.
   const { data: nameEnc, error: e1 } = await supabase.rpc("encrypt_pii", {
     p_plaintext: v.name,
   });
   const { data: emailEnc, error: e2 } = await supabase.rpc("encrypt_pii", {
     p_plaintext: v.email.toLowerCase(),
   });
-  if (e1 || e2 || !nameEnc || !emailEnc) {
-    console.error("[invitations] encrypt_pii failed", e1 ?? e2);
+  const { data: tokenEnc, error: e3 } = await supabase.rpc("encrypt_pii", {
+    p_plaintext: plaintext,
+  });
+  if (e1 || e2 || e3 || !nameEnc || !emailEnc || !tokenEnc) {
+    console.error("[invitations] encrypt_pii failed", e1 ?? e2 ?? e3);
     return { ok: false, error: "server" };
   }
 
@@ -220,6 +230,7 @@ export async function createInvitationAction(
   try {
     const invitation = await createInvitation(supabase, {
       tokenHash: hash,
+      tokenPlaintextEncrypted: tokenEnc,
       refCode: v.refCode,
       recipientNameEncrypted: nameEnc,
       recipientEmailEncrypted: emailEnc,
@@ -421,21 +432,46 @@ export async function resendInvitationAction(
     return { ok: false, error: "server" };
   }
 
+  // D64 — encrypt the new plaintext via Vault so the reminder cron can
+  // decrypt + reuse the URL without rotating again. Mirrors create-time
+  // step 4. Encrypt BEFORE the rotation commit (step 5): if encrypt
+  // fails, the OLD link is still alive and the action surfaces a clean
+  // server error.
+  const { data: tokenEnc, error: tokenEncErr } = await supabase.rpc(
+    "encrypt_pii",
+    { p_plaintext: plaintext }
+  );
+  if (tokenEncErr || !tokenEnc) {
+    console.error(
+      "[invitations] resend encrypt_pii(token) failed",
+      tokenEncErr
+    );
+    return { ok: false, error: "server" };
+  }
+
   const newExpiry = new Date(Date.now() + THIRTY_DAYS_MS).toISOString();
 
   // 5. ── ROTATION COMMITS HERE ── the old link dies the instant token_hash
   //    is overwritten. Resume re-send keeps use_count/status/opened_at so
   //    the new link resumes the in-progress response via validate's
   //    resumption path; fresh re-send resets to a clean, claimable state.
+  //
+  //    D64 — tokenPlaintextEncrypted MUST be written together with
+  //    tokenHash on EVERY rotation, so the column stays in sync with the
+  //    live hash. The reminder cron decrypts this column to compose its
+  //    CTA URL — a stale encrypted blob (pointing at the old hash)
+  //    would cause reminders to send a dead URL.
   try {
     if (inProgress) {
       await updateInvitation(supabase, inv.id, {
         tokenHash: hash,
+        tokenPlaintextEncrypted: tokenEnc,
         expiresAt: newExpiry,
       });
     } else {
       await updateInvitation(supabase, inv.id, {
         tokenHash: hash,
+        tokenPlaintextEncrypted: tokenEnc,
         expiresAt: newExpiry,
         status: "sent",
         useCount: 0,
@@ -734,6 +770,12 @@ export async function revokeInvitationAction(
   //    link to issue. Side-benefit: a missing NEXT_PUBLIC_SITE_URL
   //    cannot block a revoke (a security-relevant op shouldn't depend
   //    on an env var only the reissue path needs).
+  //
+  //    D64 — DELIBERATE SKIP of token_plaintext_encrypted ENCRYPT step.
+  //    Revoke is the terminal kill — the new hash has no recoverable
+  //    plaintext (we just discarded it). Persisting a Vault-encrypted
+  //    plaintext on a row whose token_hash no longer matches would be
+  //    semantic garbage. Instead step 8 NULLs the column.
   const { hash } = mintInvitationToken();
 
   // 8. ROTATION + STATUS COMMIT — one UPDATE, atomic at the row level
@@ -742,9 +784,19 @@ export async function revokeInvitationAction(
   //    validate_invitation_token cannot create new responses for this
   //    invitation — the lookup hashes incoming plaintext and finds no
   //    match (the new hash has no known plaintext).
+  //
+  //    D64 — also NULL token_plaintext_encrypted. The previously-stored
+  //    plaintext (if any, for D64+ rows) pointed at the OLD hash; that
+  //    hash is now overwritten and the OLD plaintext is semantically
+  //    dead. Nulling the column avoids orphan Vault ciphertext on a
+  //    row whose hash has rotated away. (The reminder cron's status IN
+  //    ('sent', 'opened') gate already excludes status='revoked' rows
+  //    so the cron wouldn't read this column on a revoked row anyway;
+  //    nulling is belt-and-suspenders.)
   try {
     await updateInvitation(supabase, inv.id, {
       tokenHash: hash,
+      tokenPlaintextEncrypted: null,
       status: "revoked",
     });
   } catch (err) {
