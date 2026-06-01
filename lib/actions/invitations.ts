@@ -222,6 +222,13 @@ export async function createInvitationAction(
           severity: "info",
           metadata: { invitationId: createdId },
         });
+        // D64 latent-bug fix: stamp invitations.sent_at so the reminder
+        // cron has an anchor for its 7d / 14d thresholds. Inline
+        // `new Date()` lands within microseconds of the audit row's
+        // BEFORE-INSERT trigger timestamp.
+        await updateInvitation(supabase, createdId, {
+          sentAt: new Date().toISOString(),
+        });
       }
     } catch (err) {
       console.error("[invitations] send-at-create email failed", err);
@@ -379,6 +386,24 @@ export async function resendInvitationAction(
       emailed,
     },
   });
+
+  // D64 latent-bug fix: stamp invitations.sent_at on a successful resend so
+  // the reminder cron's 7d / 14d anchor reflects the freshly rotated link.
+  // Gated on `emailed` because the audit above fires whether the send
+  // succeeded or not — but sent_at must only move forward on a real send.
+  // Inline `new Date()` lands within microseconds of the audit row's
+  // BEFORE-INSERT timestamp.
+  //
+  // NOT touched here: reminder1_sent_at / reminder_final_sent_at. A
+  // resend overlaps with the auto-nudge cycle, and clearing those would
+  // re-nudge a recipient Sura just reached out to manually. The opposite
+  // read ("fresh link → fresh reminder cycle") is defensible too; surfaced
+  // as a STEP 7 cron-route decision rather than baked in here.
+  if (emailed) {
+    await updateInvitation(supabase, inv.id, {
+      sentAt: new Date().toISOString(),
+    });
+  }
 
   // LOUD-FAILURE CONTRACT (D56) — why this surfaces louder than create:
   // on create, an email failure is benign (no link is dead; the URL is a
