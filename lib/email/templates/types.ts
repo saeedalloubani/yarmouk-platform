@@ -30,11 +30,29 @@
 
 import type { Lang } from "@/lib/i18n";
 
-/** All editable templates wired into the editor. Stage 2 adds
- *  'admin-invite' (supervisor magic-link) and 'submission' (owner-only
- *  "a response was submitted" notification) alongside Stage 1's
- *  bilingual 'invitation'. */
-export type TemplateId = "invitation" | "admin-invite" | "submission";
+/** All editable templates wired into the editor.
+ *
+ *  Stage 2 added 'admin-invite' (supervisor magic-link) and 'submission'
+ *  (owner-only "a response was submitted" notification) alongside Stage
+ *  1's bilingual 'invitation'.
+ *
+ *  D64 adds 'reminder1' + 'reminderFinal' — the two auto-nudge reminders
+ *  dispatched by /api/cron/send-reminders at ~7d and ~14d after the
+ *  invitation goes out. Both are bilingual and structurally identical to
+ *  'invitation' (same sections, same placement, same linkify, same
+ *  placeholder allowlist) — only the body copy differs. Their specs are
+ *  duplicated rather than factored: each template stands alone in the
+ *  editor and on the wire, so Sura can edit them independently without
+ *  cross-coupling. The mixed-case 'reminderFinal' id matches the
+ *  email_templates.id CHECK enum declared in 20260519170002_tables.sql;
+ *  see 20260601130001_invitations_reminders_and_send_failure.sql header
+ *  for the snake-vs-camel naming note. */
+export type TemplateId =
+  | "invitation"
+  | "reminder1"
+  | "reminderFinal"
+  | "admin-invite"
+  | "submission";
 
 /** A single section of body copy. Each is one textarea in the editor.
  *  The set is the UNION across all templates; each TemplateSpec
@@ -147,6 +165,50 @@ function fillSectionRecord<T>(
 export const TEMPLATE_SPECS: Record<TemplateId, TemplateSpec> = {
   invitation: {
     id: "invitation",
+    sections: ["intro", "cta", "personal", "expiry", "contact"] as const,
+    bilingual: true,
+    buttonSection: "cta",
+    placement: fillSectionRecord<SectionPlacement>("fine", {
+      intro: "lead",
+      cta: "lead",
+      personal: "fine",
+      expiry: "fine",
+      contact: "fine",
+    }),
+    linkify: ["contact"],
+    allowedPlaceholders: fillSectionRecord<readonly PlaceholderToken[]>([], {
+      expiry: ["expiry_date"],
+    }),
+    requiredPlaceholders: fillSectionRecord<readonly PlaceholderToken[]>([], {
+      expiry: ["expiry_date"],
+    }),
+  },
+  // D64 — reminder1 + reminderFinal. Byte-identical to invitation except
+  // for the id field. The duplication is intentional: each reminder is a
+  // first-class template in the editor and the DB, with its own copy and
+  // its own audit trail. No factoring.
+  reminder1: {
+    id: "reminder1",
+    sections: ["intro", "cta", "personal", "expiry", "contact"] as const,
+    bilingual: true,
+    buttonSection: "cta",
+    placement: fillSectionRecord<SectionPlacement>("fine", {
+      intro: "lead",
+      cta: "lead",
+      personal: "fine",
+      expiry: "fine",
+      contact: "fine",
+    }),
+    linkify: ["contact"],
+    allowedPlaceholders: fillSectionRecord<readonly PlaceholderToken[]>([], {
+      expiry: ["expiry_date"],
+    }),
+    requiredPlaceholders: fillSectionRecord<readonly PlaceholderToken[]>([], {
+      expiry: ["expiry_date"],
+    }),
+  },
+  reminderFinal: {
+    id: "reminderFinal",
     sections: ["intro", "cta", "personal", "expiry", "contact"] as const,
     bilingual: true,
     buttonSection: "cta",

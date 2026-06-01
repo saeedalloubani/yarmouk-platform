@@ -1,10 +1,17 @@
 // app/admin/(protected)/settings/email-templates/page.tsx
 //
-// D22 + Stage 2 — owner-only list page for email templates. Lists all
-// three editable templates: invitation (bilingual participant invite),
-// admin-invite (EN-only supervisor magic-link), submission (EN-only
-// owner-side "a response was submitted" notification). Mirrors the
-// team page shape (card, list, header).
+// D22 + Stage 2 + D64 — owner-only list page for email templates. Lists
+// all five editable templates:
+//   - invitation     (bilingual participant invite)
+//   - reminder1      (bilingual ~7d auto-nudge)              D64
+//   - reminderFinal  (bilingual ~14d final auto-nudge)       D64
+//   - admin-invite   (EN-only supervisor magic-link)
+//   - submission     (EN-only owner-side "a response was submitted")
+//
+// The respondent-facing series is grouped first (invitation → reminder1
+// → reminderFinal) so Sura can move through the outreach cycle in
+// chronological order, then the owner- and supervisor-facing operational
+// templates. Mirrors the team page shape (card, list, header).
 
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -16,10 +23,18 @@ import type { TemplateId } from "@/lib/email/templates/types";
 
 export const dynamic = "force-dynamic";
 
-// Declaration order = display order. Invitation first (most-edited,
-// participant-facing), then admin-invite (supervisor-facing), then
-// submission (operational notification to Sura).
-const TEMPLATES: TemplateId[] = ["invitation", "admin-invite", "submission"];
+// Declaration order = display order. The respondent-facing outreach
+// cycle goes first in chronological order (invitation → 7d reminder →
+// 14d final reminder), then the supervisor-facing magic-link, then the
+// owner-facing submission notification. D64 — reminder1 + reminderFinal
+// inserted between invitation and admin-invite.
+const TEMPLATES: TemplateId[] = [
+  "invitation",
+  "reminder1",
+  "reminderFinal",
+  "admin-invite",
+  "submission",
+];
 
 function formatDate(iso: string | null): string {
   if (!iso) return "—";

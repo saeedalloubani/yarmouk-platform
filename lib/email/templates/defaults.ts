@@ -20,6 +20,16 @@
 //                        followed by ":" + URL on the next line; a
 //                        ".:" pair would read poorly).
 //
+// D64 — REMINDER_1 + REMINDER_FINAL are NEW defaults (not extracted from
+// pre-existing code). They reuse INVITATION's personal/expiry/contact
+// sections verbatim so the brand voice stays consistent across the
+// 3-email cycle (invitation → 7d nudge → 14d final). Only the `intro`
+// and `subject` differ. Each template has its own DB row, so Sura can
+// edit them independently — the shared-default text is a starting point,
+// not a binding. Sura SHOULD review and lightly edit the reminder copy
+// before any real participant send; the defaults bar is "good enough she
+// can edit, not rewrite."
+//
 // Function-shaped placeholders in the source modules become
 // {placeholder_token} strings here:
 //   - admin-invite "Hello ${input.name},"  →  greeting "Hello {name},"
@@ -70,6 +80,66 @@ const INVITATION: TemplateDefaults = {
   },
 };
 
+const REMINDER_1: TemplateDefaults = {
+  name: "First reminder",
+  description:
+    "Auto-sent ~7 days after the invitation if the respondent hasn't submitted. Bilingual (English + Arabic). Same personal sign-in button as the invitation.",
+  en: {
+    subject: "Reminder — Yarmouk Study questionnaire",
+    sections: {
+      intro:
+        "This is a friendly reminder that you were recently invited to take part in the Yarmouk Study — a research questionnaire evaluating the 1987 Yarmouk Agreement between Jordan and Syria. Your link is still active.",
+      cta: "Open the questionnaire",
+      personal: "This link is personal to you. Please do not forward it.",
+      expiry: "The link expires on {expiry_date}.",
+      contact:
+        "Questions? Contact Sura Karasneh at sjkarasneh24@eng.just.edu.jo — +962 7 9661 0400.",
+    },
+  },
+  ar: {
+    subject: "تذكير — استبيان دراسة اليرموك",
+    sections: {
+      intro:
+        "تذكير لطيف بأنه تمت دعوتك مؤخرًا للمشاركة في دراسة اليرموك — وهي استبيان بحثي يُقيّم اتفاقية اليرموك لعام 1987 بين الأردن وسوريا. لا يزال الرابط الخاص بك فعّالًا.",
+      cta: "افتح الاستبيان",
+      personal: "هذا الرابط خاص بك، يُرجى عدم إعادة توجيهه.",
+      expiry: "تنتهي صلاحية هذا الرابط في {expiry_date}.",
+      contact:
+        "لأي استفسار، يُرجى التواصل مع الباحثة سرى كراسنة على البريد الإلكتروني sjkarasneh24@eng.just.edu.jo — +962 7 9661 0400.",
+    },
+  },
+};
+
+const REMINDER_FINAL: TemplateDefaults = {
+  name: "Final reminder",
+  description:
+    "Auto-sent ~14 days after the invitation if the respondent still hasn't submitted. Bilingual (English + Arabic). Last automated nudge in the cycle.",
+  en: {
+    subject: "Final reminder — Yarmouk Study questionnaire",
+    sections: {
+      intro:
+        "This is a final reminder to take part in the Yarmouk Study — a research questionnaire evaluating the 1987 Yarmouk Agreement between Jordan and Syria. Your link is still active, and your perspective would be valuable.",
+      cta: "Open the questionnaire",
+      personal: "This link is personal to you. Please do not forward it.",
+      expiry: "The link expires on {expiry_date}.",
+      contact:
+        "Questions? Contact Sura Karasneh at sjkarasneh24@eng.just.edu.jo — +962 7 9661 0400.",
+    },
+  },
+  ar: {
+    subject: "تذكير أخير — استبيان دراسة اليرموك",
+    sections: {
+      intro:
+        "تذكير أخير للمشاركة في دراسة اليرموك — وهي استبيان بحثي يُقيّم اتفاقية اليرموك لعام 1987 بين الأردن وسوريا. لا يزال الرابط الخاص بك فعّالًا، ورأيك يهمنا.",
+      cta: "افتح الاستبيان",
+      personal: "هذا الرابط خاص بك، يُرجى عدم إعادة توجيهه.",
+      expiry: "تنتهي صلاحية هذا الرابط في {expiry_date}.",
+      contact:
+        "لأي استفسار، يُرجى التواصل مع الباحثة سرى كراسنة على البريد الإلكتروني sjkarasneh24@eng.just.edu.jo — +962 7 9661 0400.",
+    },
+  },
+};
+
 const ADMIN_INVITE: TemplateDefaults = {
   name: "Supervisor invitation",
   description:
@@ -106,6 +176,8 @@ const SUBMISSION: TemplateDefaults = {
 
 export const TEMPLATE_DEFAULTS: Record<TemplateId, TemplateDefaults> = {
   invitation: INVITATION,
+  reminder1: REMINDER_1,
+  reminderFinal: REMINDER_FINAL,
   "admin-invite": ADMIN_INVITE,
   submission: SUBMISSION,
 };
