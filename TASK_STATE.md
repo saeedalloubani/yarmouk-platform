@@ -190,6 +190,19 @@ Follow-ups parked (NOT blocking):
   FK correctly protects his historical action attribution). Inv2 allows either; Sura
   stays active owner. Gated behind the self-service workstream completing so Sura isn't
   stranded the moment Saeed's role flips.
+- AUDIT QUEUE — `collection_mode` missing from `invitations_redacted` (surfaced during
+  D64 read-first, 2026-05-31). The view created in `20260519170005_views.sql` lists 18
+  columns; `collection_mode` added by `20260523130001_collection_mode.sql` to the
+  invitations base table was never appended to the view. `getInvitation` for readonly
+  admins routes through the view, then `rowToInvitation` casts to `DbRow` and reads
+  `.collection_mode` — for readonly admins, that read returns `undefined` at runtime
+  (TS is happy because of the cast). **Goal**: determine whether any readonly-admin
+  UI/code path displays or depends on `response.collectionMode`, and what the runtime
+  impact actually is. Discovery before fix — impact may be zero (no readonly UI
+  consumer) or may matter (some surface silently mis-renders). The fix scope follows
+  from the audit: trivial migration (add column to the view recreate) OR deeper
+  (defensive undefined handling in mapper / UI). Out of D64 scope; addressed in its
+  own cycle when it surfaces or on a slow day. Severity: low — doesn't block anything.
 
 ---
 
