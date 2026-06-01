@@ -55,6 +55,67 @@ real responses — not lifecycle-blocking for Stage-1 collection).
     post. Decision D61. Audit residue: 3 × invitation.revoke (warn) + the
     version.activate/re-draft pair on main_researchers + the accidental
     pair on pilot_officials (truthful append-only, PII-free).
+  ✓ #5 D64 Cluster A — Auto-reminders + send-failure surface
+    (10 commits merged as PR #3 on 2026-06-01: e577fc0 STEP 1 reminder +
+    send-failure migration → 9dbadcb STEP 2 types regen → 1f4dd02 STEP 3
+    sentAt latent-bug fix → 4d78c86 STEP 4 reminder templates →
+    bf21086 STEP 5 sendReminderEmail wrapper → 15225c1 STEP 6 caller-
+    owned failure surface (4 wrappers + repo widen + chip) → 649d303
+    STEP 6.5 token_plaintext_encrypted migration → d8fa1b5 STEP 6.6
+    write sites + grep audit → 6f0ec6b STEP 7 cron route (Path B) →
+    5a88c22 STEP 8 vercel.json daily noon UTC).
+
+    PATH B LOCKED: reminders reuse the existing token (decrypt
+    invitations.token_plaintext_encrypted at dispatch). Original
+    invitation email's link STAYS ALIVE across the reminder cycle. The
+    Vault-encrypted plaintext-at-rest model mirrors recipient_email_
+    encrypted; blast radius bounded by the same key + service-role
+    separation. Path A (rotate per dispatch) was rejected because the
+    original link dying mid-pilot would surprise un-clicked recipients.
+
+    SEND-FAILURE SURFACE: all 4 email wrappers widened to return
+    EmailSendResult (discriminated union with errorClass:'send'|'config');
+    callers own the column + audit writes. New helper lib/audit.ts
+    logSystemEmailFailure for service-role contexts (cron + respondent
+    submit fan-out). "send failed" amber chip on /admin/invitations
+    clears automatically on next ok send. Caller-owned writes mirror
+    D63 STEP 3 sentAt pattern.
+
+    PII DISCIPLINE AT THE AUDIT BOUNDARY: error.message NEVER persisted
+    (Resend strings can echo recipient). Only { invitationId, kind,
+    errorClass } reaches audit_log metadata. console.error logs refCode
+    + errorClass only. Verified live in Phase 4 smoke — audit metadata
+    was exactly the 3-field bucket, no PII leak.
+
+    SMOKE-PROVEN on prod 2026-06-01 (10 cases) — Phase 1 (a-f, h): cron
+    fires, reminder1_sent_at stamps post-OK, token_hash UNCHANGED (Path B
+    proven at DB), pre-D64 row excluded silently via plaintext-IS-NOT-NULL
+    gate. Phase 2 (g): ORIGINAL invitation URL still works in incognito
+    AFTER reminder fires; participant flow even bumped sent → opened with
+    use_count 1/1 (link fully functional). Phase 3 (i): re-curl returns
+    {sent:0, failed:0}, idempotency proven. Phase 4 (j): Option A
+    (.invalid TLD) silently accepted by Resend with 200; pivoted to
+    Option B (RESEND_API_KEY env swap + redeploy), failure path fired
+    correctly with errorClass='send' + amber chip + audit metadata
+    {invitationId, kind: 'reminder1', errorClass: 'send'}. Decisions D64.
+
+    BONUS LATENT-BUG FIX during STEP 6: resendInvitationAction now has
+    try/catch around sendInvitationEmail. Pre-D64, missing RESEND_API_KEY
+    would crash AFTER token rotation (old link dead, action 500s). Fixed.
+
+    Two follow-up observations (NOT blocking):
+      (a) Resend silently accepts .invalid TLD recipients (returns 200).
+          Async bounces don't surface to last_send_failed_at via the
+          wrapper — only sync API rejections do. A future Resend-webhook
+          integration would close that "looked sent but didn't arrive"
+          gap. Out of D64 scope.
+      (b) collection_mode missing from invitations_redacted (surfaced
+          during D64 read-first, still in OTHER OPEN below). Severity:
+          low; addressed on its own slow day. Doesn't block.
+
+    See DECISIONS.md D64 + RUNBOOK "Auto-reminders + send failures (D64)"
+    + the 5-template Email templates table (now includes reminder1 +
+    reminderFinal alongside invitation, admin-invite, submission).
 
 EXPORT (separate, NOT a self-service blocker):
   ✗ Export (Stage-2 deliverable — CSV / ATLAS.ti xlsx / executive report).
@@ -122,6 +183,33 @@ dataset (they're SMEs who've effectively answered). Affects between-stages data
 handling + the exact shape of the self-service controls. Don't build lifecycle/
 content controls until resolved. Data-SAFETY care (backups, no-unfreeze) applies to
 BOTH rounds regardless.
+
+### NEXT QUEUE (post-D64)
+The following clusters are queued, not blocked, awaiting Sura's pilot proofing to
+wrap before they become urgent. Order is rough priority, not strict.
+
+- **CSV export** — separate from the ATLAS.ti xlsx export (D18). Added during the
+  D64 planning conversation as a Sura-readable raw-data surface for cross-checking
+  aggregations or ad-hoc analysis outside ATLAS.ti. Format TBD (probably one row
+  per response, columns for each question's answer + the response's metadata).
+  Owner-only download path; respects the same withdraw-filter discipline as the
+  rest of the analytics tier (D63).
+- **Cluster B verify** — researcher notes + tags UI verification. The shipped
+  3c-ii surfaces work; whether they're the SHAPE Sura wants for coding the pilot
+  responses needs her sign-off post-pilot-collection. Likely small UX refinements
+  (tag grouping, note templates, keyboard shortcuts for high-throughput coding)
+  rather than structural changes.
+- **Bulk invite** — currently invitations are one-at-a-time via the
+  /admin/invitations/new form. For Stage 2 main collection (potentially dozens of
+  invites in one sitting), a CSV-upload bulk path would save Sura time. Surface
+  design TBD; needs to handle per-row PII encryption + ref_code generation +
+  partial-failure semantics (some rows valid, some not).
+- **Cross-variant analytics + funnel** — the dashboard reads one questionnaire
+  variant at a time (or aggregates across all). For thesis-defense narrative,
+  cross-variant comparisons (Officials vs Researchers, Jordanian vs Syrian) are
+  likely useful. Same with a proper funnel view (sent → opened → started →
+  submitted, broken down by category / nationality / time). Belongs in the
+  analytics tier; post-Stage-1 pilot data is when this becomes actionable.
 
 ### D27 AUTOMATED BACKUP — COMPLETE (2026-05-27, all 4 steps, RESTORE-PROVEN)
 
@@ -191,18 +279,21 @@ Follow-ups parked (NOT blocking):
   stays active owner. Gated behind the self-service workstream completing so Sura isn't
   stranded the moment Saeed's role flips.
 - AUDIT QUEUE — `collection_mode` missing from `invitations_redacted` (surfaced during
-  D64 read-first, 2026-05-31). The view created in `20260519170005_views.sql` lists 18
-  columns; `collection_mode` added by `20260523130001_collection_mode.sql` to the
-  invitations base table was never appended to the view. `getInvitation` for readonly
-  admins routes through the view, then `rowToInvitation` casts to `DbRow` and reads
-  `.collection_mode` — for readonly admins, that read returns `undefined` at runtime
-  (TS is happy because of the cast). **Goal**: determine whether any readonly-admin
-  UI/code path displays or depends on `response.collectionMode`, and what the runtime
-  impact actually is. Discovery before fix — impact may be zero (no readonly UI
-  consumer) or may matter (some surface silently mis-renders). The fix scope follows
-  from the audit: trivial migration (add column to the view recreate) OR deeper
-  (defensive undefined handling in mapper / UI). Out of D64 scope; addressed in its
-  own cycle when it surfaces or on a slow day. Severity: low — doesn't block anything.
+  D64 read-first, 2026-05-31; STILL OPEN post-D64 close 2026-06-01). The view created
+  in `20260519170005_views.sql` lists 18 columns; `collection_mode` added by
+  `20260523130001_collection_mode.sql` to the invitations base table was never
+  appended to the view. The D64 STEP 1 view recreate (`20260601130001`) added 3
+  new columns (`reminder1_sent_at`, `reminder_final_sent_at`, `last_send_failed_at`)
+  but deliberately did NOT add `collection_mode` — out of D64 scope, tracked here
+  to address on its own cycle. `getInvitation` for readonly admins routes through
+  the view, then `rowToInvitation` casts to `DbRow` and reads `.collection_mode` —
+  for readonly admins, that read returns `undefined` at runtime (TS is happy because
+  of the cast). **Goal**: determine whether any readonly-admin UI/code path displays
+  or depends on `response.collectionMode`, and what the runtime impact actually is.
+  Discovery before fix — impact may be zero (no readonly UI consumer) or may matter
+  (some surface silently mis-renders). The fix scope follows from the audit: trivial
+  migration (add column to the view recreate) OR deeper (defensive undefined handling
+  in mapper / UI). Severity: low — doesn't block anything.
 
 ---
 
