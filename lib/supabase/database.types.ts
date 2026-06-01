@@ -326,6 +326,7 @@ export type Database = {
           status: Database["public"]["Enums"]["invitation_status"]
           submitted_at: string | null
           token_hash: string
+          token_plaintext_encrypted: string | null
           use_count: number
         }
         Insert: {
@@ -351,6 +352,7 @@ export type Database = {
           status?: Database["public"]["Enums"]["invitation_status"]
           submitted_at?: string | null
           token_hash: string
+          token_plaintext_encrypted?: string | null
           use_count?: number
         }
         Update: {
@@ -376,6 +378,7 @@ export type Database = {
           status?: Database["public"]["Enums"]["invitation_status"]
           submitted_at?: string | null
           token_hash?: string
+          token_plaintext_encrypted?: string | null
           use_count?: number
         }
         Relationships: [
