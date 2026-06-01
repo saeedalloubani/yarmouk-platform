@@ -273,6 +273,13 @@ export async function inviteAdminAction(
 
   // 8. Send the branded email (if we have a link). Failure is benign —
   //    standard login flow works the moment the auth.users row exists.
+  //
+  //    D64 — audit-on-failure with errorClass bucketing. No
+  //    invitations-row column to write (admin-invite is admins-row-
+  //    bound, not invitation-row-bound); the audit row is the forensic
+  //    surface. Each audit write is best-effort-wrapped: a hiccup must
+  //    not mask the broader admin-invite success state (admins row
+  //    already exists; standard login flow works).
   let emailed = false;
   if (signInUrl) {
     try {
@@ -282,8 +289,47 @@ export async function inviteAdminAction(
         signInUrl,
       });
       emailed = sent.ok;
-    } catch (err) {
-      console.error("[admins] sendAdminInviteEmail threw", err);
+      if (!sent.ok) {
+        try {
+          await logAudit(supabase, {
+            action: "admin.invite.email_failed",
+            resource: v.email,
+            severity: "warn",
+            metadata: {
+              adminId: newAdmin.id,
+              errorClass: sent.errorClass,
+            },
+          });
+        } catch (auditErr) {
+          console.error(
+            "[admins] admin.invite.email_failed audit write failed",
+            auditErr
+          );
+        }
+      }
+    } catch {
+      // D64 — wrapper-throw path (RESEND_API_KEY missing). Drop the
+      // error object from the log; only log the bucket.
+      console.error(
+        "[admins] sendAdminInviteEmail threw",
+        "errorClass=config"
+      );
+      try {
+        await logAudit(supabase, {
+          action: "admin.invite.email_failed",
+          resource: v.email,
+          severity: "warn",
+          metadata: {
+            adminId: newAdmin.id,
+            errorClass: "config",
+          },
+        });
+      } catch (auditErr) {
+        console.error(
+          "[admins] admin.invite.email_failed audit write failed after throw",
+          auditErr
+        );
+      }
     }
   }
 

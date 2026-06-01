@@ -310,6 +310,7 @@ export type Database = {
           created_by: string | null
           expires_at: string
           id: string
+          last_send_failed_at: string | null
           max_uses: number
           nationality: Database["public"]["Enums"]["nationality_type"] | null
           opened_at: string | null
@@ -318,11 +319,14 @@ export type Database = {
           recipient_email_encrypted: string
           recipient_name_encrypted: string
           ref_code: string
+          reminder_final_sent_at: string | null
+          reminder1_sent_at: string | null
           sent_at: string | null
           started_at: string | null
           status: Database["public"]["Enums"]["invitation_status"]
           submitted_at: string | null
           token_hash: string
+          token_plaintext_encrypted: string | null
           use_count: number
         }
         Insert: {
@@ -332,6 +336,7 @@ export type Database = {
           created_by?: string | null
           expires_at: string
           id?: string
+          last_send_failed_at?: string | null
           max_uses?: number
           nationality?: Database["public"]["Enums"]["nationality_type"] | null
           opened_at?: string | null
@@ -340,11 +345,14 @@ export type Database = {
           recipient_email_encrypted: string
           recipient_name_encrypted: string
           ref_code: string
+          reminder_final_sent_at?: string | null
+          reminder1_sent_at?: string | null
           sent_at?: string | null
           started_at?: string | null
           status?: Database["public"]["Enums"]["invitation_status"]
           submitted_at?: string | null
           token_hash: string
+          token_plaintext_encrypted?: string | null
           use_count?: number
         }
         Update: {
@@ -354,6 +362,7 @@ export type Database = {
           created_by?: string | null
           expires_at?: string
           id?: string
+          last_send_failed_at?: string | null
           max_uses?: number
           nationality?: Database["public"]["Enums"]["nationality_type"] | null
           opened_at?: string | null
@@ -362,11 +371,14 @@ export type Database = {
           recipient_email_encrypted?: string
           recipient_name_encrypted?: string
           ref_code?: string
+          reminder_final_sent_at?: string | null
+          reminder1_sent_at?: string | null
           sent_at?: string | null
           started_at?: string | null
           status?: Database["public"]["Enums"]["invitation_status"]
           submitted_at?: string | null
           token_hash?: string
+          token_plaintext_encrypted?: string | null
           use_count?: number
         }
         Relationships: [
@@ -862,6 +874,7 @@ export type Database = {
           created_by: string | null
           expires_at: string | null
           id: string | null
+          last_send_failed_at: string | null
           max_uses: number | null
           nationality: Database["public"]["Enums"]["nationality_type"] | null
           opened_at: string | null
@@ -870,6 +883,8 @@ export type Database = {
           recipient_email_encrypted: string | null
           recipient_name_encrypted: string | null
           ref_code: string | null
+          reminder_final_sent_at: string | null
+          reminder1_sent_at: string | null
           sent_at: string | null
           started_at: string | null
           status: Database["public"]["Enums"]["invitation_status"] | null
@@ -882,6 +897,7 @@ export type Database = {
           created_by?: string | null
           expires_at?: string | null
           id?: string | null
+          last_send_failed_at?: string | null
           max_uses?: number | null
           nationality?: Database["public"]["Enums"]["nationality_type"] | null
           opened_at?: string | null
@@ -890,6 +906,8 @@ export type Database = {
           recipient_email_encrypted?: never
           recipient_name_encrypted?: never
           ref_code?: string | null
+          reminder_final_sent_at?: string | null
+          reminder1_sent_at?: string | null
           sent_at?: string | null
           started_at?: string | null
           status?: Database["public"]["Enums"]["invitation_status"] | null
@@ -902,6 +920,7 @@ export type Database = {
           created_by?: string | null
           expires_at?: string | null
           id?: string | null
+          last_send_failed_at?: string | null
           max_uses?: number | null
           nationality?: Database["public"]["Enums"]["nationality_type"] | null
           opened_at?: string | null
@@ -910,6 +929,8 @@ export type Database = {
           recipient_email_encrypted?: never
           recipient_name_encrypted?: never
           ref_code?: string | null
+          reminder_final_sent_at?: string | null
+          reminder1_sent_at?: string | null
           sent_at?: string | null
           started_at?: string | null
           status?: Database["public"]["Enums"]["invitation_status"] | null

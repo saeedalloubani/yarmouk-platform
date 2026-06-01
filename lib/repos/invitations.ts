@@ -85,6 +85,12 @@ export type Invitation = {
   submittedAt: string | null;
   createdAt: string;
   createdBy: string | null;
+  /** D64 — set when a Resend send fails for this row (createInvitation,
+   *  resendInvitation, or cron reminder); cleared (NULL) on the next ok
+   *  send from the same row. Drives the "send failed" chip on
+   *  /admin/invitations. Surfaced via invitations_redacted to both owner
+   *  and readonly admins (operational, non-PII). */
+  lastSendFailedAt: string | null;
 };
 
 function rowToInvitation(row: DbRow | DbViewRow): Invitation {
@@ -118,6 +124,7 @@ function rowToInvitation(row: DbRow | DbViewRow): Invitation {
     submittedAt: r.submitted_at,
     createdAt: r.created_at,
     createdBy: r.created_by,
+    lastSendFailedAt: r.last_send_failed_at,
   };
 }
 
@@ -211,6 +218,13 @@ export type CreateInvitationInput = {
    * goes into the outbound email, only the hash is stored here.
    */
   tokenHash: string;
+  /**
+   * D64 — Vault-encrypted plaintext token (encrypted via encrypt_pii by
+   * the caller). Stored alongside token_hash so the reminder cron (D64
+   * STEP 7) can decrypt + reuse the same URL without rotating the token.
+   * Path B locked: reminders reuse, don't rotate.
+   */
+  tokenPlaintextEncrypted: string;
   refCode: string;
   /** Already pgcrypto-encrypted by lib/encryption.ts (Session 2b). */
   recipientNameEncrypted: string;
@@ -233,6 +247,7 @@ export async function createInvitation(
 ): Promise<Invitation> {
   const insert: DbInsert = {
     token_hash: input.tokenHash,
+    token_plaintext_encrypted: input.tokenPlaintextEncrypted,
     ref_code: input.refCode,
     recipient_name_encrypted: input.recipientNameEncrypted,
     recipient_email_encrypted: input.recipientEmailEncrypted,
@@ -257,6 +272,16 @@ export async function createInvitation(
 export type UpdateInvitationInput = Partial<{
   /** Use this to rotate the link (resend flow). New hash, old hash discarded. */
   tokenHash: string;
+  /**
+   * D64 — must be supplied together with `tokenHash` on every rotation
+   * (resend) so the encrypted plaintext stays in sync with token_hash.
+   * Pass `null` on revoke to clear (the new revoke hash has no
+   * recoverable plaintext; nulling avoids orphan ciphertext pointing at
+   * a dead hash). NOT touched on every UPDATE — only on rotation /
+   * revoke paths. The reminder cron (D64 STEP 7) doesn't write this
+   * column at all (Path B locked: reminders reuse, don't rotate).
+   */
+  tokenPlaintextEncrypted: string | null;
   status: InvitationStatusValue;
   expiresAt: string;
   maxUses: number;
@@ -265,6 +290,11 @@ export type UpdateInvitationInput = Partial<{
   startedAt: string | null;
   submittedAt: string | null;
   useCount: number;
+  /** D64 — pass an ISO string to stamp the row as send-failed, or null
+   *  to clear (on a subsequent successful send). Driven by the
+   *  invitation + reminder send paths in lib/actions/invitations.ts and
+   *  /api/cron/send-reminders. */
+  lastSendFailedAt: string | null;
 }>;
 
 /** Update an invitation. Owner only (enforced by RLS). */
@@ -275,6 +305,8 @@ export async function updateInvitation(
 ): Promise<Invitation> {
   const update: DbUpdate = {};
   if (input.tokenHash !== undefined) update.token_hash = input.tokenHash;
+  if (input.tokenPlaintextEncrypted !== undefined)
+    update.token_plaintext_encrypted = input.tokenPlaintextEncrypted;
   if (input.status !== undefined) update.status = input.status;
   if (input.expiresAt !== undefined) update.expires_at = input.expiresAt;
   if (input.maxUses !== undefined) update.max_uses = input.maxUses;
@@ -284,6 +316,8 @@ export async function updateInvitation(
   if (input.submittedAt !== undefined)
     update.submitted_at = input.submittedAt;
   if (input.useCount !== undefined) update.use_count = input.useCount;
+  if (input.lastSendFailedAt !== undefined)
+    update.last_send_failed_at = input.lastSendFailedAt;
 
   const { data, error } = await supabase
     .from("invitations")

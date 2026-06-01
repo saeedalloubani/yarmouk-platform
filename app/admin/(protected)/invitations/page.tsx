@@ -108,6 +108,24 @@ export default async function InvitationsPage() {
                     </td>
                     <td className="px-4 py-2.5">
                       <span className={chipClass}>{inv.status}</span>
+                      {/* D64 — send-failure badge. Surfaces a Resend
+                          layer failure (or config failure that
+                          prevented the send) on the row's most recent
+                          send attempt. Cleared automatically on the
+                          next ok send from the same row. Visible to
+                          owner AND readonly (operational, non-PII).
+                          warnLight/warn palette (recoverable) — NOT
+                          dangerLight/danger (that's terminal 'revoked').
+                          No retry button this pass; Sura uses Resend
+                          (manual) to re-attempt. */}
+                      {inv.lastSendFailedAt && (
+                        <span
+                          className="chip-solid bg-warnLight text-warn ms-2"
+                          title="Last send attempt failed — see audit log for details"
+                        >
+                          send failed
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-2.5 mono">
                       {inv.useCount}/{inv.maxUses}
