@@ -27,10 +27,19 @@
 // guarantee holds on the path that matters.
 //
 // LOAD-BEARING PROPERTIES preserved:
-//   - NEVER logs the recipient address (only ref_code + error message).
-//   - Throws ONLY on missing RESEND_API_KEY (config).
-//   - Returns { ok: false } on Resend errors so notifications.ts logs a
-//     non-fatal event and never lets it affect the respondent's submit.
+//   - NEVER logs the recipient address (only ref_code + errorClass).
+//   - Throws ONLY on missing RESEND_API_KEY (config); notifications.ts's
+//     try/catch buckets it to errorClass='config' for its system audit.
+//   - Returns { ok: false, errorClass } on Resend errors so
+//     notifications.ts logs a non-fatal event + writes a
+//     'response.submission_email_failed' audit row, and never lets it
+//     affect the respondent's submit.
+//
+// D64 — return type widened from `{ ok: boolean }` to EmailSendResult.
+// console.error lines now log errorClass instead of the raw error
+// message (Resend's strings can echo recipient addresses). NO
+// invitations.last_send_failed_at write: submission has no invitation
+// reference at all; the audit row is the forensic surface.
 //
 // CHROME UNIFICATION vs the pre-Stage-2 hardcoded shell:
 //   - bare 520px <div> + browser-default paragraphs  →  white card with
@@ -54,6 +63,7 @@ import {
   resolveTemplate,
 } from "@/lib/email/templates/render";
 import type { SectionKey } from "@/lib/email/templates/types";
+import type { EmailSendResult } from "@/lib/email/types";
 
 const FROM = "Yarmouk Study <noreply@karasneh-research.org>"; // verified production sender (karasneh-research.org)
 const REPLY_TO = "sjkarasneh24@eng.just.edu.jo";
@@ -79,7 +89,7 @@ export type SendSubmissionEmailInput = {
  */
 export async function sendSubmissionEmail(
   input: SendSubmissionEmailInput
-): Promise<{ ok: boolean }> {
+): Promise<EmailSendResult> {
   const apiKey = process.env.RESEND_API_KEY?.trim();
   if (!apiKey) {
     throw new Error("RESEND_API_KEY is not set — cannot send submission email.");
@@ -88,14 +98,14 @@ export async function sendSubmissionEmail(
   // 0. button_href is REQUIRED for the structural-button-guarantee
   //    shell. If the caller couldn't build one (NEXT_PUBLIC_SITE_URL
   //    unset in dev), log the misconfig and skip the send — better
-  //    than emailing a broken button.
+  //    than emailing a broken button. D64 — bucketed as 'config'.
   if (!input.href) {
     console.error(
       "[email] submission notify skipped for",
       input.refCode,
-      "— no href supplied (NEXT_PUBLIC_SITE_URL unset?)"
+      "errorClass=config (no href supplied — NEXT_PUBLIC_SITE_URL unset?)"
     );
-    return { ok: false };
+    return { ok: false, errorClass: "config" };
   }
 
   // 1. Load template customization (if any). A failure here logs but
@@ -109,12 +119,12 @@ export async function sendSubmissionEmail(
       storedSubject = row.subjectEn;
       storedSections = row.sectionsEn;
     }
-  } catch (err) {
+  } catch {
+    // D64 — bucket only; template-load failure is non-aborting.
     console.error(
       "[email] submission template load failed for",
       input.refCode,
-      "— falling back to defaults —",
-      (err as Error).message
+      "errorClass=config (non-aborting; falling back to defaults)"
     );
   }
 
@@ -153,23 +163,21 @@ export async function sendSubmissionEmail(
       html,
     });
     if (error) {
-      // ref_code + message only — never the recipient address.
+      // D64 — bucket only; Resend's error.message can echo the address.
       console.error(
         "[email] submission notify failed for",
         input.refCode,
-        "—",
-        error.message
+        "errorClass=send"
       );
-      return { ok: false };
+      return { ok: false, errorClass: "send" };
     }
     return { ok: true };
-  } catch (err) {
+  } catch {
     console.error(
       "[email] submission notify threw for",
       input.refCode,
-      "—",
-      (err as Error).message
+      "errorClass=send"
     );
-    return { ok: false };
+    return { ok: false, errorClass: "send" };
   }
 }

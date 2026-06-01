@@ -18,6 +18,8 @@
 // appear in audit metadata or logs.
 
 import { z } from "zod";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/lib/supabase/database.types";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentAdmin } from "@/lib/auth";
 import {
@@ -27,9 +29,68 @@ import {
 } from "@/lib/repos/invitations";
 import { mintInvitationToken, buildInvitationUrl } from "@/lib/tokens";
 import { sendInvitationEmail } from "@/lib/email/invitation";
+import type { EmailErrorClass } from "@/lib/email/types";
 import { logAudit } from "@/lib/audit";
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
+// D64 — record a Resend send failure on an invitation row + audit log.
+//
+// Two best-effort writes (each independently wrapped — we're in an
+// error-recovery path, so a column-or-audit hiccup must not mask the
+// underlying send issue from the operator):
+//
+//   1. invitations.last_send_failed_at = NOW() — drives the "send failed"
+//      chip on /admin/invitations. Cleared on the next ok send from
+//      the same row by the success path.
+//   2. audit_log entry — severity='warn', errorClass-bucketed metadata.
+//      NEVER carries raw error.message (Resend's strings can echo the
+//      recipient address) or recipient/token data.
+//
+// Used by createInvitationAction (kind='invitation') and
+// resendInvitationAction (kind='resend'). The cron route uses a parallel
+// service-role helper (lib/audit.ts logSystemEmailFailure +
+// updateInvitation via service-role) because it has no admin JWT.
+async function recordInvitationSendFailure(
+  supabase: SupabaseClient<Database>,
+  args: {
+    invitationId: string;
+    refCode: string;
+    kind: "invitation" | "resend";
+    errorClass: EmailErrorClass;
+  }
+): Promise<void> {
+  const nowIso = new Date().toISOString();
+  try {
+    await updateInvitation(supabase, args.invitationId, {
+      lastSendFailedAt: nowIso,
+    });
+  } catch (colErr) {
+    console.error(
+      "[invitations] last_send_failed_at write failed for",
+      args.refCode,
+      colErr
+    );
+  }
+  try {
+    await logAudit(supabase, {
+      action: "invitation.email_failed",
+      resource: args.refCode,
+      severity: "warn",
+      metadata: {
+        invitationId: args.invitationId,
+        kind: args.kind,
+        errorClass: args.errorClass,
+      },
+    });
+  } catch (auditErr) {
+    console.error(
+      "[invitations] email_failed audit write failed for",
+      args.refCode,
+      auditErr
+    );
+  }
+}
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const UUID_RE =
@@ -226,12 +287,42 @@ export async function createInvitationAction(
         // cron has an anchor for its 7d / 14d thresholds. Inline
         // `new Date()` lands within microseconds of the audit row's
         // BEFORE-INSERT trigger timestamp.
+        //
+        // D64 — also clear lastSendFailedAt: a row that previously
+        // failed but just succeeded should not keep its chip. "Clear on
+        // next ok send" lifecycle.
         await updateInvitation(supabase, createdId, {
           sentAt: new Date().toISOString(),
+          lastSendFailedAt: null,
+        });
+      } else {
+        // D64 — Resend-layer failure (or wrapper config gate, e.g.
+        // missing locale defaults). errorClass buckets the failure;
+        // recordInvitationSendFailure writes badge + audit.
+        await recordInvitationSendFailure(supabase, {
+          invitationId: createdId,
+          refCode: v.refCode,
+          kind: "invitation",
+          errorClass: sent.errorClass,
         });
       }
-    } catch (err) {
-      console.error("[invitations] send-at-create email failed", err);
+    } catch {
+      // D64 — wrapper-throw path (only documented throw is missing
+      // RESEND_API_KEY → config). Drop the error object from the log
+      // (its toString could echo recipient under some Resend SDK
+      // failure modes); badge + audit so a deploy misconfig still
+      // surfaces in /admin/invitations and the audit log.
+      console.error(
+        "[invitations] send-at-create email threw for",
+        v.refCode,
+        "errorClass=config"
+      );
+      await recordInvitationSendFailure(supabase, {
+        invitationId: createdId,
+        refCode: v.refCode,
+        kind: "invitation",
+        errorClass: "config",
+      });
     }
   }
 
@@ -365,15 +456,51 @@ export async function resendInvitationAction(
   let emailed = false;
   if (dErr || !email) {
     console.error("[invitations] resend decrypt_pii failed", dErr);
-  } else {
-    const sent = await sendInvitationEmail({
-      to: email,
-      lang: inv.preferredLanguage,
+    // D64 — decrypt failure prevents the send entirely. Surface as
+    // 'config' (vault / key issue, not a Resend layer failure).
+    await recordInvitationSendFailure(supabase, {
+      invitationId: inv.id,
       refCode: inv.refCode,
-      tokenUrl,
-      expiresAt: newExpiry,
+      kind: "resend",
+      errorClass: "config",
     });
-    emailed = sent.ok;
+  } else {
+    // D64 — try/catch added so a wrapper-throw (missing RESEND_API_KEY)
+    // doesn't escape the action and leave the caller with a rotated
+    // token AND no audit/badge. Pre-D64 this could propagate out.
+    try {
+      const sent = await sendInvitationEmail({
+        to: email,
+        lang: inv.preferredLanguage,
+        refCode: inv.refCode,
+        tokenUrl,
+        expiresAt: newExpiry,
+      });
+      emailed = sent.ok;
+      if (!sent.ok) {
+        await recordInvitationSendFailure(supabase, {
+          invitationId: inv.id,
+          refCode: inv.refCode,
+          kind: "resend",
+          errorClass: sent.errorClass,
+        });
+      }
+    } catch {
+      // D64 — wrapper-throw path (RESEND_API_KEY missing or SDK
+      // unexpected throw). Drop the error object from the log;
+      // record-failure helper writes badge + audit.
+      console.error(
+        "[invitations] resend email threw for",
+        inv.refCode,
+        "errorClass=config"
+      );
+      await recordInvitationSendFailure(supabase, {
+        invitationId: inv.id,
+        refCode: inv.refCode,
+        kind: "resend",
+        errorClass: "config",
+      });
+    }
   }
 
   await logAudit(supabase, {
@@ -394,14 +521,20 @@ export async function resendInvitationAction(
   // Inline `new Date()` lands within microseconds of the audit row's
   // BEFORE-INSERT timestamp.
   //
+  // D64 — also clear lastSendFailedAt on the ok resend ("clear on next ok
+  // send" lifecycle). A row that previously failed but Sura just got
+  // through manually should not keep its chip.
+  //
   // NOT touched here: reminder1_sent_at / reminder_final_sent_at. A
   // resend overlaps with the auto-nudge cycle, and clearing those would
   // re-nudge a recipient Sura just reached out to manually. The opposite
-  // read ("fresh link → fresh reminder cycle") is defensible too; surfaced
-  // as a STEP 7 cron-route decision rather than baked in here.
+  // read ("fresh link → fresh reminder cycle") is defensible too; locked
+  // as Option A — resend preserves the auto-reminder state. Documented
+  // in the STEP 10 RUNBOOK.
   if (emailed) {
     await updateInvitation(supabase, inv.id, {
       sentAt: new Date().toISOString(),
+      lastSendFailedAt: null,
     });
   }
 

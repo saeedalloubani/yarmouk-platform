@@ -24,6 +24,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "./supabase/database.types";
 import { createNotification, getActiveOwnersToNotify } from "./repos/notifications";
 import { sendSubmissionEmail } from "./email/submission";
+import { logSystemEmailFailure } from "./audit";
 
 /**
  * Notify all active owners that a response was submitted: an in-app row +
@@ -92,6 +93,13 @@ export async function notifyOwnersOfSubmission(
       // 2b. Email — best-effort. sendSubmissionEmail self-catches and returns
       //     { ok }; the extra try guards the missing-API-key throw. Gated on
       //     the owner's preference: an opt-out is skipped silently.
+      //
+      //     D64 — audit-on-failure via logSystemEmailFailure (service-role
+      //     direct insert, actor='system') because the respondent has no
+      //     admin JWT in this path. errorClass buckets the failure
+      //     WITHOUT carrying raw Resend error.message (which can echo
+      //     recipient addresses). NO last_send_failed_at write —
+      //     submission has no invitation reference at all.
       if (owner.submissionEmail) {
         try {
           const sent = await sendSubmissionEmail({
@@ -100,14 +108,44 @@ export async function notifyOwnersOfSubmission(
             href: emailHref,
           });
           if (!sent.ok) {
-            console.error("[notify] email send failed for owner", owner.id);
+            console.error(
+              "[notify] email send failed for owner",
+              owner.id,
+              "errorClass=" + sent.errorClass
+            );
+            await logSystemEmailFailure(
+              "response.submission_email_failed",
+              {
+                resource: refCode ?? "—",
+                metadata: {
+                  responseId,
+                  refCode: refCode ?? null,
+                  ownerAdminId: owner.id,
+                  errorClass: sent.errorClass,
+                },
+              }
+            );
           }
-        } catch (e) {
+        } catch {
+          // D64 — wrapper-throw (RESEND_API_KEY missing). Drop the error
+          // object from the log (its toString could echo recipient
+          // under some SDK failure modes).
           console.error(
             "[notify] email threw for owner",
             owner.id,
-            "—",
-            (e as Error).message
+            "errorClass=config"
+          );
+          await logSystemEmailFailure(
+            "response.submission_email_failed",
+            {
+              resource: refCode ?? "—",
+              metadata: {
+                responseId,
+                refCode: refCode ?? null,
+                ownerAdminId: owner.id,
+                errorClass: "config",
+              },
+            }
           );
         }
       }

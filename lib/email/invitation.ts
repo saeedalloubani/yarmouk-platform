@@ -16,8 +16,17 @@
 // LOAD-BEARING PROPERTIES preserved from the pre-D22 version:
 //   - NEVER logs the recipient address or the token URL.
 //   - throws ONLY on missing RESEND_API_KEY (config).
-//   - returns { ok: false } on Resend errors so the caller can decide
-//     surfacing (benign on create, loud on resend after token rotation).
+//   - returns { ok: false, errorClass } on Resend errors so the caller
+//     can decide surfacing (benign on create, loud on resend after
+//     token rotation). The errorClass buckets the failure for audit
+//     metadata + the last_send_failed_at badge WITHOUT carrying the
+//     raw Resend error.message (which can echo recipient addresses).
+//
+// D64 — return type widened from `{ ok: boolean }` to EmailSendResult
+// (lib/email/types). The `kind`-aware caller injects 'invitation' or
+// 'resend' into its own audit metadata. console.error lines now log
+// `refCode + errorClass=…` instead of the raw error object so even our
+// ephemeral server logs avoid PII leakage of recipient addresses.
 //
 // TEMPLATE LOAD is via service-role admin client. The email_templates
 // row holds non-PII configuration; service-role bypasses RLS (fine since
@@ -35,6 +44,7 @@ import {
   renderEmailTemplate,
   resolveTemplate,
 } from "@/lib/email/templates/render";
+import type { EmailSendResult } from "@/lib/email/types";
 
 const FROM = "Yarmouk Study <noreply@karasneh-research.org>"; // verified production sender (karasneh-research.org)
 const REPLY_TO = "sjkarasneh24@eng.just.edu.jo";
@@ -48,14 +58,17 @@ export type SendInvitationEmailInput = {
 };
 
 /**
- * Send one invitation email. Returns { ok } — the caller decides how a
- * failure surfaces (benign on create; LOUD on resend, where the old link
- * is already dead). Throws only on missing RESEND_API_KEY (config).
- * Never logs the recipient address or the token URL.
+ * Send one invitation email. Returns EmailSendResult — the caller
+ * decides how a failure surfaces (benign on create; LOUD on resend,
+ * where the old link is already dead). On failure, `errorClass` is set
+ * so the caller can audit + chip without carrying the raw Resend
+ * message. Throws only on missing RESEND_API_KEY (config); the caller's
+ * catch buckets it to errorClass='config'. Never logs the recipient
+ * address or the token URL.
  */
 export async function sendInvitationEmail(
   input: SendInvitationEmailInput
-): Promise<{ ok: boolean }> {
+): Promise<EmailSendResult> {
   const apiKey = process.env.RESEND_API_KEY?.trim();
   if (!apiKey) {
     throw new Error("RESEND_API_KEY is not set — cannot send invitation email.");
@@ -77,12 +90,14 @@ export async function sendInvitationEmail(
         storedSections = row.sectionsEn;
       }
     }
-  } catch (err) {
+  } catch {
+    // D64 — log the bucket, not the raw message (which could echo PII).
+    // Template-load failure is non-aborting; defaults still produce a
+    // working email so this isn't a returned failure either.
     console.error(
       "[email] invitation template load failed for",
       input.refCode,
-      "— falling back to defaults",
-      (err as Error).message
+      "errorClass=config (non-aborting; falling back to defaults)"
     );
   }
 
@@ -90,10 +105,16 @@ export async function sendInvitationEmail(
   const defaults = getDefaults("invitation");
   const localeDefaults = input.lang === "ar" ? defaults.ar : defaults.en;
   if (!localeDefaults) {
-    // Should never happen (invitation is bilingual), but a defensive log
-    // beats a thrown undefined-dereference.
-    console.error("[email] invitation defaults missing for lang", input.lang);
-    return { ok: false };
+    // Should never happen (invitation is bilingual), but a defensive
+    // log + 'config' failure beats a thrown undefined-dereference.
+    console.error(
+      "[email] invitation defaults missing for",
+      input.refCode,
+      "lang",
+      input.lang,
+      "errorClass=config"
+    );
+    return { ok: false, errorClass: "config" };
   }
   const template = resolveTemplate({
     templateId: "invitation",
@@ -134,22 +155,23 @@ export async function sendInvitationEmail(
       html,
     });
     if (error) {
+      // D64 — log the bucket, not error.message. Resend's strings can
+      // echo recipient addresses ("Failed to send to user@host"); even
+      // ephemeral server logs avoid PII.
       console.error(
         "[email] invitation send failed for",
         input.refCode,
-        "—",
-        error.message
+        "errorClass=send"
       );
-      return { ok: false };
+      return { ok: false, errorClass: "send" };
     }
     return { ok: true };
-  } catch (err) {
+  } catch {
     console.error(
       "[email] invitation send threw for",
       input.refCode,
-      "—",
-      (err as Error).message
+      "errorClass=send"
     );
-    return { ok: false };
+    return { ok: false, errorClass: "send" };
   }
 }

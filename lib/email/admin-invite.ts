@@ -24,8 +24,16 @@
 //   - Admin-invite email failure is RECOVERABLE: the admins row already
 //     exists and Sura can regenerate a new magic link (Supabase's
 //     standard login flow works the moment the auth.users row exists).
-//   - Returns { ok: false } on Resend errors so the caller can surface
-//     a "created but not emailed" warning to Sura.
+//   - Returns { ok: false, errorClass } on Resend errors so the caller
+//     can surface a "created but not emailed" warning to Sura AND log a
+//     'admin.invite.email_failed' audit row with the errorClass bucket.
+//
+// D64 — return type widened from `{ ok: boolean }` to EmailSendResult.
+// console.error lines now log errorClass instead of the raw error
+// message (Resend's strings can echo recipient addresses). NO
+// invitations.last_send_failed_at write: admin-invite is admins-row-
+// bound, not invitation-row-bound; the audit row is the forensic
+// surface.
 //
 // CHROME UNIFICATION vs the pre-Stage-2 hardcoded shell:
 //   - greeting/intro font-size 15px → 16px (+1px)
@@ -49,6 +57,7 @@ import {
   resolveTemplate,
 } from "@/lib/email/templates/render";
 import type { SectionKey } from "@/lib/email/templates/types";
+import type { EmailSendResult } from "@/lib/email/types";
 
 const FROM = "Yarmouk Study <noreply@karasneh-research.org>"; // verified production sender (karasneh-research.org)
 const REPLY_TO = "sjkarasneh24@eng.just.edu.jo";
@@ -72,7 +81,7 @@ export type SendAdminInviteEmailInput = {
  */
 export async function sendAdminInviteEmail(
   input: SendAdminInviteEmailInput
-): Promise<{ ok: boolean }> {
+): Promise<EmailSendResult> {
   const apiKey = process.env.RESEND_API_KEY?.trim();
   if (!apiKey) {
     throw new Error(
@@ -91,10 +100,11 @@ export async function sendAdminInviteEmail(
       storedSubject = row.subjectEn;
       storedSections = row.sectionsEn;
     }
-  } catch (err) {
+  } catch {
+    // D64 — bucket only; template-load failure is non-aborting.
     console.error(
-      "[email] admin-invite template load failed — falling back to defaults —",
-      (err as Error).message
+      "[email] admin-invite template load failed",
+      "errorClass=config (non-aborting; falling back to defaults)"
     );
   }
 
@@ -135,16 +145,13 @@ export async function sendAdminInviteEmail(
       html,
     });
     if (error) {
-      // Never log the address.
-      console.error("[email] admin-invite send failed —", error.message);
-      return { ok: false };
+      // D64 — bucket only; Resend's error.message can echo the address.
+      console.error("[email] admin-invite send failed", "errorClass=send");
+      return { ok: false, errorClass: "send" };
     }
     return { ok: true };
-  } catch (err) {
-    console.error(
-      "[email] admin-invite send threw —",
-      (err as Error).message
-    );
-    return { ok: false };
+  } catch {
+    console.error("[email] admin-invite send threw", "errorClass=send");
+    return { ok: false, errorClass: "send" };
   }
 }

@@ -19,16 +19,15 @@
 //   - NEVER logs the recipient address or the token URL. The cron route
 //     keeps the decrypted recipient_email scoped to its innermost loop
 //     iteration; the wrapper only reads `input.to` to hand to Resend.
-//     console.error strings reference `kind` + `refCode`, never the
-//     recipient.
-//   - throws ONLY on missing RESEND_API_KEY (config). All Resend errors
-//     return { ok: false } so the cron route can decide surfacing
-//     (mark the row failed in last_send_failed_at; the missing
-//     reminder*_sent_at stamp makes the next cron run retry naturally).
-//   - error.message from Resend MAY echo the recipient address — the
-//     console.error here is a forensic log on a server (not a user
-//     channel); the audit_log writes that the cron route adds in STEP 6
-//     bucket to errorClass to keep PII out of audit metadata.
+//     console.error strings reference `kind` + `refCode` + `errorClass`,
+//     never the recipient and never the raw Resend error.message
+//     (which can echo recipient addresses).
+//   - throws ONLY on missing RESEND_API_KEY (config). The cron route's
+//     try/catch buckets that to errorClass='config' for its audit row.
+//     All other failures return { ok: false, errorClass } so the cron
+//     can decide surfacing (mark the row failed in last_send_failed_at;
+//     the missing reminder*_sent_at stamp makes the next cron run retry
+//     naturally).
 //
 // TEMPLATE LOAD is via service-role admin client. The email_templates
 // row holds non-PII configuration; service-role bypasses RLS (fine since
@@ -51,6 +50,7 @@ import {
   renderEmailTemplate,
   resolveTemplate,
 } from "@/lib/email/templates/render";
+import type { EmailSendResult } from "@/lib/email/types";
 
 const FROM = "Yarmouk Study <noreply@karasneh-research.org>"; // verified production sender (karasneh-research.org)
 const REPLY_TO = "sjkarasneh24@eng.just.edu.jo";
@@ -69,16 +69,18 @@ export type SendReminderEmailInput = {
 };
 
 /**
- * Send one reminder email (reminder1 or reminderFinal). Returns { ok } —
- * the cron route decides how a failure surfaces (writes
- * last_send_failed_at on the invitations row; the missing
+ * Send one reminder email (reminder1 or reminderFinal). Returns
+ * EmailSendResult — the cron route decides how a failure surfaces
+ * (writes last_send_failed_at on the invitations row; the missing
  * reminder*_sent_at stamp makes the next cron run retry naturally).
- * Throws only on missing RESEND_API_KEY (config). Never logs the
- * recipient address or the token URL.
+ * `errorClass` buckets the failure for audit metadata without carrying
+ * raw Resend error.message. Throws only on missing RESEND_API_KEY
+ * (config); the cron's catch buckets it to errorClass='config'. Never
+ * logs the recipient address or the token URL.
  */
 export async function sendReminderEmail(
   input: SendReminderEmailInput
-): Promise<{ ok: boolean }> {
+): Promise<EmailSendResult> {
   const apiKey = process.env.RESEND_API_KEY?.trim();
   if (!apiKey) {
     throw new Error("RESEND_API_KEY is not set — cannot send reminder email.");
@@ -101,13 +103,14 @@ export async function sendReminderEmail(
         storedSections = row.sectionsEn;
       }
     }
-  } catch (err) {
+  } catch {
+    // D64 — log the bucket, not the raw message. Template-load
+    // failure is non-aborting; defaults still produce a working email.
     console.error(
       "[email] reminder template load failed for",
       input.kind,
       input.refCode,
-      "— falling back to defaults",
-      (err as Error).message
+      "errorClass=config (non-aborting; falling back to defaults)"
     );
   }
 
@@ -115,15 +118,17 @@ export async function sendReminderEmail(
   const defaults = getDefaults(input.kind);
   const localeDefaults = input.lang === "ar" ? defaults.ar : defaults.en;
   if (!localeDefaults) {
-    // Should never happen — both reminders are bilingual. Defensive log
-    // beats a thrown undefined-dereference.
+    // Should never happen — both reminders are bilingual. Defensive
+    // log + 'config' failure beats a thrown undefined-dereference.
     console.error(
       "[email] reminder defaults missing for",
       input.kind,
+      input.refCode,
       "lang",
-      input.lang
+      input.lang,
+      "errorClass=config"
     );
-    return { ok: false };
+    return { ok: false, errorClass: "config" };
   }
   const template = resolveTemplate({
     templateId: input.kind,
@@ -164,24 +169,23 @@ export async function sendReminderEmail(
       html,
     });
     if (error) {
+      // D64 — bucket only; Resend's error.message can echo recipient.
       console.error(
         "[email] reminder send failed for",
         input.kind,
         input.refCode,
-        "—",
-        error.message
+        "errorClass=send"
       );
-      return { ok: false };
+      return { ok: false, errorClass: "send" };
     }
     return { ok: true };
-  } catch (err) {
+  } catch {
     console.error(
       "[email] reminder send threw for",
       input.kind,
       input.refCode,
-      "—",
-      (err as Error).message
+      "errorClass=send"
     );
-    return { ok: false };
+    return { ok: false, errorClass: "send" };
   }
 }

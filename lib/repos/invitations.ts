@@ -85,6 +85,12 @@ export type Invitation = {
   submittedAt: string | null;
   createdAt: string;
   createdBy: string | null;
+  /** D64 — set when a Resend send fails for this row (createInvitation,
+   *  resendInvitation, or cron reminder); cleared (NULL) on the next ok
+   *  send from the same row. Drives the "send failed" chip on
+   *  /admin/invitations. Surfaced via invitations_redacted to both owner
+   *  and readonly admins (operational, non-PII). */
+  lastSendFailedAt: string | null;
 };
 
 function rowToInvitation(row: DbRow | DbViewRow): Invitation {
@@ -118,6 +124,7 @@ function rowToInvitation(row: DbRow | DbViewRow): Invitation {
     submittedAt: r.submitted_at,
     createdAt: r.created_at,
     createdBy: r.created_by,
+    lastSendFailedAt: r.last_send_failed_at,
   };
 }
 
@@ -265,6 +272,11 @@ export type UpdateInvitationInput = Partial<{
   startedAt: string | null;
   submittedAt: string | null;
   useCount: number;
+  /** D64 — pass an ISO string to stamp the row as send-failed, or null
+   *  to clear (on a subsequent successful send). Driven by the
+   *  invitation + reminder send paths in lib/actions/invitations.ts and
+   *  /api/cron/send-reminders. */
+  lastSendFailedAt: string | null;
 }>;
 
 /** Update an invitation. Owner only (enforced by RLS). */
@@ -284,6 +296,8 @@ export async function updateInvitation(
   if (input.submittedAt !== undefined)
     update.submitted_at = input.submittedAt;
   if (input.useCount !== undefined) update.use_count = input.useCount;
+  if (input.lastSendFailedAt !== undefined)
+    update.last_send_failed_at = input.lastSendFailedAt;
 
   const { data, error } = await supabase
     .from("invitations")

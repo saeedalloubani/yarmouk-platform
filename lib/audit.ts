@@ -89,6 +89,60 @@ export async function logAudit(
 }
 
 /**
+ * Record an email send failure from a SYSTEM context (no authenticated
+ * admin). Used by:
+ *   - lib/notifications.ts → 'response.submission_email_failed' from the
+ *     respondent submit fan-out (service-role; respondent has no JWT).
+ *   - /api/cron/send-reminders → 'invitation.email_failed' kind=reminder1
+ *     / reminderFinal from the daily auto-nudge cron (service-role;
+ *     cron has no actor).
+ *
+ * Mirrors logFailedLogin's defensive shape:
+ *   - Service-role direct insert; the BEFORE-INSERT trigger stamps
+ *     actor='system' (correct — there is no real actor).
+ *   - NARROW action enum — callers cannot pass arbitrary strings, so the
+ *     system-context audit channel stays a known-events-only surface.
+ *   - severity hard-coded 'warn' (recoverable operational signal).
+ *   - Best-effort: never throws. An audit-write hiccup must not block
+ *     the respondent's redirect (submission path) or cron's next
+ *     iteration (reminder path).
+ *
+ * `metadata` is caller-supplied but the caller MUST NOT include:
+ *   - raw error.message (Resend's strings can echo recipient addresses)
+ *   - recipient email address (PII)
+ *   - the magic-link / token URL (one-time secret)
+ *
+ * The errorClass discipline lives in lib/email/types — callers funnel
+ * Resend errors through { ok: false, errorClass: 'send' | 'config' }
+ * and only the bucket name reaches metadata.
+ */
+export async function logSystemEmailFailure(
+  action: "invitation.email_failed" | "response.submission_email_failed",
+  opts: {
+    resource: string;
+    metadata: Json;
+  }
+): Promise<void> {
+  try {
+    const { ip, userAgent } = await getRequestMeta();
+    const { createSupabaseAdminClient } = await import("./supabase/admin");
+    const admin = createSupabaseAdminClient();
+    const { error } = await admin.from("audit_log").insert({
+      action,
+      resource: opts.resource,
+      severity: "warn",
+      ip,
+      user_agent: userAgent,
+      metadata: opts.metadata,
+    });
+    if (error)
+      console.error("[audit] logSystemEmailFailure insert failed", error);
+  } catch (err) {
+    console.error("[audit] logSystemEmailFailure threw", err);
+  }
+}
+
+/**
  * Record a FAILED admin sign-in attempt (D26 phase ②). There is NO
  * authenticated session here, so this CANNOT use the authenticated log_audit
  * RPC (granted to `authenticated` only; the fill-actor trigger would resolve
