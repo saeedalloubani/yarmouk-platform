@@ -72,6 +72,11 @@ export type Invitation = {
   recipientEmailEncrypted: string | null;
   category: InvitationCategory;
   nationality: InvitationNationality | null;
+  /** D58 added the base column ('self_completed' | 'interview', NOT NULL
+   *  DEFAULT 'self_completed'); D69 surfaced it in invitations_redacted, so
+   *  readonly admins now see it too. Operational classification (NOT PII).
+   *  Inherited by response via the invitation FK — there is deliberately no
+   *  collection_mode column on responses (see D60). */
   collectionMode: InvitationCollectionMode;
   preferredLanguage: "en" | "ar";
   questionnaireVersionId: string;

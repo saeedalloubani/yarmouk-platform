@@ -877,6 +877,7 @@ export type Database = {
         Row: {
           access_code_used_at: string | null
           category: Database["public"]["Enums"]["category_type"] | null
+          collection_mode: Database["public"]["Enums"]["collection_mode"] | null
           created_at: string | null
           created_by: string | null
           expires_at: string | null
@@ -901,6 +902,9 @@ export type Database = {
         Insert: {
           access_code_used_at?: string | null
           category?: Database["public"]["Enums"]["category_type"] | null
+          collection_mode?:
+            | Database["public"]["Enums"]["collection_mode"]
+            | null
           created_at?: string | null
           created_by?: string | null
           expires_at?: string | null
@@ -925,6 +929,9 @@ export type Database = {
         Update: {
           access_code_used_at?: string | null
           category?: Database["public"]["Enums"]["category_type"] | null
+          collection_mode?:
+            | Database["public"]["Enums"]["collection_mode"]
+            | null
           created_at?: string | null
           created_by?: string | null
           expires_at?: string | null

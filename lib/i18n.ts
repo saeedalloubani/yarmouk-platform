@@ -162,33 +162,6 @@ export const translations = {
 
   // ---- questionnaire ----
   questionnaire: { en: "Questionnaire", ar: "الاستبيان" },
-  // D67 — per-category pilot badge text. Pre-D67 a single `pilotBadge`
-  // key was hardcoded to "Pilot Version 1 · Officials" and rendered on
-  // both the live respondent wizard AND the admin preview shell
-  // regardless of the actual variant. Path (a) rename: `pilotBadge` was
-  // copied verbatim into `pilotBadgeOfficials` AND its 2 consumers
-  // migrated to `pilotBadgeLabel(category, t)` in the same commit.
-  //
-  // D68 — Unused since D68 (the badge was removed from /questionnaire
-  // entirely; version tracking is backend-only via questionnaire_version_id).
-  // The 4 keys + `pilotBadgeLabel` helper are retained for potential future
-  // use; remove in a later cleanup cycle. Intentional dead code.
-  pilotBadgeOfficials: {
-    en: "Pilot Version 1 · Officials",
-    ar: "النسخة التجريبية الأولى · المسؤولون",
-  },
-  pilotBadgeResearchers: {
-    en: "Pilot Version 1 · Researchers",
-    ar: "النسخة التجريبية الأولى · الباحثون",
-  },
-  pilotBadgeDonors: {
-    en: "Pilot Version 1 · Donors",
-    ar: "النسخة التجريبية الأولى · الجهات المانحة",
-  },
-  pilotBadgeNGOs: {
-    en: "Pilot Version 1 · NGOs",
-    ar: "النسخة التجريبية الأولى · منظمات غير حكومية",
-  },
   question: { en: "Question", ar: "السؤال" },
   of: { en: "of", ar: "من" },
   saved: { en: "Saved", ar: "تم الحفظ" },
@@ -333,18 +306,19 @@ export function getTranslations(lang: Lang): Translations {
 //
 // The 4 category enum values (officials, researchers, donors, ngos) each get
 // their own "invited as" label on the landing/consent page (via
-// `categoryLabel`). Pre-D68 they also drove a per-category pilot badge in the
-// questionnaire shell (via `pilotBadgeLabel`); D68 removed that badge from
-// `/questionnaire` entirely — `pilotBadgeLabel` survives as dead code per the
-// A2 deferred-cleanup carve-out (kept inert; future cleanup pass can drop it
-// in one commit alongside the `pilotBadgeX` keys). The DB enum category_type
-// carries the same 4 values verbatim; PilotCategory is structurally identical
-// to InvitationCategory but documents the call-site assumption (the cast
-// `session.category as PilotCategory` is a no-op at runtime).
+// `categoryLabel`). The DB enum category_type carries the same 4 values
+// verbatim; PilotCategory is structurally identical to InvitationCategory but
+// documents the call-site assumption (the cast `session.category as
+// PilotCategory` is a no-op at runtime).
 //
 // D68 — the labels are now phase-agnostic (stripped "— Pilot Reviewer"
 // suffix). Same helper serves both pilot and main variants without a rename
 // or a variant-discriminated dispatch.
+//
+// D69 — the per-category pilot-badge helper (`pilotBadgeLabel`) + its 4
+// `pilotBadgeX` i18n keys were removed in the D69 cleanup batch, closing the
+// A2 deferred-cleanup carve-out from D68. `categoryLabel` is the only
+// surviving helper in this section.
 //
 // The switch-on-union pattern below is DELIBERATE — TypeScript's
 // exhaustiveness check enforces that adding a 5th PilotCategory value
@@ -370,29 +344,5 @@ export function categoryLabel(
       return t.categoryDonors;
     case "ngos":
       return t.categoryNGOs;
-  }
-}
-
-/**
- * Resolve the per-category pilot-badge text for the questionnaire shell.
- *
- * Unused since D68 (badge removed from /questionnaire entirely; version
- * tracking is backend-only via questionnaire_version_id). Retained for
- * potential future use; remove in a later cleanup cycle. Intentional dead
- * code — keep paired with the `pilotBadgeX` keys above.
- */
-export function pilotBadgeLabel(
-  category: PilotCategory,
-  t: Translations
-): string {
-  switch (category) {
-    case "officials":
-      return t.pilotBadgeOfficials;
-    case "researchers":
-      return t.pilotBadgeResearchers;
-    case "donors":
-      return t.pilotBadgeDonors;
-    case "ngos":
-      return t.pilotBadgeNGOs;
   }
 }
