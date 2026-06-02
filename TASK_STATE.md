@@ -117,6 +117,99 @@ real responses — not lifecycle-blocking for Stage-1 collection).
     + the 5-template Email templates table (now includes reminder1 +
     reminderFinal alongside invitation, admin-invite, submission).
 
+  ✓ #6 D65 — Admin login switched to 6-digit OTP code (PR #5 merged
+    2026-06-02, commit 4fed581). O365 Defender URL-prefetch defense:
+    audit log showed 8+ parallel verify_failed events per Sura login
+    attempt; Defender was consuming Supabase's single-use token before
+    she could click. The fix renders {{ .Token }} as TEXT in the Magic
+    Link email instead of a clickable URL. /admin/login is now a
+    two-state form (enter_email → enter_code); state 2 calls Server
+    Action verifyOtpAction in lib/actions/admin-auth.ts (mirrors the
+    proven /admin/callback cookie-write path). /admin/callback kept as
+    legacy backward-compat for in-flight URL emails until the magic-
+    link TTL drains. Sura verified post-merge — login worked first try.
+    Decisions D65; RUNBOOK "Admin login — OTP code flow (D65)".
+
+  ✓ #7 D66 — Participant URL prefetch defense via 6-digit access code
+    (this branch, EOD 2026-06-02). Same vector as D65 but for the
+    participant /r/[token] flow. Every invitation email now ships
+    BOTH the URL AND a 6-digit access code; if a recipient's email
+    scanner prefetches the URL, they enter the code at /enter
+    instead. Three migrations: 12001 (columns + view recreate; view
+    grew 21 → 22 cols, only the non-secret access_code_used_at
+    surfaced), 12002 (RPC initial — strict single-use stamping on
+    fresh-claim + resumption), 12003 (FIX-FORWARD — only fresh-claim
+    stamps; resumption is unlimited as long as expires_at > NOW() +
+    response non-submitted, mirroring URL token semantic). The
+    strict-single-use semantic broke the legitimate recovery case
+    (recipient loses cookie + tries to re-enter code) — reverted
+    mid-build via the 12003 migration.
+
+    TWO-SECRET SYMMETRIC MODEL: token_plaintext_encrypted (D64) +
+    access_code_encrypted (D66). Both Vault-encrypted at rest. Both
+    rotate together on resend. Both die together on revoke. Both
+    reusable for the reminder cron (decrypt + interpolate per-iter
+    scope). An attacker landing the code reaches the same threat
+    ceiling as one landing the URL — symmetric, explicitly accepted
+    in D66.
+
+    LOOKUP via brute-decrypt scan over the candidate set
+    (access_code_encrypted IS NOT NULL AND expires_at > NOW(),
+    decrypt_pii each, compare to p_code). O(N) at pilot scale
+    (sub-ms); explicitly NOT a SHA-256 hash column (6-digit codes
+    are rainbow-table-trivial; would leak codes if hash ever
+    surfaced).
+
+    BRUTE-FORCE RESISTANCE LAYERED: (a) 1M entropy of 6-digit codes,
+    (b) 60-day expires_at TTL, (c) audit-log durability via
+    logFailedAccessCode("invalid_or_expired" | "rate_limited") —
+    severity=warn, metadata=reason bucket only, NO p_code / IP / UA
+    in metadata JSON (helper captures IP/UA on the row for forensics
+    but stays a known-narrow shape), (d) max_uses budget gate
+    (use_count >= max_uses returns empty). Per-IP in-memory rate
+    limit (5 attempts / 60s / IP) is best-effort FRICTION not
+    security — won't survive Vercel cold starts; documented in
+    lib/actions/access-code.ts docstring + D66 DECISIONS. Future
+    hardening = Vercel KV / Upstash if attack pattern emerges.
+
+    ADMIN UI: post-create + post-resend success panels reveal
+    URL + code in a stacked layout, each with its own copy button.
+    Helper text under code: "Share with the recipient if their
+    email service blocked the link above." Both shown ONCE per
+    create/resend (neither recoverable from DB — encrypt_pii uses
+    random IV; resend mints fresh values). Resend reveals both on
+    BOTH the email-sent branch AND the loud-failure branch (Sura
+    sees them every time, not just on send-failure).
+
+    EMAIL TEMPLATE: new "access_code" SectionKey between personal
+    and expiry, fine placement, requiredPlaceholders:['access_code']
+    (structural guarantee Sura can't ship a template without the
+    placeholder). One-line copy (HTML <p> collapses \n; one-line
+    keeps HTML + plain-text byte-equivalent). EN/AR defaults
+    bundled. Editor surfaces the new section like any other.
+
+    DEPLOY: code lands first (PR), migrations 12001 + 12003 applied
+    pre-merge (migration 12002 already on prod from the earlier
+    failed-revision attempt; 12003 brings prod from strict to
+    revised semantic). Forward-only: pre-D66 invitations stay NULL
+    access_code; Sura's manual Resend mints + populates the column
+    on the way through.
+
+    BUILD: npm run build clean on the branch. Fix-up touched two
+    file-paths that had RuntimeValues literals missing the new
+    access_code field: the email-template editor preview page
+    (app/admin/(protected)/settings/email-templates/[id]/page.tsx)
+    and the editor's preview-render action (lib/actions/email-
+    templates.ts). Also added access_code entry to SECTION_LABELS
+    in components/EmailTemplateEditor.tsx (title + hint).
+
+    Smoke pending — STEP 5 of the Phase plan.
+
+    See DECISIONS.md D66 + RUNBOOK "Participant invitation URL
+    prefetch defense (D66)" for the operator surface (post-
+    create/resend admin reveal, participant /enter walkthrough,
+    brute-force forensics queries, why-not-hash-column).
+
 EXPORT (separate, NOT a self-service blocker):
   ✗ Export (Stage-2 deliverable — CSV / ATLAS.ti xlsx / executive report).
     DATA-BLOCKED on real responses; not lifecycle-blocking for Stage-1

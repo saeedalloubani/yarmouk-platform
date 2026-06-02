@@ -304,6 +304,8 @@ export type Database = {
       }
       invitations: {
         Row: {
+          access_code_encrypted: string | null
+          access_code_used_at: string | null
           category: Database["public"]["Enums"]["category_type"]
           collection_mode: Database["public"]["Enums"]["collection_mode"]
           created_at: string
@@ -330,6 +332,8 @@ export type Database = {
           use_count: number
         }
         Insert: {
+          access_code_encrypted?: string | null
+          access_code_used_at?: string | null
           category: Database["public"]["Enums"]["category_type"]
           collection_mode?: Database["public"]["Enums"]["collection_mode"]
           created_at?: string
@@ -356,6 +360,8 @@ export type Database = {
           use_count?: number
         }
         Update: {
+          access_code_encrypted?: string | null
+          access_code_used_at?: string | null
           category?: Database["public"]["Enums"]["category_type"]
           collection_mode?: Database["public"]["Enums"]["collection_mode"]
           created_at?: string
@@ -869,6 +875,7 @@ export type Database = {
       }
       invitations_redacted: {
         Row: {
+          access_code_used_at: string | null
           category: Database["public"]["Enums"]["category_type"] | null
           created_at: string | null
           created_by: string | null
@@ -892,6 +899,7 @@ export type Database = {
           use_count: number | null
         }
         Insert: {
+          access_code_used_at?: string | null
           category?: Database["public"]["Enums"]["category_type"] | null
           created_at?: string | null
           created_by?: string | null
@@ -915,6 +923,7 @@ export type Database = {
           use_count?: number | null
         }
         Update: {
+          access_code_used_at?: string | null
           category?: Database["public"]["Enums"]["category_type"] | null
           created_at?: string | null
           created_by?: string | null
@@ -1047,6 +1056,19 @@ export type Database = {
           p_user_agent?: string
         }
         Returns: undefined
+      }
+      validate_invitation_code: {
+        Args: { p_code: string }
+        Returns: {
+          category: Database["public"]["Enums"]["category_type"]
+          expires_at: string
+          id: string
+          language: string
+          nationality: Database["public"]["Enums"]["nationality_type"]
+          questionnaire_version_id: string
+          ref_code: string
+          response_id: string
+        }[]
       }
       validate_invitation_token: {
         Args: { p_token: string }

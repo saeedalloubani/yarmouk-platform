@@ -53,7 +53,7 @@ import type { TemplateDefaults, TemplateId } from "./types";
 const INVITATION: TemplateDefaults = {
   name: "Participant invitation",
   description:
-    "Sent to invited experts. Bilingual (English + Arabic). Includes the personal sign-in button.",
+    "Sent to invited experts. Bilingual (English + Arabic). Includes the personal sign-in button and (D66) the 6-digit access-code fallback line.",
   en: {
     subject: "Invitation to the Yarmouk Study questionnaire",
     sections: {
@@ -61,6 +61,10 @@ const INVITATION: TemplateDefaults = {
         "You have been invited to take part in the Yarmouk Study — a research questionnaire evaluating the 1987 Yarmouk Agreement between Jordan and Syria.",
       cta: "Open the questionnaire",
       personal: "This link is personal to you. Please do not forward it.",
+      // D66 — one-line copy (HTML collapses internal whitespace; keeping
+      // a single line keeps the HTML + plain-text renders byte-equivalent).
+      access_code:
+        "Can't open the link above? Enter this 6-digit code at karasneh-research.org/enter: {access_code}",
       expiry: "The link expires on {expiry_date}.",
       contact:
         "Questions? Contact Sura Karasneh at sjkarasneh24@eng.just.edu.jo — +962 7 9661 0400.",
@@ -73,6 +77,9 @@ const INVITATION: TemplateDefaults = {
         "تمت دعوتك للمشاركة في دراسة اليرموك — وهي استبيان بحثي يُقيّم اتفاقية اليرموك لعام 1987 بين الأردن وسوريا.",
       cta: "افتح الاستبيان",
       personal: "هذا الرابط خاص بك، يُرجى عدم إعادة توجيهه.",
+      // D66 — Sura review on AR phrasing if needed; structure mirrors EN.
+      access_code:
+        "هل تعذّر فتح الرابط أعلاه؟ أدخِل الرمز التالي المؤلف من 6 أرقام على karasneh-research.org/enter: {access_code}",
       expiry: "تنتهي صلاحية هذا الرابط في {expiry_date}.",
       contact:
         "لأي استفسار، يُرجى التواصل مع الباحثة سرى كراسنة على البريد الإلكتروني sjkarasneh24@eng.just.edu.jo — +962 7 9661 0400.",
@@ -83,7 +90,7 @@ const INVITATION: TemplateDefaults = {
 const REMINDER_1: TemplateDefaults = {
   name: "First reminder",
   description:
-    "Auto-sent ~7 days after the invitation if the respondent hasn't submitted. Bilingual (English + Arabic). Same personal sign-in button as the invitation.",
+    "Auto-sent ~7 days after the invitation if the respondent hasn't submitted. Bilingual (English + Arabic). Same personal sign-in button and (D66) the 6-digit access-code fallback line.",
   en: {
     subject: "Reminder — Yarmouk Study questionnaire",
     sections: {
@@ -91,6 +98,8 @@ const REMINDER_1: TemplateDefaults = {
         "This is a friendly reminder that you were recently invited to take part in the Yarmouk Study — a research questionnaire evaluating the 1987 Yarmouk Agreement between Jordan and Syria. Your link is still active.",
       cta: "Open the questionnaire",
       personal: "This link is personal to you. Please do not forward it.",
+      access_code:
+        "Can't open the link above? Enter this 6-digit code at karasneh-research.org/enter: {access_code}",
       expiry: "The link expires on {expiry_date}.",
       contact:
         "Questions? Contact Sura Karasneh at sjkarasneh24@eng.just.edu.jo — +962 7 9661 0400.",
@@ -103,6 +112,8 @@ const REMINDER_1: TemplateDefaults = {
         "تذكير لطيف بأنه تمت دعوتك مؤخرًا للمشاركة في دراسة اليرموك — وهي استبيان بحثي يُقيّم اتفاقية اليرموك لعام 1987 بين الأردن وسوريا. لا يزال الرابط الخاص بك فعّالًا.",
       cta: "افتح الاستبيان",
       personal: "هذا الرابط خاص بك، يُرجى عدم إعادة توجيهه.",
+      access_code:
+        "هل تعذّر فتح الرابط أعلاه؟ أدخِل الرمز التالي المؤلف من 6 أرقام على karasneh-research.org/enter: {access_code}",
       expiry: "تنتهي صلاحية هذا الرابط في {expiry_date}.",
       contact:
         "لأي استفسار، يُرجى التواصل مع الباحثة سرى كراسنة على البريد الإلكتروني sjkarasneh24@eng.just.edu.jo — +962 7 9661 0400.",
@@ -113,7 +124,7 @@ const REMINDER_1: TemplateDefaults = {
 const REMINDER_FINAL: TemplateDefaults = {
   name: "Final reminder",
   description:
-    "Auto-sent ~14 days after the invitation if the respondent still hasn't submitted. Bilingual (English + Arabic). Last automated nudge in the cycle.",
+    "Auto-sent ~14 days after the invitation if the respondent still hasn't submitted. Bilingual (English + Arabic). Last automated nudge in the cycle. Carries the (D66) 6-digit access-code fallback.",
   en: {
     subject: "Final reminder — Yarmouk Study questionnaire",
     sections: {
@@ -121,6 +132,8 @@ const REMINDER_FINAL: TemplateDefaults = {
         "This is a final reminder to take part in the Yarmouk Study — a research questionnaire evaluating the 1987 Yarmouk Agreement between Jordan and Syria. Your link is still active, and your perspective would be valuable.",
       cta: "Open the questionnaire",
       personal: "This link is personal to you. Please do not forward it.",
+      access_code:
+        "Can't open the link above? Enter this 6-digit code at karasneh-research.org/enter: {access_code}",
       expiry: "The link expires on {expiry_date}.",
       contact:
         "Questions? Contact Sura Karasneh at sjkarasneh24@eng.just.edu.jo — +962 7 9661 0400.",
@@ -133,6 +146,8 @@ const REMINDER_FINAL: TemplateDefaults = {
         "تذكير أخير للمشاركة في دراسة اليرموك — وهي استبيان بحثي يُقيّم اتفاقية اليرموك لعام 1987 بين الأردن وسوريا. لا يزال الرابط الخاص بك فعّالًا، ورأيك يهمنا.",
       cta: "افتح الاستبيان",
       personal: "هذا الرابط خاص بك، يُرجى عدم إعادة توجيهه.",
+      access_code:
+        "هل تعذّر فتح الرابط أعلاه؟ أدخِل الرمز التالي المؤلف من 6 أرقام على karasneh-research.org/enter: {access_code}",
       expiry: "تنتهي صلاحية هذا الرابط في {expiry_date}.",
       contact:
         "لأي استفسار، يُرجى التواصل مع الباحثة سرى كراسنة على البريد الإلكتروني sjkarasneh24@eng.just.edu.jo — +962 7 9661 0400.",

@@ -33,6 +33,10 @@ const SAMPLE = {
   expiry_date_ar: "١٥ يونيو ٢٠٢٦",
   ref_code: "EX-001",
   name: "Dr. Example",
+  // D66 — sample 6-digit code for the invitation / reminder1 /
+  // reminderFinal previews. Visible only in the editor; unused by
+  // admin-invite + submission previews (the allowlist drops it).
+  access_code: "123456",
 };
 
 function inertButtonHref(id: TemplateId): string {
@@ -86,6 +90,7 @@ export default async function EmailTemplateEditorPage({
       name: SAMPLE.name,
       expiry_date: SAMPLE.expiry_date_en,
       ref_code: SAMPLE.ref_code,
+      access_code: SAMPLE.access_code, // D66
       button_href: inertHref,
     },
   });
@@ -111,6 +116,7 @@ export default async function EmailTemplateEditorPage({
         name: SAMPLE.name,
         expiry_date: SAMPLE.expiry_date_ar,
         ref_code: SAMPLE.ref_code,
+        access_code: SAMPLE.access_code, // D66
         button_href: inertHref,
       },
     });

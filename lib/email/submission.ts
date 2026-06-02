@@ -146,8 +146,9 @@ export async function sendSubmissionEmail(
   const { subject, text, html } = renderEmailTemplate({
     template,
     values: {
-      expiry_date: "", // unused — submission has no expiry placeholder
+      expiry_date: "",   // unused — submission has no expiry placeholder
       ref_code: input.refCode,
+      access_code: "",   // unused — submission targets active owners (D66)
       button_href: input.href,
     },
   });

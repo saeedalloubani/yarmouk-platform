@@ -224,12 +224,18 @@ async function dispatchKind(
   const { data: candidates, error: queryErr } = await admin
     .from("invitations")
     .select(
-      "id, ref_code, preferred_language, expires_at, recipient_email_encrypted, token_plaintext_encrypted"
+      "id, ref_code, preferred_language, expires_at, recipient_email_encrypted, token_plaintext_encrypted, access_code_encrypted"
     )
     .in("status", ["sent", "opened"])
     .lte("sent_at", cutoff)
     .is(column, null)
     .not("token_plaintext_encrypted", "is", null) // Path B — exclude pre-D64 rows
+    // D66 — also exclude pre-D66 rows (NULL access_code_encrypted).
+    // The reminder body's access_code section is a REQUIRED placeholder
+    // (TEMPLATE_SPECS); rendering without a code would fail validation
+    // at send time. Sura's manual resend (which mints + populates the
+    // column) is the recovery path for these rows.
+    .not("access_code_encrypted", "is", null)
     .gt("expires_at", nowIso);
 
   if (queryErr) {
@@ -296,6 +302,7 @@ type Candidate = {
   expires_at: string;
   recipient_email_encrypted: string;
   token_plaintext_encrypted: string | null;
+  access_code_encrypted: string | null; // D66
 };
 
 async function dispatchOne(
@@ -360,6 +367,42 @@ async function dispatchOne(
     return false;
   }
 
+  // b'. D66 — decrypt the 6-digit access code. Same Vault key, same
+  //     RPC pattern as the recipient email + token plaintext above. The
+  //     candidate query already gated on access_code_encrypted IS NOT
+  //     NULL; the defensive null check below catches a row whose state
+  //     changed between query and read.
+  //
+  //     `accessCodePlaintext` is local to this function — handed to the
+  //     reminder wrapper for {access_code} interpolation, then falls
+  //     out of scope at return. NEVER logged, NEVER audited.
+  if (!row.access_code_encrypted) {
+    console.error(
+      "[cron]",
+      kind,
+      "missing access_code_encrypted (post-query)",
+      row.ref_code,
+      "errorClass=config"
+    );
+    await markFailure(admin, row, kind, "config");
+    return false;
+  }
+  const { data: accessCodePlaintext, error: decryptCodeErr } = await admin.rpc(
+    "decrypt_pii",
+    { p_ciphertext: row.access_code_encrypted }
+  );
+  if (decryptCodeErr || !accessCodePlaintext) {
+    console.error(
+      "[cron]",
+      kind,
+      "decrypt(access_code) failed for",
+      row.ref_code,
+      "errorClass=config"
+    );
+    await markFailure(admin, row, kind, "config");
+    return false;
+  }
+
   // c. Compose the reminder URL — same shape as buildInvitationUrl
   //    (lib/tokens.ts): `${SITE_URL}/r/<plaintext>`. We don't reuse
   //    buildInvitationUrl directly because it reads NEXT_PUBLIC_SITE_URL
@@ -382,6 +425,7 @@ async function dispatchOne(
       tokenUrl,
       expiresAt: row.expires_at,
       kind,
+      accessCode: accessCodePlaintext, // D66
     });
   } catch {
     console.error(

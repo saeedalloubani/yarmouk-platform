@@ -5,6 +5,8 @@ Manual steps a human runs outside the codebase — Vault key setup, key rotation
 ## Admin auth bootstrap (Session 3a)
 
 > **D65 update (2026-06)**: the Supabase **Magic Link** email template now renders a **6-digit OTP code as text** instead of a clickable URL. Sign-in flow is: `/admin/login` → enter email → state transitions to "enter the code we sent" → type the 6-digit code → land on `/admin`. The legacy URL-based `/admin/callback` route still resolves any in-flight emails sent before the template change (backward-compat window ≈ token TTL, ~60 minutes). See "Admin login — OTP code flow (D65)" below for the new procedure + the audit-evidence pattern that drove the switch. The dashboard bootstrap steps below (signups disabled, pre-create identity, redirect URLs) are unchanged.
+>
+> **D66 update (2026-06)**: same prefetch-defense pattern now ships for **participant** invitations. Every invitation email body carries the URL **and** a 6-digit access code; if the URL is consumed by an email scanner before the recipient clicks, they enter the code at `/enter` instead. Both are Vault-encrypted at rest, both rotate on resend, both die on revoke. See "Participant invitation URL prefetch defense (D66)" for the post-create / post-resend admin surface, the participant diagnostic flow, brute-force forensics via the audit log, and the lookup design (brute-decrypt scan over the candidate set, no `access_code_hash` column).
 
 Migrations seed the `admins` allow-list **row** (app-level role data), but do NOT create Supabase Auth identities. Provision those by hand in the dashboard. Per D49, signup is locked down — only pre-created identities can ever sign in.
 
@@ -250,6 +252,8 @@ If a participant says their link is broken:
 
 The `last_send_failed_at` chip clears automatically on the next successful send from the same row. No manual reset needed.
 
+**D66 NOTE — "link doesn't open" might be email-scanner URL prefetch.** If `status='opened'` immediately (within seconds of `sent_at`) AND the recipient says they never clicked, that's the classic Microsoft 365 Defender / Outlook URL-prefetch signature: the scanner consumed the token before the recipient saw the email. The recipient should use the **6-digit access code** from the same invitation email at `https://karasneh-research.org/enter` — that path bypasses the prefetched URL entirely. Walk them through it on the phone if they haven't tried it. See "Participant invitation URL prefetch defense (D66)" below for the full procedure.
+
 ### Inspecting an invitation's reminder state via Supabase Studio
 
 ```sql
@@ -267,6 +271,81 @@ WHERE ref_code = '<paste here>';
 ### Known limitation: async bounces don't surface to the chip
 
 Resend's `.invalid` TLD acceptance + async-bounce behavior was observed during D64 smoke: a syntactically-valid but undeliverable address (e.g., `bounce@example.invalid`) returns 200 at the API layer, so the wrapper sees `{ok: true}` and the chip never fires — the bounce surfaces later via Resend's webhook system, which the platform doesn't currently consume. For now, the chip catches sync API rejections only (auth failures, rate limits, malformed addresses Resend validates client-side). A future Resend-webhook integration would close the "email looked sent but didn't arrive" gap. Out of D64 scope. If you suspect a recipient never received a reminder despite `reminder*_sent_at` being stamped, check Resend's dashboard for the bounce event.
+
+## Participant invitation URL prefetch defense (D66)
+
+D66 ships a 6-digit access code as a **fallback** alongside every participant invitation URL. Same vector D65 fixed for admin login — Microsoft 365 Defender / Outlook / Proofpoint / Mimecast / etc. URL-prefetch can consume the `/r/[token]` URL before the recipient clicks. If the URL is dead-on-arrival, the recipient types the code at `/enter` instead. The cron + the rescue path both keep working without rotation — both the URL and the code are stored Vault-encrypted at rest (`token_plaintext_encrypted` + `access_code_encrypted`) and reused across reminders.
+
+### What Sura sees post-create / post-resend
+
+The success panel on `/admin/invitations/new` (after Create) and the per-row Resend button (after Resend) now reveals **two** values:
+
+1. **Invitation link — shown once.** The primary `https://karasneh-research.org/r/<token>` URL.
+2. **Access code.** A 6-digit numeric code (e.g., `847291`).
+
+Each row has its own **Copy** button. Both values are "shown once" — neither is recoverable from the DB once the success panel closes. To re-issue, click **Resend** (which mints a fresh URL AND a fresh code together — the OLD pair is dead the instant the rotation UPDATE commits).
+
+Helper text under the code field: *"Share with the recipient if their email service blocked the link above."*
+
+### The participant's experience
+
+The invitation, first-reminder, and final-reminder emails each carry **both** the URL (as the primary call-to-action button) AND the 6-digit code (in a fine-print line below the button). The default copy is:
+
+> *Can't open the link above? Enter this 6-digit code at karasneh-research.org/enter: 847291*
+
+(Bilingual EN/AR — the AR rendering inserts the code's Latin digits inside the RTL paragraph with a leading colon.) If the recipient's email scanner prefetched/consumed the URL token, clicking the dead link lands them on `/invitation-invalid`. That page now shows a soft fallback link in both languages — *"If your email scanner consumed the link before you could click, you can enter the 6-digit code from your invitation email instead."* — with an **Enter your code** / **أدخل الرمز** button that goes to `/enter`. Single-input form, 6-digit numeric field with `autoComplete="one-time-code"` (iOS Mail OTP autofill works). On success: same `setSession` + `setLang` + redirect-to-`/` as the URL path. On failure: generic "Invalid or expired code. Try again or contact the researcher." in both languages — no enumeration of failure modes (RPC-empty vs RPC-error vs rate-limit-hit all look identical).
+
+### Diagnosing "I can't open my invitation link" (D66 workflow)
+
+This extends the diagnostic flow in the D64 "Diagnosing 'I can't open my invitation link'" section. After establishing `status` and chip checks:
+
+- If `status='opened'` happened within seconds of `sent_at` AND the recipient says they never clicked → email-scanner URL prefetch consumed the token. **Walk them through `/enter`**: tell them to find the 6-digit code in their original invitation email (below the blue button), go to `https://karasneh-research.org/enter`, type the 6 digits. They land on consent and the session works.
+- If `status='opened'` already AND the URL really was clicked by the recipient (they remember clicking) → the URL is consumed. They've already started the response, and the `/enter` path resumes the same response (D66 resumption semantic mirrors URL). Same instruction: code at `/enter`, they pick up where they left off.
+- If they've tried `/enter` and it returns "Invalid or expired code" repeatedly → check Studio (query below) for the row's state. If `expires_at` is past or `submitted_at` is set, no recovery — issue a fresh invitation under a new `ref_code`. If neither, ask the recipient to double-check they're typing the correct 6 digits (case-insensitive isn't relevant — only digits — but they may be mistaking the code from a different invitation if they have multiple).
+
+### Inspecting an invitation's access-code state via Supabase Studio
+
+```sql
+SELECT
+  ref_code, status, sent_at, expires_at,
+  access_code_used_at,
+  access_code_encrypted IS NOT NULL AS code_eligible
+FROM invitations
+WHERE ref_code = '<paste here>';
+```
+
+- `code_eligible=false` → pre-D66 row. Manual **Resend** mints a code and populates the column.
+- `access_code_used_at IS NULL` → code has never been fresh-claimed via `/enter` (URL fresh-claim doesn't touch this column; this is the `/enter`-specific forensic stamp).
+- `access_code_used_at IS NOT NULL` → recipient (or anyone with the code) successfully fresh-claimed via `/enter` at that timestamp. Doesn't gate future `/enter` use — resumption is unlimited as long as `expires_at > NOW()` and the response is non-submitted.
+
+### Inspecting failed `/enter` attempts via Supabase Studio (brute-force forensics)
+
+Every failed `/enter` submission writes a `severity=warn` audit row. To investigate possible brute force:
+
+```sql
+SELECT ts, ip, user_agent, metadata
+FROM audit_log
+WHERE action = 'invitation.code.failed'
+ORDER BY ts DESC
+LIMIT 200;
+```
+
+- `metadata->>'reason' = 'invalid_or_expired'` → wrong code typed (real recipient retrying, OR brute-force).
+- `metadata->>'reason' = 'rate_limited'` → the per-IP in-memory limiter (5 attempts / 60s / IP) blocked the attempt. Best-effort friction only — won't survive Vercel cold starts, won't catch a distributed brute force across many IPs. Real security is the 1M-entropy + 60-day TTL + max_uses gate (see D66 in DECISIONS.md).
+- Clustering: group by IP + by minute. A single IP with >100 attempts in 10 minutes is a brute-force signature. Currently no automated alerting — Sura/Saeed eyeball this surface; if a pattern emerges, the future hardening is Vercel KV / Upstash for cross-instance rate limit (out of D66 scope).
+
+### Why we did NOT add an `access_code_hash` column
+
+A SHA-256 hex hash of the 6-digit code would enable O(1) lookup (mirroring `token_hash`), but 6 digits = 1M possibilities — the hash is **rainbow-table-trivial** (1M hashes precomputable in seconds). Any surface that ever exposed the hash would leak the code. Brute-decrypt scan over the candidate set (`access_code_encrypted IS NOT NULL AND expires_at > NOW()`, decrypt each, compare) is O(N) where N is the count of active code-bearing invitations — sub-millisecond at pilot scale, scales fine to several hundred. Revisit only if active count crosses ~1000. See D66 in DECISIONS.md for the full alternatives analysis.
+
+### Pre-D66 invitations are excluded from the code path
+
+Same forward-only discipline as the D64 token-plaintext column: pre-D66 invitations have `access_code_encrypted IS NULL` (the column didn't exist at their mint time). The cron's reminder candidate query and `validate_invitation_code`'s candidate scan both gate on `access_code_encrypted IS NOT NULL` and silently exclude these rows. To activate the code path for an old invitation: click **Resend** on `/admin/invitations` — it mints both a fresh URL and a fresh code in lockstep.
+
+### What changes on resend / revoke
+
+- **Resend** (both `resume` and `fresh` branches) mints a new URL AND a new code. The OLD pair dies the instant the rotation UPDATE commits — symmetric, no "URL rotated but code still valid" half-state. On the `fresh` branch, `access_code_used_at` is also reset to NULL (the new code has never been used). On the `resume` branch, `access_code_used_at` is preserved (if the recipient fresh-claimed via `/enter` before, that forensic stamp stays).
+- **Revoke** sets `access_code_encrypted = NULL` alongside `token_plaintext_encrypted = NULL` and `status = 'revoked'`. The code becomes unscannable (candidate filter excludes NULL ciphertext rows). `access_code_used_at` is preserved as a terminal forensic record.
 
 ## Email templates (the 5 editable templates + reset path)
 

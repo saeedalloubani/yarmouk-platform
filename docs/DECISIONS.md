@@ -738,6 +738,55 @@ Microsoft 365 Defender prefetches URLs in inbound emails (link-scanning for mali
 
 **Deploy ordering.** Code lands first (PR merges → Vercel deploys, `/admin/callback` still handles in-flight URL emails). Saeed updates the Supabase email template in Studio immediately after merge — tight transition window (~5 minutes between code-live and template-changed), during which the existing URL flow keeps working. After the template change, new emails contain text-rendered codes; users type into `/admin/login` state 2.
 
+### D66. Participant invitation URL prefetch defense — 6-digit access-code fallback via `/enter`
+
+Same vector D65 fixed for admin login (Microsoft 365 Defender prefetching email URLs) was the open backlog item for the participant `/r/[token]` flow — D65's closing paragraph flagged it as a known-future-risk. With pilot recipients including mixed email domains (some likely O365), the fix lands now as a fallback path: every invitation ships in the email body with **both** the URL **and** a 6-digit access code. Happy path is unchanged (click URL → /r/[token] → consent). Rescue path: scanner consumed URL → recipient sees `/invitation-invalid` → soft link to `/enter` → types code → consent.
+
+**Two-secret symmetric model.** Each invitation carries a *strong* secret (the URL plaintext, 32-byte b64url) AND a *6-digit* secret (the access code). Both Vault-encrypted at rest in `invitations.token_plaintext_encrypted` (D64) + `invitations.access_code_encrypted` (D66). Both rotate together on resend. Both die together on revoke. Both are reusable for the auto-reminder cycle (the cron decrypts both per iteration; same iteration scope, same PII discipline as the recipient email). The URL is primary; the code is the rescue. An attacker landing the code reaches the same threat ceiling as one landing the URL — both can resume the in-progress response while it remains non-submitted. Symmetric, explicitly accepted.
+
+**Considered alternatives.**
+
+- **Alternative A — add `access_code_hash` column for O(1) lookup (SHA-256 hex, UNIQUE INDEX).** Would mirror `token_hash` structurally. Rejected: SHA-256 of a 6-digit code is rainbow-table-trivial (1M codes precomputable in seconds) — would require painstaking exclusion from `invitations_redacted` and every accessible surface to prevent code-recovery by readonly admins. Brute-decrypt scan over the candidate set is O(N) where N ≤ ~30 at pilot scale; sub-millisecond per `/enter` submission. Same approach the cron uses for `recipient_email_encrypted`. The two-column scope (`access_code_encrypted` + `access_code_used_at`) is exactly the brief's intent. Revisit at Stage 2 if active count crosses ~200.
+
+- **Alternative B — strict-single-use semantics on the access code.** Initial implementation (12002) stamped `access_code_used_at = NOW()` on *both* fresh-claim AND resumption — so any successful `/enter` validation burned the code. **Reverted** mid-build (12003 fix-forward migration) because it broke the legitimate recovery case: a participant who fresh-claimed via `/enter` and then lost their session cookie (cleared browser, different device, cookie TTL expired) couldn't re-enter using the same code. The revised semantic mirrors the URL token's: fresh claim is single-use (gated by `use_count >= max_uses`), resumption is unlimited as long as `expires_at > NOW()` and no response is submitted. `access_code_used_at` is now a **forensic timestamp** — "when /enter first fresh-claimed this invitation" — not a behavior gate.
+
+- **Alternative C — email-second-factor on `/enter` (type code + email).** Would harden brute-force resistance to ~1M × N entropy. Rejected: changes the brief's "single 6-digit input" UX; adds friction to the rescue path where the recipient is already stressed (scanner ate their link); and email is already in the recipient's mailbox so doesn't add real attacker friction (an attacker reading email is already past the authentication boundary).
+
+**Brute-force resistance is layered, NOT relying on stamping or rate-limiting alone:**
+
+1. **1M entropy** of 6-digit codes (100000–999999, no leading-zero ambiguity). `node:crypto.randomInt` for the mint (CSPRNG, uniform).
+2. **60-day `expires_at` TTL**. After expiry the candidate-scan filter excludes the row.
+3. **Audit-log durability** — every failed `/enter` attempt writes a `severity=warn` `invitation.code.failed` row via `logFailedAccessCode("invalid_or_expired" | "rate_limited")`. NO `p_code` in metadata, NO IP-derived recipient guess (the helper captures IP/UA for forensics but does not include them in metadata JSON). Saeed sees brute-force patterns in audit_log — rate, IP, frequency — without us persisting the secret-space attackers were probing.
+4. **`max_uses` budget gate** — once the URL or the code fresh-claims, `use_count >= max_uses` blocks subsequent fresh-claim attempts. After fresh-claim, attempts hit the resumption branch (which only succeeds while the response remains non-submitted). After submission, `/enter` returns empty via the already-submitted branch.
+
+**Rate limiting is best-effort friction, NOT security.** A per-IP in-memory map in the Server Action (`max 5 attempts / 60s / IP`) adds friction but won't survive Vercel cold starts (each serverless instance has its own memory) and won't catch a distributed brute force (each IP gets 5 attempts/min). Documented as "friction not security" in `lib/actions/access-code.ts` docstring. Real security is the four layers above; future hardening if attack pattern emerges = Vercel KV / Upstash.
+
+**RPC design — `validate_invitation_code(p_code TEXT)`** mirrors `validate_invitation_token` byte-for-byte except for (a) lookup (brute-decrypt scan in 2-phase find-then-lock, no UNIQUE-index O(1)), (b) the fresh-claim branch's UPDATE also stamps `access_code_used_at = NOW()` (forensic only). Same 8-column TABLE return. Same `SECURITY DEFINER` + `search_path = public, pg_temp`. Same `GRANT EXECUTE TO anon, authenticated`. `/enter`'s Server Action `validateAccessCodeAction` (`lib/actions/access-code.ts`) calls it via the anon client, then writes session cookies + `redirect("/")` — byte-equivalent to `/r/[token]`'s success branch.
+
+**Migration sequence.** Three migrations landed (12001, 12002, 12003):
+
+- `20260602120001_invitations_access_code.sql` — column adds (`access_code_encrypted TEXT NULL`, `access_code_used_at TIMESTAMPTZ NULL`) + `invitations_redacted` view recreate to 22 columns (only the non-secret `access_code_used_at` exposed; ciphertext stays out of view, same treatment as `token_plaintext_encrypted` and `token_hash`).
+- `20260602120002_validate_invitation_code.sql` — initial RPC (strict-single-use).
+- `20260602120003_validate_invitation_code_no_resumption_stamp.sql` — fix-forward to the revised semantic (only fresh-claim stamps). Forward-only discipline: didn't rewrite 12002; added 12003 to bring prod from strict to revised. Idempotent under both replay paths (12002 disk content is the revised body; 12003 DROP+CREATE is identical to it).
+
+**Admin UI surface** (post-create + post-resend, both branches). Stacked panel: URL row (primary "share this link") above access-code row (fallback "or share this code"), each with its own copy button. Helper text under the code: *"Share with the recipient if their email service blocked the link above. They can enter it at `/enter`."* Both values are "shown once" — neither is recoverable from the DB after the reveal (Vault-encrypted with random IV; resend mints fresh values). The resend success panel renders the same shape on BOTH the email-sent branch AND the loud-failure branch — Sura sees both values every time, not just on send-failure.
+
+**Email template wiring.** New `access_code` SectionKey (between `personal` and `expiry`, fine placement). `PlaceholderToken` union extended; `RuntimeValues` gains `access_code: string` (uniform struct — admin-invite + submission pass `""`); the new section's `requiredPlaceholders: ['access_code']` structurally prevents Sura from shipping a template without the placeholder. EN/AR defaults: one-line copy (`Can't open the link above? Enter this 6-digit code at karasneh-research.org/enter: {access_code}` / Arabic equivalent). One-line vs two-line was a deliberate choice: the renderer's `<p>` tags collapse `\n` to whitespace in HTML output while preserving them in plain-text — keeping it one-line means HTML and text bodies stay byte-equivalent.
+
+**PII discipline carries D63/D64/D65 forward.**
+
+- Plaintext access code exists only at mint time (in `createInvitationAction` + `resendInvitationAction`) + at decrypt time inside cron / RPC. The Server Action's `p_code` is consumed by the RPC and discarded. Never logged, never audited, never in console output beyond the bucket name (`errorClass=…` strings reference only the bucket, never values).
+- Audit metadata on failure: `{ reason: 'invalid_or_expired' | 'rate_limited' }` only. No p_code, no IP in metadata JSON (the helper captures IP/UA on the row for forensics, but the metadata field stays a known-narrow shape).
+- Service-role `logFailedAccessCode` mirrors `logFailedLogin`'s defensive shape: action hard-coded, severity hard-coded, narrow reason union, no caller-supplied metadata channel — same "no general-purpose unauthenticated audit-write surface" discipline as D26.
+
+**OUT OF D66 SCOPE.**
+
+- `/r/[token]` route is **unchanged** (brief constraint).
+- `validate_invitation_token` RPC is **unchanged** (additive new RPC only).
+- `/admin/callback` is **unchanged** (D65 legacy backward-compat path stays alive).
+- Pre-D66 invitations stay `access_code_encrypted = NULL`. The cron's candidate filter (`access_code_encrypted IS NOT NULL`) and the RPC's candidate filter silently exclude them — Sura's manual resend (which mints + populates the column) is the forward-only recovery path. **No backfill** — same discipline as D64's `sent_at` and D64's `token_plaintext_encrypted`.
+- Task #55 (collection_mode missing from `invitations_redacted`) is **deferred** — kept D66 blast radius tight; that audit gets its own decision entry.
+
 ## Out of Scope (Explicitly)
 
 - **AI translation** between EN/AR. Button exists in mock as placeholder; clicking does nothing. Real translation would require GPT-4 or DeepL API; deferred.

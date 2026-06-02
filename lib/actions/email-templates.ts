@@ -76,6 +76,10 @@ const SAMPLE_VALUES = {
   expiry_date_ar: "١٥ يونيو ٢٠٢٦",
   ref_code: "EX-001",
   name: "Dr. Example",
+  // D66 — sample 6-digit code for invitation / reminder1 / reminderFinal
+  // previews + test sends. The allowlist drops it for admin-invite +
+  // submission, so the value is harmless there.
+  access_code: "123456",
 };
 
 // ============================================================================
@@ -280,6 +284,7 @@ export async function previewTemplateAction(
         name: SAMPLE_VALUES.name,
         expiry_date: SAMPLE_VALUES.expiry_date_en,
         ref_code: SAMPLE_VALUES.ref_code,
+        access_code: SAMPLE_VALUES.access_code, // D66
         button_href: inertHref,
       },
     });
@@ -300,6 +305,7 @@ export async function previewTemplateAction(
           name: SAMPLE_VALUES.name,
           expiry_date: SAMPLE_VALUES.expiry_date_ar,
           ref_code: SAMPLE_VALUES.ref_code,
+          access_code: SAMPLE_VALUES.access_code, // D66
           button_href: inertHref,
         },
       });
@@ -470,6 +476,7 @@ export async function sendTestEmailAction(
       name: SAMPLE_VALUES.name,
       expiry_date,
       ref_code: SAMPLE_VALUES.ref_code,
+      access_code: SAMPLE_VALUES.access_code, // D66
       button_href: inertHref,
     },
   });
