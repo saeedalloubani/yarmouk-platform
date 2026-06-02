@@ -4,6 +4,8 @@ Manual steps a human runs outside the codebase — Vault key setup, key rotation
 
 ## Admin auth bootstrap (Session 3a)
 
+> **D65 update (2026-06)**: the Supabase **Magic Link** email template now renders a **6-digit OTP code as text** instead of a clickable URL. Sign-in flow is: `/admin/login` → enter email → state transitions to "enter the code we sent" → type the 6-digit code → land on `/admin`. The legacy URL-based `/admin/callback` route still resolves any in-flight emails sent before the template change (backward-compat window ≈ token TTL, ~60 minutes). See "Admin login — OTP code flow (D65)" below for the new procedure + the audit-evidence pattern that drove the switch. The dashboard bootstrap steps below (signups disabled, pre-create identity, redirect URLs) are unchanged.
+
 Migrations seed the `admins` allow-list **row** (app-level role data), but do NOT create Supabase Auth identities. Provision those by hand in the dashboard. Per D49, signup is locked down — only pre-created identities can ever sign in.
 
 **One-time dashboard steps:**
@@ -24,6 +26,60 @@ The default email template uses a `?code=` link that the callback exchanges via 
    `await supabase.auth.verifyOtp({ type, token_hash })` instead of `exchangeCodeForSession(code)`.
 
 Build/keep the code-exchange path first; switch only if smoke fails. (Also noted in the callback route comment.)
+
+## Admin login — OTP code flow (D65)
+
+D65 (2026-06) replaced the clickable magic-link with a **6-digit OTP code rendered as text in the email body**. Microsoft 365 Defender / Outlook was prefetching URLs in inbound emails (link-scanning for malicious destinations) and consuming Supabase's single-use tokens before Sura could click. Audit log evidence: **8+ parallel `verify_failed` events** per single login attempt to `sjkarasneh24@eng.just.edu.jo`. A URL-less email defeats the prefetch.
+
+### The new flow (what Sura sees)
+
+1. Go to `/admin/login`.
+2. **State 1 (enter_email)**: type email address → click **Send sign-in code**.
+3. The page transitions to **State 2 (enter_code)** showing "Check your email. We sent a 6-digit code to *<email>*. Enter it below."
+4. Check inbox. The email body now reads (something like): *"Your sign-in code is: **123456**. Expires in 60 minutes."* — no clickable link to consume.
+5. Type the 6 digits into the code field → click **Verify code**.
+6. On success: land on `/admin` authenticated.
+7. On failure (wrong code, expired, or not an authorized email): inline error "Invalid or expired code. Try again or request a new one." — stay on State 2. Click **Resend** to get a fresh code, or **Use a different email** to go back to State 1.
+
+The State 2 transition fires **regardless of whether the email is authorized** (no-enumeration, D50). If the email isn't in the `admins` allowlist, no code is issued and verification will fail with the same generic error.
+
+### Supabase email template (Studio side)
+
+This is a one-time Studio change Saeed made as part of the D65 deploy:
+
+1. Authentication → Email Templates → **Magic Link**.
+2. Replace the URL-bearing body (`<a href="{{ .ConfirmationURL }}">…</a>` or the post-D50 token_hash URL) with a text-rendered code:
+
+   ```
+   Hello,
+   
+   Your sign-in code for the Yarmouk Study admin console is:
+   
+       {{ .Token }}
+   
+   Enter this code on the sign-in page within 60 minutes. If you didn't request a sign-in code, you can ignore this email.
+   ```
+
+3. Use `{{ .Token }}` (the 6-digit code), **NOT** `{{ .TokenHash }}` (the URL-safe hash, used only by the legacy clickable flow).
+
+### Diagnostic: codes not arriving / failing to verify
+
+| Symptom | Likely cause | Action |
+|---|---|---|
+| "I never get the email" | Spam / promotions folder; Supabase SMTP rate limit; non-allowlisted email | Check spam; wait 60 sec and retry; verify email is in `admins` table |
+| "Code says invalid every time" | Wrong digits; email scanner *might* still be opening the URL (legacy flow) before verify — rare for code-only emails | Re-request code (Resend), type carefully, verify immediately |
+| `8+ verify_failed` per attempt in audit log | O365 Defender prefetching old-format URL emails | Confirm the Studio template change actually shipped + saved (re-check the template body in Authentication → Email Templates → Magic Link) |
+| Successful login but bounce back to /admin/login | Session cookie not written | Server-side `verifyOtp` should have written cookies via next/headers — check Vercel function logs for `[admin-auth]` errors; check that middleware matcher still covers `/admin/:path*` |
+
+### Backward compat — `/admin/callback` still resolves
+
+`/admin/callback` is untouched. Any in-flight email sent BEFORE the template change still has a clickable URL pointing at `/admin/callback?token_hash=…&type=email` — and the route still calls `verifyOtp` with the token_hash on landing. The migration window is naturally short: Supabase magic-link tokens expire at the configured TTL (~60 minutes by default).
+
+After the migration window closes (no in-flight legacy URLs in the wild), the `/admin/callback` route can be removed in a follow-up decision. Until then, it sits dormant for safety.
+
+### What this fix does NOT cover
+
+**Participant invitation/reminder `/r/<token>` flow is unchanged.** Any participant whose email domain runs URL-prefetching scanners (O365 Defender, Proofpoint, Mimecast, etc.) could hit the same vulnerability — Defender click → single-use token consumed → participant clicks → "invalid invitation." So far, the pilot participants haven't hit this pattern in audit (their tokens validate cleanly on the first real click). If it surfaces, the same fix shape works (code-based entry instead of URL), but it's a much bigger refactor — participants would need a UI to enter their code, and the consent + questionnaire flow would need to start from there instead of from the URL landing. **Logged for backlog**; not blocking pilot collection.
 
 ## Reading invitation-send failures (Session 3b-ii)
 

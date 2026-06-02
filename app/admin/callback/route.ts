@@ -9,6 +9,32 @@
 // /admin/login?error=auth, never to the protected area without a session.
 //
 // ─────────────────────────────────────────────────────────────────────────
+// LEGACY (D65) — Replaced by 6-digit OTP code at /admin/login.
+//
+// As of D65 (2026-06), the Supabase Magic Link email template renders
+// the 6-digit code as text rather than a clickable URL. New admin
+// sign-ins enter the code into /admin/login state 2 (enter_code), which
+// calls verifyOtpAction (Server Action in lib/actions/admin-auth.ts).
+// This route is kept for BACKWARD COMPATIBILITY — any email sent BEFORE
+// the template change still has a clickable URL pointing here, and that
+// URL still resolves correctly. Remove in a future decision after the
+// migration window closes (the magic-link token TTL is ~60 minutes, so
+// the window is naturally short).
+//
+// WHY THE SWITCH: Microsoft 365 Defender / Outlook prefetches URLs in
+// emails (link-scanning for malicious destinations), consuming the
+// single-use OTP token before the user can click. Audit log pattern
+// confirmed in prod: 8+ parallel verify_failed events per single
+// magic-link request for sjkarasneh24@eng.just.edu.jo. A URL-less email
+// (text-rendered code) defeats the prefetch.
+//
+// NOT TOUCHED: the participant invitation/reminder /r/<token> flow has
+// the SAME vulnerability waiting for any future O365-domain pilot
+// participant. Out of D65 scope; tracked as backlog (see RUNBOOK
+// "Admin login — OTP code flow (D65)" / TASK_STATE OTHER OPEN).
+// ─────────────────────────────────────────────────────────────────────────
+//
+// ─────────────────────────────────────────────────────────────────────────
 // WHY token_hash + verifyOtp (NOT PKCE code-exchange):
 // We originally used the default {{ .ConfirmationURL }} → ?code= link +
 // supabase.auth.exchangeCodeForSession(code). @supabase/ssr stores the PKCE
