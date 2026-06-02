@@ -61,9 +61,34 @@ export const translations = {
     ar: "استبيان بحثي · المرحلة التجريبية",
   },
   invitedAs: { en: "You have been invited as", ar: "تمت دعوتك بصفة" },
+  // D67 — per-category "invited as" labels for the 4 pilot variants.
+  // Pre-D67 there was only `categoryOfficials`; LandingInvited rendered it
+  // for ALL category values regardless of the invitation's actual category.
+  // D66 smoke (SMOKE-D66-002, category=researchers) surfaced the bug.
+  // The 4 keys below are wired through `categoryLabel(category, t)` defined
+  // at the bottom of this file; consumers must use the helper, not the keys
+  // directly. AR singular/plural mix is intentional (Sura's word choice).
+  // Main-variant counterparts (mainCategoryX with "— Main Study Participant"
+  // or similar) are D68 backlog.
   categoryOfficials: {
     en: "Official — Pilot Reviewer",
     ar: "مسؤول — مراجع للنسخة التجريبية",
+  },
+  categoryResearchers: {
+    en: "Researcher — Pilot Reviewer",
+    ar: "باحث — مراجع للنسخة التجريبية",
+  },
+  categoryDonors: {
+    en: "Donor — Pilot Reviewer",
+    ar: "جهات مانحة — مراجع للنسخة التجريبية",
+  },
+  categoryNGOs: {
+    // Sura: "NGO Representative" — non-governmental organisation. The AR
+    // term "منظمات غير حكومية" is the correct NGO meaning (Sura
+    // explicitly corrected this from the earlier "غير ربحية" non-profit
+    // wording during D67 string review).
+    en: "NGO Representative — Pilot Reviewer",
+    ar: "منظمات غير حكومية — مراجع للنسخة التجريبية",
   },
   selectLanguage: {
     en: "Choose your preferred language",
@@ -127,9 +152,30 @@ export const translations = {
 
   // ---- questionnaire ----
   questionnaire: { en: "Questionnaire", ar: "الاستبيان" },
-  pilotBadge: {
+  // D67 — per-category pilot badge text. Pre-D67 a single `pilotBadge`
+  // key was hardcoded to "Pilot Version 1 · Officials" and rendered on
+  // both the live respondent wizard AND the admin preview shell
+  // regardless of the actual variant. Path (a) rename: `pilotBadge` was
+  // copied verbatim into `pilotBadgeOfficials` AND its 2 consumers
+  // migrated to `pilotBadgeLabel(category, t)` in the same commit.
+  // Main-variant counterparts (mainBadgeX) are D68 backlog. AR plural
+  // forms ("المسؤولون" / "الباحثون" / "الجهات المانحة" / "منظمات غير
+  // حكومية") were locked with Sura.
+  pilotBadgeOfficials: {
     en: "Pilot Version 1 · Officials",
     ar: "النسخة التجريبية الأولى · المسؤولون",
+  },
+  pilotBadgeResearchers: {
+    en: "Pilot Version 1 · Researchers",
+    ar: "النسخة التجريبية الأولى · الباحثون",
+  },
+  pilotBadgeDonors: {
+    en: "Pilot Version 1 · Donors",
+    ar: "النسخة التجريبية الأولى · الجهات المانحة",
+  },
+  pilotBadgeNGOs: {
+    en: "Pilot Version 1 · NGOs",
+    ar: "النسخة التجريبية الأولى · منظمات غير حكومية",
   },
   question: { en: "Question", ar: "السؤال" },
   of: { en: "of", ar: "من" },
@@ -262,4 +308,68 @@ export function getTranslations(lang: Lang): Translations {
     out[key] = translations[key][lang];
   }
   return out;
+}
+
+// ============================================================================
+// D67 — Per-category lookup helpers for pilot variants
+// ============================================================================
+//
+// The 4 pilot variants (pilot_officials, pilot_researchers, pilot_donors,
+// pilot_ngos) each need their own "invited as" label on the landing/consent
+// page and their own pilot badge on the questionnaire shell. The DB enum
+// category_type carries the same 4 values verbatim; PilotCategory is
+// structurally identical but DOCUMENTS the pilot-only intent at the call
+// site (the cast `session.category as PilotCategory` is a no-op at runtime
+// but flags the assumption that the caller is in a pilot context).
+//
+// Main-variant counterparts are D68 backlog. When D68 lands, this file
+// will gain mainCategoryLabel + mainBadgeLabel helpers (or these two
+// helpers will gain a variant-discriminated dispatch).
+//
+// The switch-on-union pattern below is DELIBERATE — TypeScript's
+// exhaustiveness check enforces that adding a 5th PilotCategory value
+// produces a compile error until every helper switch is extended.
+// Defensive against future variant churn.
+
+export type PilotCategory = "officials" | "researchers" | "donors" | "ngos";
+
+/**
+ * Resolve the per-category "invited as" label for the pilot landing /
+ * consent surface. Used by LandingInvited.
+ */
+export function categoryLabel(
+  category: PilotCategory,
+  t: Translations
+): string {
+  switch (category) {
+    case "officials":
+      return t.categoryOfficials;
+    case "researchers":
+      return t.categoryResearchers;
+    case "donors":
+      return t.categoryDonors;
+    case "ngos":
+      return t.categoryNGOs;
+  }
+}
+
+/**
+ * Resolve the per-category pilot-badge text for the questionnaire shell.
+ * Used by QuestionnaireWizard (live respondent flow) and
+ * QuestionnairePreview (admin preview).
+ */
+export function pilotBadgeLabel(
+  category: PilotCategory,
+  t: Translations
+): string {
+  switch (category) {
+    case "officials":
+      return t.pilotBadgeOfficials;
+    case "researchers":
+      return t.pilotBadgeResearchers;
+    case "donors":
+      return t.pilotBadgeDonors;
+    case "ngos":
+      return t.pilotBadgeNGOs;
+  }
 }

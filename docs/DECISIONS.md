@@ -787,6 +787,73 @@ Same vector D65 fixed for admin login (Microsoft 365 Defender prefetching email 
 - Pre-D66 invitations stay `access_code_encrypted = NULL`. The cron's candidate filter (`access_code_encrypted IS NOT NULL`) and the RPC's candidate filter silently exclude them — Sura's manual resend (which mints + populates the column) is the forward-only recovery path. **No backfill** — same discipline as D64's `sent_at` and D64's `token_plaintext_encrypted`.
 - Task #55 (collection_mode missing from `invitations_redacted`) is **deferred** — kept D66 blast radius tight; that audit gets its own decision entry.
 
+### D67. Per-category labels for the 4 pilot variants (i18n bug surfaced by D66 smoke)
+
+**Bug origin.** Pre-existing — not introduced by D66. `lib/i18n.ts` shipped with a single `categoryOfficials` key and a single `pilotBadge` key, both hardcoded to the Officials label. `LandingInvited`, `QuestionnaireWizard`, and `QuestionnairePreview` consumed those keys directly with no per-category lookup. As long as the only active pilot variant was `pilot_officials` (which was the case from initial seed through D65), the bug was invisible — wrong category was wrong label, but there was only one category in play. **D66 smoke (SMOKE-D66-002, category=researchers) routed the second-ever non-officials invitation through the consent flow** and surfaced "Official — Pilot Reviewer" rendered on a Researcher's landing page. D67 patches structurally — all 4 pilot categories at once, not just researchers — to prevent regression when Sura activates donors and NGOs.
+
+**Why not just fix one category.** Spot-fixing researchers would have meant a 5th conditional rendered as a side-block; the i18n.ts layer would have stayed structurally wrong (still keyed to one-of-N as if it were N-of-N). When pilot_donors or pilot_ngos eventually got activated (Stage 1 expansion), the same bug class would re-surface and another spot-fix would have followed. Fixing all 4 in one PR aligns the i18n layer with the actual 4-element category enum — no more out-of-band dispatch.
+
+**Scope: pilot only.** Main variants (`main_researchers`, `main_donors`, `main_ngos`, `main_officials_jordanian`, `main_officials_syrian`) have the same bug class — the "— Pilot Reviewer" suffix and the "Pilot Version 1 · …" badge prefix are both wrong for main_* invitations — but **deferred to D68**. Sura isn't sending main invitations today; D67 is the on-the-day pilot-launch fix.
+
+**Helpers.**
+
+```ts
+export type PilotCategory = "officials" | "researchers" | "donors" | "ngos";
+
+export function categoryLabel(category: PilotCategory, t: Translations): string {
+  switch (category) {
+    case "officials":   return t.categoryOfficials;
+    case "researchers": return t.categoryResearchers;
+    case "donors":      return t.categoryDonors;
+    case "ngos":        return t.categoryNGOs;
+  }
+}
+
+export function pilotBadgeLabel(category: PilotCategory, t: Translations): string {
+  switch (category) {
+    case "officials":   return t.pilotBadgeOfficials;
+    case "researchers": return t.pilotBadgeResearchers;
+    case "donors":      return t.pilotBadgeDonors;
+    case "ngos":        return t.pilotBadgeNGOs;
+  }
+}
+```
+
+Both live in `lib/i18n.ts`. Exhaustive switch — adding a 5th `PilotCategory` value would be a compile error until all helpers extend. Defensive against future variant enum additions.
+
+**`PilotCategory` is structurally identical to `InvitationCategory`** (both are the 4-value `'officials' | 'researchers' | 'donors' | 'ngos'` union — same as the DB `category_type` enum). The pilot-vs-main distinction lives one layer up at the `questionnaire_variant` enum (`pilot_*` vs `main_*`). The `PilotCategory` alias DOCUMENTS the pilot-context assumption at every call site — the cast `session.category as PilotCategory` is structurally a no-op but flags "the caller has guaranteed by route gating that this is a pilot invitation." When D68 lands and main_* variants gain real support, the cast becomes the load-bearing assumption.
+
+**Path (a) for the rename.** `pilotBadge` (2 consumers: `QuestionnaireWizard` line 218 + `QuestionnairePreview` line 152) was RENAMED → `pilotBadgeOfficials` (verbatim copy) **atomically** with both consumer migrations. No two-commit transition (which the brief allowed for ≥3 consumers); 2 consumers is well within the "rename + migrate in one commit" envelope. `categoryOfficials` was kept verbatim (1 consumer; the rename would have been gratuitous).
+
+**`QuestionnairePreview` is admin-only.** It receives a `pilotCategory: PilotCategory | null` prop now. For the 4 pilot variants the parent (`/admin/questionnaires/[versionId]/preview/page.tsx`) derives the matching category from `version.variant`; for the 5 main variants and the 1 legacy combined pilot variant (`pilot_researchers_donors_ngos` — pre-split per migration 20260524140002), the parent passes `null` and the preview falls back to `pilotBadgeLabel("officials", t)` — i.e., the legacy hardcoded "Pilot Version 1 · Officials" text. **Known-wrong, deferred to D68.** Admin-only surface (Sura's proofing tool); not a respondent-facing surface, so the wrong text doesn't reach a participant.
+
+**Sura's text choices (locked, no second-guessing).**
+
+- Category labels (EN / AR):
+  - Officials: `Official — Pilot Reviewer` / `مسؤول — مراجع للنسخة التجريبية` (kept verbatim).
+  - Researchers: `Researcher — Pilot Reviewer` / `باحث — مراجع للنسخة التجريبية`.
+  - Donors: `Donor — Pilot Reviewer` / `جهات مانحة — مراجع للنسخة التجريبية`.
+  - NGOs: `NGO Representative — Pilot Reviewer` / `منظمات غير حكومية — مراجع للنسخة التجريبية`.
+
+- Pilot badges (EN / AR):
+  - Officials: `Pilot Version 1 · Officials` / `النسخة التجريبية الأولى · المسؤولون` (kept verbatim, renamed key).
+  - Researchers: `Pilot Version 1 · Researchers` / `النسخة التجريبية الأولى · الباحثون`.
+  - Donors: `Pilot Version 1 · Donors` / `النسخة التجريبية الأولى · الجهات المانحة`.
+  - NGOs: `Pilot Version 1 · NGOs` / `النسخة التجريبية الأولى · منظمات غير حكومية`.
+
+**AR singular/plural mix is intentional.** "مسؤول" + "باحث" (singular roles, individual person being addressed) vs "جهات مانحة" + "منظمات غير حكومية" (plural collectives — donor organisations / NGOs are typically referred to in the plural in formal AR even when addressing a single representative). Sura confirmed during the D67 string review that she's accepting this mix as-drafted; do NOT standardise to all-singular or all-plural.
+
+**NGO Arabic correction.** Initial AR draft used "غير ربحية" (non-profit). Sura explicitly corrected to "غير حكومية" (non-governmental) — the precise NGO meaning. Non-profit and NGO are not synonymous in the Arabic register (and not in English either; Sura's correction is a domain-precision call). Recorded here so a future copy pass doesn't revert.
+
+**Out of D67 scope.**
+
+- Migrations, RPC, schema — none touched.
+- Email templates — unchanged (templates have per-category handling via prior dev work).
+- `/admin/*` — unchanged except the one preview page (parent of `QuestionnairePreview`).
+- Cron — unchanged.
+- `/enter` / `/invitation-invalid` — unchanged.
+- D68 backlog explicitly carries: (a) `mainBadgeX` strings (5 main variants × 2 langs); (b) `mainCategoryX` labels (with the correct "— Main Study Participant" suffix); (c) variant-aware dispatch in `LandingInvited`, `QuestionnaireWizard`, `QuestionnairePreview` for main_* invitations; (d) elimination of the Officials fallback in `QuestionnairePreview` for non-pilot variants.
+
 ## Out of Scope (Explicitly)
 
 - **AI translation** between EN/AR. Button exists in mock as placeholder; clicking does nothing. Real translation would require GPT-4 or DeepL API; deferred.
