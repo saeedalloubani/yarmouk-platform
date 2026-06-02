@@ -25,12 +25,9 @@
 import { useState, useRef, useMemo, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import {
-  getTranslations,
-  pilotBadgeLabel,
-  type Lang,
-  type PilotCategory,
-} from "@/lib/i18n";
+// D68 — `pilotBadgeLabel` + `PilotCategory` import dropped along with the
+// header badge. The parent page no longer passes `category` either.
+import { getTranslations, type Lang } from "@/lib/i18n";
 import { saveAnswer, submitQuestionnaire } from "@/lib/actions/answers";
 import { setLangAction } from "@/lib/actions/setLang";
 
@@ -48,18 +45,11 @@ export default function QuestionnaireWizard({
   initialAnswers,
   initialIdx,
   lang,
-  category,
 }: {
   questions: WizardQuestion[];
   initialAnswers: Record<string, string>;
   initialIdx: number;
   lang: Lang;
-  /** D67 — pilot category drives the per-category pilot badge in the
-   *  header chip. The parent (app/(public)/questionnaire/page.tsx) reads
-   *  session.category and threads it down. PilotCategory is structurally
-   *  identical to the DB category_type enum's 4 values; main-variant
-   *  badges are D68 backlog. */
-  category: PilotCategory;
 }) {
   const t = getTranslations(lang);
   const isAr = lang === "ar";
@@ -226,9 +216,9 @@ export default function QuestionnaireWizard({
           </Link>
           <div className="flex items-center gap-4">
             <SaveIndicator state={saveState} t={t} />
-            <span className="chip-solid bg-brand-50 text-brand-700 hidden sm:inline-flex">
-              {pilotBadgeLabel(category, t)}
-            </span>
+            {/* D68 — pilot badge removed; header reads study label + save
+                indicator + language toggle only. Version tracking is
+                backend-only via questionnaire_version_id. */}
             <LangToggle lang={lang} pending={pending} onSwitch={handleLangSwitch} />
           </div>
         </div>

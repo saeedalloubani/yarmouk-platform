@@ -48,47 +48,57 @@ export const translations = {
   researcherLogin: { en: "Researcher login", ar: "دخول الباحثة" },
 
   // ---- landing page ----
+  // D68 — `studyTitle` reworded to the formal thesis-citation phrasing
+  // ("Evaluating the 1987 agreement between Jordan and Syria regarding the
+  // utilization of Yarmouk River water"). What the eventual thesis chapter
+  // + paper title will reference; aligning the landing with the citation
+  // language is the right read for invited experts. `eyebrowLanding` lost
+  // the "· Pilot Phase" suffix — phase-agnostic going forward. The study
+  // IS in pilot, but the respondent's answers stand on their own, not as
+  // a dress rehearsal (admin-side "Pilot · Version 1" labels in /admin
+  // are intentionally kept; see DECISIONS D68 for the split rationale).
   studyTitle: {
-    en: "Evaluating the 1987 Yarmouk Agreement",
-    ar: "تقييم اتفاقية اليرموك لعام 1987",
+    en: "Evaluating the 1987 agreement between Jordan and Syria regarding the utilization of Yarmouk River water",
+    ar: "تقييم اتفاقية عام ١٩٨٧ بين الأردن وسوريا بشأن استغلال مياه نهر اليرموك",
   },
   studySubtitle: {
     en: "in light of International Water Law and Environmental Principles",
     ar: "في ضوء القانون الدولي للمياه والمبادئ البيئية",
   },
   eyebrowLanding: {
-    en: "Research Questionnaire · Pilot Phase",
-    ar: "استبيان بحثي · المرحلة التجريبية",
+    en: "Research Questionnaire",
+    ar: "استبيان بحثي",
   },
   invitedAs: { en: "You have been invited as", ar: "تمت دعوتك بصفة" },
-  // D67 — per-category "invited as" labels for the 4 pilot variants.
-  // Pre-D67 there was only `categoryOfficials`; LandingInvited rendered it
-  // for ALL category values regardless of the invitation's actual category.
-  // D66 smoke (SMOKE-D66-002, category=researchers) surfaced the bug.
-  // The 4 keys below are wired through `categoryLabel(category, t)` defined
-  // at the bottom of this file; consumers must use the helper, not the keys
-  // directly. AR singular/plural mix is intentional (Sura's word choice).
-  // Main-variant counterparts (mainCategoryX with "— Main Study Participant"
-  // or similar) are D68 backlog.
+  // D67 — per-category "invited as" labels. Pre-D67 there was only
+  // `categoryOfficials`; LandingInvited rendered it for ALL category values
+  // regardless of the invitation's actual category. D66 smoke (SMOKE-D66-002,
+  // category=researchers) surfaced the bug. The 4 keys below are wired
+  // through `categoryLabel(category, t)` defined at the bottom of this file;
+  // consumers must use the helper, not the keys directly. AR singular/plural
+  // mix is intentional (Sura's word choice).
+  //
+  // D68 — stripped "— Pilot Reviewer" suffix. The participant doesn't need
+  // a phase marker on their card; their answers stand on their own. The
+  // resulting labels are phase-agnostic and will also serve future main_*
+  // variants without rename. NGO Arabic = "منظمات غير حكومية"
+  // (non-governmental, NOT "غير ربحية" non-profit — Sura's domain-precision
+  // correction from D67 carries forward).
   categoryOfficials: {
-    en: "Official — Pilot Reviewer",
-    ar: "مسؤول — مراجع للنسخة التجريبية",
+    en: "Official",
+    ar: "مسؤول",
   },
   categoryResearchers: {
-    en: "Researcher — Pilot Reviewer",
-    ar: "باحث — مراجع للنسخة التجريبية",
+    en: "Researcher",
+    ar: "باحث",
   },
   categoryDonors: {
-    en: "Donor — Pilot Reviewer",
-    ar: "جهات مانحة — مراجع للنسخة التجريبية",
+    en: "Donor",
+    ar: "جهات مانحة",
   },
   categoryNGOs: {
-    // Sura: "NGO Representative" — non-governmental organisation. The AR
-    // term "منظمات غير حكومية" is the correct NGO meaning (Sura
-    // explicitly corrected this from the earlier "غير ربحية" non-profit
-    // wording during D67 string review).
-    en: "NGO Representative — Pilot Reviewer",
-    ar: "منظمات غير حكومية — مراجع للنسخة التجريبية",
+    en: "NGO Representative",
+    ar: "منظمات غير حكومية",
   },
   selectLanguage: {
     en: "Choose your preferred language",
@@ -158,9 +168,11 @@ export const translations = {
   // regardless of the actual variant. Path (a) rename: `pilotBadge` was
   // copied verbatim into `pilotBadgeOfficials` AND its 2 consumers
   // migrated to `pilotBadgeLabel(category, t)` in the same commit.
-  // Main-variant counterparts (mainBadgeX) are D68 backlog. AR plural
-  // forms ("المسؤولون" / "الباحثون" / "الجهات المانحة" / "منظمات غير
-  // حكومية") were locked with Sura.
+  //
+  // D68 — Unused since D68 (the badge was removed from /questionnaire
+  // entirely; version tracking is backend-only via questionnaire_version_id).
+  // The 4 keys + `pilotBadgeLabel` helper are retained for potential future
+  // use; remove in a later cleanup cycle. Intentional dead code.
   pilotBadgeOfficials: {
     en: "Pilot Version 1 · Officials",
     ar: "النسخة التجريبية الأولى · المسؤولون",
@@ -186,13 +198,16 @@ export const translations = {
   next: { en: "Next", ar: "التالي" },
   saveAndExit: { en: "Save & Exit", ar: "حفظ والخروج" },
   submit: { en: "Submit Questionnaire", ar: "إرسال الاستبيان" },
+  // D68 — phase-agnostic. Dropped the "Pilot" prefix on `feedbackSection`
+  // and the "before it is sent more widely" trailer on `feedbackIntro`.
+  // Same text serves the main study; one set of strings going forward.
   feedbackSection: {
-    en: "Pilot Feedback",
-    ar: "ملاحظات على النسخة التجريبية",
+    en: "Feedback",
+    ar: "ملاحظات",
   },
   feedbackIntro: {
-    en: "These final questions help us refine the questionnaire before it is sent more widely.",
-    ar: "تساعدنا هذه الأسئلة الأخيرة في تحسين الاستبيان قبل توزيعه على نطاق أوسع.",
+    en: "These final questions help us refine the questionnaire.",
+    ar: "تساعدنا هذه الأسئلة الأخيرة في تحسين الاستبيان.",
   },
 
   // ---- submitted ----
@@ -251,9 +266,11 @@ export const translations = {
   mapLegendAnswered: { en: "Answered", ar: "تمت الإجابة" },
   mapLegendCurrent: { en: "Current", ar: "حالي" },
   mapLegendLocked: { en: "Locked", ar: "مقفل" },
+  // D68 — phase-agnostic ("pilot feedback questions" → "feedback questions"
+  // / "أسئلة الملاحظات على النسخة التجريبية" → "أسئلة الملاحظات").
   mapHint: {
-    en: "Circles = pilot feedback questions · Locked questions cannot be skipped to",
-    ar: "الدوائر = أسئلة الملاحظات على النسخة التجريبية · لا يمكن التخطي إلى الأسئلة المقفلة",
+    en: "Circles = feedback questions · Locked questions cannot be skipped to",
+    ar: "الدوائر = أسئلة الملاحظات · لا يمكن التخطي إلى الأسئلة المقفلة",
   },
   completePrevFirst: {
     en: "Complete previous questions first",
@@ -311,20 +328,23 @@ export function getTranslations(lang: Lang): Translations {
 }
 
 // ============================================================================
-// D67 — Per-category lookup helpers for pilot variants
+// D67 — Per-category lookup helpers
 // ============================================================================
 //
-// The 4 pilot variants (pilot_officials, pilot_researchers, pilot_donors,
-// pilot_ngos) each need their own "invited as" label on the landing/consent
-// page and their own pilot badge on the questionnaire shell. The DB enum
-// category_type carries the same 4 values verbatim; PilotCategory is
-// structurally identical but DOCUMENTS the pilot-only intent at the call
-// site (the cast `session.category as PilotCategory` is a no-op at runtime
-// but flags the assumption that the caller is in a pilot context).
+// The 4 category enum values (officials, researchers, donors, ngos) each get
+// their own "invited as" label on the landing/consent page (via
+// `categoryLabel`). Pre-D68 they also drove a per-category pilot badge in the
+// questionnaire shell (via `pilotBadgeLabel`); D68 removed that badge from
+// `/questionnaire` entirely — `pilotBadgeLabel` survives as dead code per the
+// A2 deferred-cleanup carve-out (kept inert; future cleanup pass can drop it
+// in one commit alongside the `pilotBadgeX` keys). The DB enum category_type
+// carries the same 4 values verbatim; PilotCategory is structurally identical
+// to InvitationCategory but documents the call-site assumption (the cast
+// `session.category as PilotCategory` is a no-op at runtime).
 //
-// Main-variant counterparts are D68 backlog. When D68 lands, this file
-// will gain mainCategoryLabel + mainBadgeLabel helpers (or these two
-// helpers will gain a variant-discriminated dispatch).
+// D68 — the labels are now phase-agnostic (stripped "— Pilot Reviewer"
+// suffix). Same helper serves both pilot and main variants without a rename
+// or a variant-discriminated dispatch.
 //
 // The switch-on-union pattern below is DELIBERATE — TypeScript's
 // exhaustiveness check enforces that adding a 5th PilotCategory value
@@ -355,8 +375,11 @@ export function categoryLabel(
 
 /**
  * Resolve the per-category pilot-badge text for the questionnaire shell.
- * Used by QuestionnaireWizard (live respondent flow) and
- * QuestionnairePreview (admin preview).
+ *
+ * Unused since D68 (badge removed from /questionnaire entirely; version
+ * tracking is backend-only via questionnaire_version_id). Retained for
+ * potential future use; remove in a later cleanup cycle. Intentional dead
+ * code — keep paired with the `pilotBadgeX` keys above.
  */
 export function pilotBadgeLabel(
   category: PilotCategory,
