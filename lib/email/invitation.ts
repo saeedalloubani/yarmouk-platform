@@ -55,6 +55,12 @@ export type SendInvitationEmailInput = {
   refCode: string;
   tokenUrl: string;
   expiresAt: string; // ISO
+  /** D66 — 6-digit participant access code (URL-prefetch fallback).
+   *  Interpolated into the {access_code} placeholder of the invitation's
+   *  access_code section (REQUIRED placeholder; see TEMPLATE_SPECS). The
+   *  caller must always supply a non-empty value for participant invites;
+   *  the renderer's validator rejects send-with-empty. */
+  accessCode: string;
 };
 
 /**
@@ -140,6 +146,7 @@ export async function sendInvitationEmail(
     values: {
       expiry_date,
       ref_code: input.refCode,
+      access_code: input.accessCode, // D66 — 6-digit fallback
       button_href: input.tokenUrl,
     },
   });

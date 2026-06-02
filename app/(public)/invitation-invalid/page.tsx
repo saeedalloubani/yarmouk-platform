@@ -11,9 +11,13 @@
 //     token failed, so we can't resolve a Lang from invitation
 //     state)
 //   - No getLang / getSession (same reason: nothing to read)
-//   - No internal links — no "go home", no retry. Re-entering the
-//     email link would just route back through /r/[token] and end
-//     up here again. Terminal page = full stop.
+//   - ONE internal link: the D66 access-code rescue path to /enter.
+//     This is NOT a loop — a successful code entry leaves this page
+//     entirely (sets session, redirects to /). A failed code attempt
+//     stays at /enter (its own failure surface), never bounces back
+//     here. Without /enter, a Microsoft 365 Defender URL-prefetch
+//     consuming the invitation token would leave the recipient with
+//     no recovery path at all (see D66 DECISIONS).
 //   - Bilingual stack: English first (alphabetical-by-language-
 //     code), Arabic second.
 //
@@ -31,6 +35,7 @@
 // internal navigation loop possible.
 
 import type { Metadata } from "next";
+import Link from "next/link";
 
 export const metadata: Metadata = {
   title: "Invalid invitation — Yarmouk Study",
@@ -57,6 +62,19 @@ export default function InvitationInvalidPage() {
           </h1>
           <p className="text-[15px] text-muted-strong leading-relaxed mb-3">
             This invitation link is no longer valid.
+          </p>
+          {/* D66 — soft fallback to the 6-digit code path. */}
+          <p className="text-[15px] text-muted-strong leading-relaxed mb-3">
+            If your email scanner consumed the link before you could click, you
+            can enter the 6-digit code from your invitation email instead.
+          </p>
+          <p className="mb-6">
+            <Link
+              href="/enter"
+              className="btn-primary inline-flex px-6 py-2 text-[14px]"
+            >
+              Enter your code
+            </Link>
           </p>
           <p className="text-[15px] text-muted-strong leading-relaxed mb-3">
             If you believe this is an error, please contact the researcher:
@@ -89,6 +107,19 @@ export default function InvitationInvalidPage() {
           </h1>
           <p className="text-[15px] text-muted-strong leading-relaxed mb-3">
             لم يعد رابط الدعوة هذا صالحاً.
+          </p>
+          {/* D66 — soft fallback to the 6-digit code path. */}
+          <p className="text-[15px] text-muted-strong leading-relaxed mb-3">
+            إذا قام برنامج فحص البريد بفتح الرابط قبلك، يمكنك بدلاً من ذلك إدخال
+            الرمز المكوّن من 6 أرقام الموجود في بريد الدعوة.
+          </p>
+          <p className="mb-6">
+            <Link
+              href="/enter"
+              className="btn-primary inline-flex px-6 py-2 text-[14px]"
+            >
+              أدخل الرمز
+            </Link>
           </p>
           <p className="text-[15px] text-muted-strong leading-relaxed mb-3">
             إذا كنت تعتقد أن هذا خطأ، يُرجى التواصل مع الباحثة:

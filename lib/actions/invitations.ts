@@ -27,7 +27,11 @@ import {
   getInvitation,
   updateInvitation,
 } from "@/lib/repos/invitations";
-import { mintInvitationToken, buildInvitationUrl } from "@/lib/tokens";
+import {
+  mintInvitationToken,
+  buildInvitationUrl,
+  generateAccessCode,
+} from "@/lib/tokens";
 import { sendInvitationEmail } from "@/lib/email/invitation";
 import type { EmailErrorClass } from "@/lib/email/types";
 import { logAudit } from "@/lib/audit";
@@ -140,7 +144,19 @@ export type NewInvitationInput = {
 };
 
 export type CreateInvitationResult =
-  | { ok: true; refCode: string; tokenUrl: string; emailed: boolean }
+  | {
+      ok: true;
+      refCode: string;
+      tokenUrl: string;
+      /** D66 — 6-digit participant access code (plaintext). Shown ONCE
+       *  on the create success page alongside the tokenUrl. Not
+       *  recoverable from the DB after the response is consumed —
+       *  invitations.access_code_encrypted is Vault-encrypted at rest
+       *  and there is no decrypt path from the admin UI. To re-issue,
+       *  use Resend (which mints a new code AND a new token). */
+      accessCode: string;
+      emailed: boolean;
+    }
   | {
       ok: false;
       error: "forbidden" | "validation" | "ref_code_taken" | "server";
@@ -181,8 +197,12 @@ export async function createInvitationAction(
   }
   const v = parsed.data;
 
-  // 3. Mint (D44). Plaintext exists only here + in the return value.
+  // 3. Mint (D44 token + D66 access code). Plaintexts exist only here +
+  //    in the return value. Both are Vault-encrypted before the DB
+  //    insert; the plaintexts go into the email body (URL + code) and
+  //    are surfaced ONCE on the create success page for manual hand-off.
   const { plaintext, hash } = mintInvitationToken();
+  const accessCodePlaintext = generateAccessCode();
 
   // 3.5. Build + guard the link BEFORE any write — a missing
   //      NEXT_PUBLIC_SITE_URL fails here, before we create an invitation
@@ -202,8 +222,16 @@ export async function createInvitationAction(
   // alongside token_hash so the reminder cron (D64 STEP 7) can decrypt +
   // reuse the same URL without rotating the token (Path B locked).
   // Without this, reminders would have to rotate (killing the original
-  // invitation email's link). Three Vault encrypts in a row keeps all
-  // create-time PII handling co-located. NEVER logged or returned.
+  // invitation email's link).
+  //
+  // D66 — fourth encrypt_pii call: the 6-digit ACCESS CODE. Stored so
+  //   (a) validate_invitation_code can brute-decrypt-scan to find the
+  //       row when a recipient types the code at /enter, and
+  //   (b) the reminder cron can decrypt + include it in reminder1 /
+  //       reminderFinal bodies (URL-prefetch fallback parity).
+  // Four Vault encrypts in a row keeps all create-time PII handling
+  // co-located. NEVER logged or returned (except the plaintext code in
+  // the typed result for the shown-once admin UI panel).
   const { data: nameEnc, error: e1 } = await supabase.rpc("encrypt_pii", {
     p_plaintext: v.name,
   });
@@ -213,8 +241,15 @@ export async function createInvitationAction(
   const { data: tokenEnc, error: e3 } = await supabase.rpc("encrypt_pii", {
     p_plaintext: plaintext,
   });
-  if (e1 || e2 || e3 || !nameEnc || !emailEnc || !tokenEnc) {
-    console.error("[invitations] encrypt_pii failed", e1 ?? e2 ?? e3);
+  const { data: accessCodeEnc, error: e4 } = await supabase.rpc(
+    "encrypt_pii",
+    { p_plaintext: accessCodePlaintext }
+  );
+  if (e1 || e2 || e3 || e4 || !nameEnc || !emailEnc || !tokenEnc || !accessCodeEnc) {
+    console.error(
+      "[invitations] encrypt_pii failed",
+      e1 ?? e2 ?? e3 ?? e4
+    );
     return { ok: false, error: "server" };
   }
 
@@ -231,6 +266,7 @@ export async function createInvitationAction(
     const invitation = await createInvitation(supabase, {
       tokenHash: hash,
       tokenPlaintextEncrypted: tokenEnc,
+      accessCodeEncrypted: accessCodeEnc, // D66
       refCode: v.refCode,
       recipientNameEncrypted: nameEnc,
       recipientEmailEncrypted: emailEnc,
@@ -285,6 +321,7 @@ export async function createInvitationAction(
         refCode: v.refCode,
         tokenUrl,
         expiresAt: new Date(v.expiresAt).toISOString(),
+        accessCode: accessCodePlaintext, // D66
       });
       emailed = sent.ok;
       if (sent.ok) {
@@ -337,8 +374,16 @@ export async function createInvitationAction(
     }
   }
 
-  // 7. One-time token URL (D53) — shown once; never stored/logged/in a URL.
-  return { ok: true, refCode: v.refCode, tokenUrl, emailed };
+  // 7. One-time token URL (D53) + one-time access code (D66) — both
+  //    shown once on the admin success page; neither is recoverable
+  //    from the DB. Resend mints fresh values.
+  return {
+    ok: true,
+    refCode: v.refCode,
+    tokenUrl,
+    accessCode: accessCodePlaintext,
+    emailed,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -350,6 +395,12 @@ export type ResendInvitationResult =
       ok: true;
       refCode: string;
       tokenUrl: string;
+      /** D66 — fresh 6-digit code minted by this resend. Shown ONCE on
+       *  the resend success panel alongside the tokenUrl. The PREVIOUS
+       *  code (if any) is dead the instant access_code_encrypted is
+       *  overwritten in the rotation UPDATE — symmetric with the URL
+       *  token's rotation semantic. */
+      accessCode: string;
       emailed: boolean;
       mode: "resume" | "fresh";
     }
@@ -422,8 +473,12 @@ export async function resendInvitationAction(
   const inProgress = (inProgressRows ?? []).length > 0;
 
   // 4. Mint + guard the new link BEFORE the rotation, so a missing
-  //    NEXT_PUBLIC_SITE_URL leaves the OLD link alive.
+  //    NEXT_PUBLIC_SITE_URL leaves the OLD link alive. D66 — also mint
+  //    a fresh access code; rotation is symmetric (URL + code both
+  //    rotate, or neither does, so the recipient never has a working
+  //    URL and a dead code or vice versa).
   const { plaintext, hash } = mintInvitationToken();
+  const accessCodePlaintext = generateAccessCode();
   let tokenUrl: string;
   try {
     tokenUrl = buildInvitationUrl(plaintext);
@@ -437,6 +492,10 @@ export async function resendInvitationAction(
   // step 4. Encrypt BEFORE the rotation commit (step 5): if encrypt
   // fails, the OLD link is still alive and the action surfaces a clean
   // server error.
+  //
+  // D66 — also encrypt the new access code. Both ciphertexts land in
+  // the rotation UPDATE below, atomic at the row level. If the access-
+  // code encrypt fails, the OLD URL + code stay alive — fail-safe.
   const { data: tokenEnc, error: tokenEncErr } = await supabase.rpc(
     "encrypt_pii",
     { p_plaintext: plaintext }
@@ -445,6 +504,17 @@ export async function resendInvitationAction(
     console.error(
       "[invitations] resend encrypt_pii(token) failed",
       tokenEncErr
+    );
+    return { ok: false, error: "server" };
+  }
+  const { data: accessCodeEnc, error: accessCodeEncErr } = await supabase.rpc(
+    "encrypt_pii",
+    { p_plaintext: accessCodePlaintext }
+  );
+  if (accessCodeEncErr || !accessCodeEnc) {
+    console.error(
+      "[invitations] resend encrypt_pii(access_code) failed",
+      accessCodeEncErr
     );
     return { ok: false, error: "server" };
   }
@@ -463,15 +533,27 @@ export async function resendInvitationAction(
   //    would cause reminders to send a dead URL.
   try {
     if (inProgress) {
+      // D63/D56 resume branch — preserve the in-progress response by
+      // keeping use_count/status/opened_at. D66 — rotate the access
+      // code in lockstep with the token (the OLD code dies the
+      // instant access_code_encrypted is overwritten). DO NOT reset
+      // access_code_used_at — if the recipient previously fresh-claimed
+      // via /enter, that forensic stamp stays attributable.
       await updateInvitation(supabase, inv.id, {
         tokenHash: hash,
         tokenPlaintextEncrypted: tokenEnc,
+        accessCodeEncrypted: accessCodeEnc, // D66
         expiresAt: newExpiry,
       });
     } else {
+      // D56 fresh branch — reset to a clean claimable state. D66 —
+      // rotate the access code AND null access_code_used_at: the new
+      // code has never been used.
       await updateInvitation(supabase, inv.id, {
         tokenHash: hash,
         tokenPlaintextEncrypted: tokenEnc,
+        accessCodeEncrypted: accessCodeEnc, // D66
+        accessCodeUsedAt: null, // D66 — fresh start
         expiresAt: newExpiry,
         status: "sent",
         useCount: 0,
@@ -511,6 +593,7 @@ export async function resendInvitationAction(
         refCode: inv.refCode,
         tokenUrl,
         expiresAt: newExpiry,
+        accessCode: accessCodePlaintext, // D66
       });
       emailed = sent.ok;
       if (!sent.ok) {
@@ -587,6 +670,7 @@ export async function resendInvitationAction(
     ok: true,
     refCode: inv.refCode,
     tokenUrl,
+    accessCode: accessCodePlaintext, // D66 — shown once on resend success
     emailed,
     mode: inProgress ? "resume" : "fresh",
   };
@@ -794,9 +878,17 @@ export async function revokeInvitationAction(
   //    so the cron wouldn't read this column on a revoked row anyway;
   //    nulling is belt-and-suspenders.)
   try {
+    // D66 — also NULL access_code_encrypted. The OLD code is semantically
+    // dead the moment the row's terminal status lands (validate_invitation_
+    // _code's candidate filter excludes NULL ciphertext rows, mirroring
+    // the token_hash rotation kill primitive). Belt-and-suspenders: even
+    // if a brute-force scan landed the code value just before this
+    // commit, the next /enter attempt sees the NULL and returns empty.
+    // access_code_used_at is preserved as-is — terminal forensic record.
     await updateInvitation(supabase, inv.id, {
       tokenHash: hash,
       tokenPlaintextEncrypted: null,
+      accessCodeEncrypted: null, // D66
       status: "revoked",
     });
   } catch (err) {

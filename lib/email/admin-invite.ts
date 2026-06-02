@@ -128,8 +128,9 @@ export async function sendAdminInviteEmail(
     template,
     values: {
       name: input.name,
-      expiry_date: "", // unused — admin-invite has no expiry placeholder
-      ref_code: "",    // unused
+      expiry_date: "",   // unused — admin-invite has no expiry placeholder
+      ref_code: "",      // unused
+      access_code: "",   // unused — admin-invite is admins-row-bound (D66)
       button_href: input.signInUrl,
     },
   });

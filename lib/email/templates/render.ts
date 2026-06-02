@@ -199,7 +199,11 @@ function interpolate(
 }
 
 /** Build the per-token value map from RuntimeValues. Only the whitelisted
- *  tokens are exposed (button_href is NEVER a placeholder). */
+ *  tokens are exposed (button_href is NEVER a placeholder).
+ *
+ *  D66 — access_code added for invitation + reminder1 + reminderFinal.
+ *  Other templates pass "" (uniform struct); the per-section allowlist
+ *  ensures only the three participant templates can interpolate it. */
 function valuesFor(
   values: RuntimeValues
 ): Record<PlaceholderToken, string | undefined> {
@@ -207,6 +211,7 @@ function valuesFor(
     name: values.name,
     expiry_date: values.expiry_date,
     ref_code: values.ref_code,
+    access_code: values.access_code,
   };
 }
 

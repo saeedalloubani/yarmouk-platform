@@ -66,6 +66,12 @@ export type SendReminderEmailInput = {
   tokenUrl: string;
   expiresAt: string; // ISO
   kind: ReminderKind;
+  /** D66 — 6-digit participant access code (URL-prefetch fallback).
+   *  Decrypted from invitations.access_code_encrypted by the cron's
+   *  per-row loop (scoped to the iteration; NEVER logged, NEVER
+   *  audited). Interpolated into the {access_code} REQUIRED placeholder
+   *  on reminder1 + reminderFinal. */
+  accessCode: string;
 };
 
 /**
@@ -154,6 +160,7 @@ export async function sendReminderEmail(
     values: {
       expiry_date,
       ref_code: input.refCode,
+      access_code: input.accessCode, // D66 — 6-digit fallback
       button_href: input.tokenUrl,
     },
   });

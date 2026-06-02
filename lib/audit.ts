@@ -183,3 +183,48 @@ export async function logFailedLogin(
     console.error("[audit] logFailedLogin threw", err);
   }
 }
+
+/**
+ * D66 — Record a FAILED /enter access-code attempt. There is NO
+ * authenticated session here (anonymous participant rescue path), so
+ * this CANNOT use the authenticated log_audit RPC. It writes directly
+ * via the SERVICE-ROLE client, mirroring logFailedLogin's defensive
+ * shape:
+ *   - the action is HARD-CODED ("invitation.code.failed"); callers
+ *     cannot pass arbitrary action / severity / resource / metadata;
+ *   - the service-role client is imported DYNAMICALLY and used only
+ *     inside this function (admin.ts is server-only — it THROWS if
+ *     pulled into a client bundle);
+ *   - NO p_code is recorded — a brute-force attacker's guesses would
+ *     accumulate as evidence ON the audit_log, not as plaintext IN it.
+ *     Saeed sees the pattern (rate, IP, frequency) without us
+ *     persisting the secret-space they were probing.
+ *   - the reason union is narrow: "invalid_or_expired" (the RPC
+ *     returned no match) or "rate_limited" (best-effort in-memory
+ *     limiter in lib/actions/access-code.ts capped the attempt).
+ *
+ * Best-effort: fully wrapped so an audit-write hiccup can NEVER block
+ * the failure response that follows it. The forensic surface is
+ * load-bearing for brute-force forensics — see D66 in
+ * docs/DECISIONS.md.
+ */
+export async function logFailedAccessCode(
+  reason: "invalid_or_expired" | "rate_limited"
+): Promise<void> {
+  try {
+    const { ip, userAgent } = await getRequestMeta();
+    const { createSupabaseAdminClient } = await import("./supabase/admin");
+    const admin = createSupabaseAdminClient();
+    const { error } = await admin.from("audit_log").insert({
+      action: "invitation.code.failed",
+      severity: "warn",
+      ip,
+      user_agent: userAgent,
+      metadata: { reason },
+    });
+    if (error)
+      console.error("[audit] logFailedAccessCode insert failed", error);
+  } catch (err) {
+    console.error("[audit] logFailedAccessCode threw", err);
+  }
+}

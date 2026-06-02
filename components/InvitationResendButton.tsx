@@ -4,19 +4,29 @@
 //
 // Per-row resend control (owner-only; rendered only when isOwner). The
 // invitations list stays a Server Component — this is the one interactive
-// island. Calls resendInvitationAction, which rotates the token (old link
-// dies) + re-sends (D56).
+// island. Calls resendInvitationAction, which rotates the token AND the
+// access code (D66) + re-sends (D56 / D66).
 //
 // LOUD-FAILURE SURFACE (D56): on a successful rotation whose EMAIL failed
-// (ok + !emailed), the old link is already dead and the new link exists
-// only in the returned tokenUrl — so we show a prominent warning panel
-// with the link + copy, not a quiet note.
+// (ok + !emailed), the old URL + code are already dead and the new
+// values exist only in the returned tokenUrl + accessCode — so we show
+// a prominent warning panel with BOTH + per-row copy buttons.
+//
+// D66 — both the email-sent success branch AND the loud-failure branch
+// now reveal the URL + the 6-digit access code in a stacked panel. The
+// "shown once" wording applies to the code identically (resend rotates
+// both; the OLD code is dead the instant access_code_encrypted is
+// overwritten by the rotation UPDATE).
 
 import { useState, useTransition } from "react";
 import {
   resendInvitationAction,
   type ResendInvitationResult,
 } from "@/lib/actions/invitations";
+
+// D66 — per-field copy state so URL and code can each show "Copied"
+// independently.
+type CopiedField = null | "tokenUrl" | "accessCode";
 
 export default function InvitationResendButton({
   invitationId,
@@ -26,20 +36,82 @@ export default function InvitationResendButton({
   refCode: string;
 }) {
   const [result, setResult] = useState<ResendInvitationResult | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<CopiedField>(null);
   const [pending, startTransition] = useTransition();
 
   function onResend() {
     if (pending) return;
     const ok = window.confirm(
-      `Resend ${refCode}? The current link stops working immediately and a new one is issued.`
+      `Resend ${refCode}? The current link and code stop working immediately and a new pair is issued.`
     );
     if (!ok) return;
     setResult(null);
-    setCopied(false);
+    setCopied(null);
     startTransition(async () => {
       setResult(await resendInvitationAction(invitationId));
     });
+  }
+
+  // D66 — stacked URL+code panel rendered for BOTH success branches.
+  // Tone differs (success vs warn), copy content is identical.
+  function RevealPanel({
+    tokenUrl,
+    accessCode,
+    headline,
+  }: {
+    tokenUrl: string;
+    accessCode: string;
+    headline: React.ReactNode;
+  }) {
+    return (
+      <div>
+        {headline}
+        <div className="label mb-1 mt-2">Invitation link — shown once</div>
+        <div className="flex items-stretch gap-2">
+          <input
+            readOnly
+            aria-label="Invitation URL"
+            className="field mono text-[11px] flex-1"
+            value={tokenUrl}
+            onFocus={(e) => e.currentTarget.select()}
+          />
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={async () => {
+              await navigator.clipboard.writeText(tokenUrl);
+              setCopied("tokenUrl");
+            }}
+          >
+            {copied === "tokenUrl" ? "Copied" : "Copy"}
+          </button>
+        </div>
+        <div className="label mb-1 mt-3">Access code</div>
+        <div className="flex items-stretch gap-2">
+          <input
+            readOnly
+            aria-label="6-digit access code"
+            className="field mono text-center tracking-widest text-[14px] flex-1"
+            value={accessCode}
+            onFocus={(e) => e.currentTarget.select()}
+          />
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={async () => {
+              await navigator.clipboard.writeText(accessCode);
+              setCopied("accessCode");
+            }}
+          >
+            {copied === "accessCode" ? "Copied" : "Copy"}
+          </button>
+        </div>
+        <p className="text-[11px] text-muted mt-2">
+          Share with the recipient if their email service blocked the link
+          above.
+        </p>
+      </div>
+    );
   }
 
   return (
@@ -54,36 +126,35 @@ export default function InvitationResendButton({
       </button>
 
       {result?.ok && result.emailed && (
-        <div className="text-[12px] text-accent-700 mt-1">
-          ✓ Resent ({result.mode})
+        <div className="notice-success mt-2 text-[12px]">
+          <RevealPanel
+            tokenUrl={result.tokenUrl}
+            accessCode={result.accessCode}
+            headline={
+              <div>
+                ✓ Resent ({result.mode}). The previous link and code are now
+                dead.
+              </div>
+            }
+          />
         </div>
       )}
 
       {result?.ok && !result.emailed && (
         <div className="notice-warn mt-2 text-[12px]">
-          <div>
-            <strong>The old link is now dead and the email did NOT send.</strong>{" "}
-            Copy and deliver this link now — it is shown once:
-            <div className="flex items-stretch gap-2 mt-2">
-              <input
-                readOnly
-                aria-label="Invitation link"
-                className="field mono text-[11px] flex-1"
-                value={result.tokenUrl}
-                onFocus={(e) => e.currentTarget.select()}
-              />
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={async () => {
-                  await navigator.clipboard.writeText(result.tokenUrl);
-                  setCopied(true);
-                }}
-              >
-                {copied ? "Copied" : "Copy"}
-              </button>
-            </div>
-          </div>
+          <RevealPanel
+            tokenUrl={result.tokenUrl}
+            accessCode={result.accessCode}
+            headline={
+              <div>
+                <strong>
+                  The old link and code are now dead, and the email did NOT
+                  send.
+                </strong>{" "}
+                Copy and deliver these now — they are shown once:
+              </div>
+            }
+          />
         </div>
       )}
 

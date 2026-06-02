@@ -16,6 +16,11 @@ import {
   type CreateInvitationResult,
 } from "@/lib/actions/invitations";
 
+// D66 — Track which row's "Copy" button has just been clicked so we
+// can show "Copied" on that row independently. The two reveals (URL +
+// code) share this state instance via a small union.
+type CopiedField = null | "tokenUrl" | "accessCode";
+
 type VersionOption = { id: string; label: string };
 
 function defaultExpiry(): string {
@@ -43,7 +48,9 @@ export default function InvitationCreateForm({
     sendEmail: true,
   });
   const [result, setResult] = useState<CreateInvitationResult | null>(null);
-  const [copied, setCopied] = useState(false);
+  // D66 — replace single `copied` with per-field state so URL and code
+  // copy buttons each show their own confirmation.
+  const [copied, setCopied] = useState<CopiedField>(null);
   const [pending, startTransition] = useTransition();
 
   function set<K extends keyof NewInvitationInput>(
@@ -57,7 +64,7 @@ export default function InvitationCreateForm({
     e.preventDefault();
     if (pending) return;
     setResult(null);
-    setCopied(false);
+    setCopied(null);
     startTransition(async () => {
       const res = await createInvitationAction(form);
       setResult(res);
@@ -98,12 +105,14 @@ export default function InvitationCreateForm({
         )}
         <div className="label mb-1">Invitation link — shown once</div>
         <p className="text-[13px] text-muted-strong mb-3">
-          Copy this now. It is <strong>not stored and cannot be recovered</strong>;
-          to re-issue, use Resend (which mints a new link).
+          Copy these now. They are <strong>not stored and cannot be recovered</strong>;
+          to re-issue, use Resend (which mints a new link AND a new code).
         </p>
+        {/* URL row — primary "share this link" */}
         <div className="flex items-stretch gap-2">
           <input
             readOnly
+            aria-label="Invitation URL"
             className="field mono text-[12px] flex-1"
             value={result.tokenUrl}
             onFocus={(e) => e.currentTarget.select()}
@@ -113,12 +122,38 @@ export default function InvitationCreateForm({
             className="btn-secondary"
             onClick={async () => {
               await navigator.clipboard.writeText(result.tokenUrl);
-              setCopied(true);
+              setCopied("tokenUrl");
             }}
           >
-            {copied ? "Copied" : "Copy"}
+            {copied === "tokenUrl" ? "Copied" : "Copy"}
           </button>
         </div>
+        {/* D66 — access code row, stacked below URL. Fallback for
+            recipients whose email service blocks/prefetches the link. */}
+        <div className="label mb-1 mt-4">Access code</div>
+        <div className="flex items-stretch gap-2">
+          <input
+            readOnly
+            aria-label="6-digit access code"
+            className="field mono text-center tracking-widest text-[16px] flex-1"
+            value={result.accessCode}
+            onFocus={(e) => e.currentTarget.select()}
+          />
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={async () => {
+              await navigator.clipboard.writeText(result.accessCode);
+              setCopied("accessCode");
+            }}
+          >
+            {copied === "accessCode" ? "Copied" : "Copy"}
+          </button>
+        </div>
+        <p className="text-[12px] text-muted mt-2">
+          Share with the recipient if their email service blocked the link
+          above. They can enter it at <span className="mono">/enter</span>.
+        </p>
         <div className="mt-6">
           <Link href="/admin/invitations" className="btn-ghost text-[13px]">
             ← Back to invitations

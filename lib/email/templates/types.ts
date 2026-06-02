@@ -58,14 +58,15 @@ export type TemplateId =
  *  The set is the UNION across all templates; each TemplateSpec
  *  declares the subset it uses in its `sections` array. */
 export type SectionKey =
-  | "intro"     // invitation, admin-invite — opening paragraph above the button
-  | "cta"       // ALL — button LABEL (the URL is system-owned)
-  | "personal"  // invitation — "this link is personal" reminder
-  | "expiry"    // invitation — expiry date line
-  | "contact"   // invitation, admin-invite — closing reply-to line (auto-linkified)
-  | "greeting"  // admin-invite — "Hello {name}," opener
-  | "notice"    // admin-invite — fine print under the button
-  | "lead";     // submission — single body paragraph
+  | "intro"        // invitation, admin-invite — opening paragraph above the button
+  | "cta"          // ALL — button LABEL (the URL is system-owned)
+  | "personal"     // invitation — "this link is personal" reminder
+  | "access_code"  // invitation, reminder1, reminderFinal — D66 6-digit fallback (fine, after personal)
+  | "expiry"       // invitation — expiry date line
+  | "contact"      // invitation, admin-invite — closing reply-to line (auto-linkified)
+  | "greeting"     // admin-invite — "Hello {name}," opener
+  | "notice"       // admin-invite — fine print under the button
+  | "lead";        // submission — single body paragraph
 
 /** Editable per-locale fields. The shape of `sections` is template-
  *  specific — the editor reads the spec to know which keys to render. */
@@ -82,20 +83,32 @@ export type TemplateFields = {
  *  Unused fields per template — for uniformity the struct shape stays
  *  constant; the per-section allowlist is what actually constrains
  *  which placeholders get substituted in body text:
- *    - invitation         → uses expiry_date.   name/ref_code unused.
- *    - admin-invite       → uses name.          expiry_date/ref_code unused.
- *    - submission         → uses ref_code.      name/expiry_date unused.
- *  Callers pass "" for unused string fields. */
+ *    - invitation     → uses expiry_date + access_code. name/ref_code unused.
+ *    - reminder1      → uses expiry_date + access_code. name/ref_code unused.
+ *    - reminderFinal  → uses expiry_date + access_code. name/ref_code unused.
+ *    - admin-invite   → uses name.                      others unused.
+ *    - submission     → uses ref_code.                  others unused.
+ *  Callers pass "" for unused string fields.
+ *
+ *  D66 — access_code is the participant 6-digit URL-prefetch fallback.
+ *  invitation + reminder1 + reminderFinal interpolate {access_code} into
+ *  the new fine-block access_code section; admin-invite + submission
+ *  pass "" (uniform struct shape). */
 export type RuntimeValues = {
   name?: string;
   expiry_date: string;
   ref_code: string;
+  access_code: string;     // D66 — participant 6-digit fallback
   button_href: string;     // system-owned; never editable
 };
 
 /** Whitelisted placeholder tokens that may appear in body sections.
  *  Anything else in {…} fails validation. */
-export type PlaceholderToken = "name" | "expiry_date" | "ref_code";
+export type PlaceholderToken =
+  | "name"
+  | "expiry_date"
+  | "ref_code"
+  | "access_code"; // D66 — participant 6-digit fallback
 
 /** Where a section sits relative to the button:
  *    - 'lead' = above the button (no divider between)
@@ -135,13 +148,14 @@ export type TemplateSpec = {
   requiredPlaceholders: Record<SectionKey, readonly PlaceholderToken[]>;
 };
 
-// All 8 section keys, listed once — used for the stub entries below so
+// All 9 section keys, listed once — used for the stub entries below so
 // every TemplateSpec satisfies the Record<SectionKey, …> type without
-// repeating the union in eight places per spec.
+// repeating the union in nine places per spec.
 const ALL_SECTIONS: readonly SectionKey[] = [
   "intro",
   "cta",
   "personal",
+  "access_code", // D66
   "expiry",
   "contact",
   "greeting",
@@ -165,22 +179,39 @@ function fillSectionRecord<T>(
 export const TEMPLATE_SPECS: Record<TemplateId, TemplateSpec> = {
   invitation: {
     id: "invitation",
-    sections: ["intro", "cta", "personal", "expiry", "contact"] as const,
+    // D66 — access_code inserted between personal and expiry. In the
+    // fine block this renders as middle-fine (margin 4px / 13px / #8a8982);
+    // expiry stays middle-fine; contact stays last-fine. No typographic
+    // disruption to the pre-D66 paragraphs.
+    sections: [
+      "intro",
+      "cta",
+      "personal",
+      "access_code",
+      "expiry",
+      "contact",
+    ] as const,
     bilingual: true,
     buttonSection: "cta",
     placement: fillSectionRecord<SectionPlacement>("fine", {
       intro: "lead",
       cta: "lead",
       personal: "fine",
+      access_code: "fine",
       expiry: "fine",
       contact: "fine",
     }),
     linkify: ["contact"],
     allowedPlaceholders: fillSectionRecord<readonly PlaceholderToken[]>([], {
       expiry: ["expiry_date"],
+      // D66 — access_code is REQUIRED in this section (see required map
+      // below). Sura editing the body text cannot accidentally ship a
+      // template without the 6-digit code.
+      access_code: ["access_code"],
     }),
     requiredPlaceholders: fillSectionRecord<readonly PlaceholderToken[]>([], {
       expiry: ["expiry_date"],
+      access_code: ["access_code"],
     }),
   },
   // D64 — reminder1 + reminderFinal. Byte-identical to invitation except
@@ -189,42 +220,66 @@ export const TEMPLATE_SPECS: Record<TemplateId, TemplateSpec> = {
   // its own audit trail. No factoring.
   reminder1: {
     id: "reminder1",
-    sections: ["intro", "cta", "personal", "expiry", "contact"] as const,
+    // D66 mirror of invitation — access_code section between personal
+    // and expiry, required-placeholder, fine placement.
+    sections: [
+      "intro",
+      "cta",
+      "personal",
+      "access_code",
+      "expiry",
+      "contact",
+    ] as const,
     bilingual: true,
     buttonSection: "cta",
     placement: fillSectionRecord<SectionPlacement>("fine", {
       intro: "lead",
       cta: "lead",
       personal: "fine",
+      access_code: "fine",
       expiry: "fine",
       contact: "fine",
     }),
     linkify: ["contact"],
     allowedPlaceholders: fillSectionRecord<readonly PlaceholderToken[]>([], {
       expiry: ["expiry_date"],
+      access_code: ["access_code"],
     }),
     requiredPlaceholders: fillSectionRecord<readonly PlaceholderToken[]>([], {
       expiry: ["expiry_date"],
+      access_code: ["access_code"],
     }),
   },
   reminderFinal: {
     id: "reminderFinal",
-    sections: ["intro", "cta", "personal", "expiry", "contact"] as const,
+    // D66 mirror of invitation — access_code section between personal
+    // and expiry, required-placeholder, fine placement.
+    sections: [
+      "intro",
+      "cta",
+      "personal",
+      "access_code",
+      "expiry",
+      "contact",
+    ] as const,
     bilingual: true,
     buttonSection: "cta",
     placement: fillSectionRecord<SectionPlacement>("fine", {
       intro: "lead",
       cta: "lead",
       personal: "fine",
+      access_code: "fine",
       expiry: "fine",
       contact: "fine",
     }),
     linkify: ["contact"],
     allowedPlaceholders: fillSectionRecord<readonly PlaceholderToken[]>([], {
       expiry: ["expiry_date"],
+      access_code: ["access_code"],
     }),
     requiredPlaceholders: fillSectionRecord<readonly PlaceholderToken[]>([], {
       expiry: ["expiry_date"],
+      access_code: ["access_code"],
     }),
   },
   "admin-invite": {

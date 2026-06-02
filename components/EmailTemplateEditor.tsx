@@ -56,6 +56,11 @@ const SECTION_LABELS: Record<SectionKey, { title: string; hint: string }> = {
     hint:
       "A short reminder that the link is personal and shouldn't be forwarded.",
   },
+  access_code: {
+    title: "Access-code fallback (6-digit)",
+    hint:
+      'Fallback line shown if the recipient\'s email service prefetches the link. Must contain "{access_code}" — replaced with the actual 6-digit code per recipient. Visible on invitation + both reminders.',
+  },
   expiry: {
     title: "Expiry line",
     hint:

@@ -91,6 +91,12 @@ export type Invitation = {
    *  /admin/invitations. Surfaced via invitations_redacted to both owner
    *  and readonly admins (operational, non-PII). */
   lastSendFailedAt: string | null;
+  /** D66 — set by validate_invitation_code to NOW() on a FRESH CLAIM via
+   *  /enter (not on resumption). Forensic timestamp: "when /enter first
+   *  fresh-claimed this invitation." Not a behavior gate. Surfaced via
+   *  invitations_redacted to both owner and readonly admins (operational,
+   *  non-PII). NULL until first /enter fresh-claim. */
+  accessCodeUsedAt: string | null;
 };
 
 function rowToInvitation(row: DbRow | DbViewRow): Invitation {
@@ -125,6 +131,7 @@ function rowToInvitation(row: DbRow | DbViewRow): Invitation {
     createdAt: r.created_at,
     createdBy: r.created_by,
     lastSendFailedAt: r.last_send_failed_at,
+    accessCodeUsedAt: r.access_code_used_at, // D66
   };
 }
 
@@ -225,6 +232,19 @@ export type CreateInvitationInput = {
    * Path B locked: reminders reuse, don't rotate.
    */
   tokenPlaintextEncrypted: string;
+  /**
+   * D66 — Vault-encrypted 6-digit participant access code (encrypted via
+   * encrypt_pii by the caller). Stored so:
+   *   (a) validate_invitation_code can brute-decrypt-scan the candidate
+   *       set when a recipient types the code at /enter.
+   *   (b) The reminder cron can decrypt + include the same code in
+   *       reminder1 and reminderFinal bodies (URL-prefetch fallback
+   *       parity with the URL plaintext).
+   * NEVER logged, NEVER in audit metadata. Pre-D66 invitations don't
+   * have this column populated; the cron + RPC candidate filters
+   * silently exclude rows where access_code_encrypted IS NULL.
+   */
+  accessCodeEncrypted: string;
   refCode: string;
   /** Already pgcrypto-encrypted by lib/encryption.ts (Session 2b). */
   recipientNameEncrypted: string;
@@ -248,6 +268,7 @@ export async function createInvitation(
   const insert: DbInsert = {
     token_hash: input.tokenHash,
     token_plaintext_encrypted: input.tokenPlaintextEncrypted,
+    access_code_encrypted: input.accessCodeEncrypted, // D66
     ref_code: input.refCode,
     recipient_name_encrypted: input.recipientNameEncrypted,
     recipient_email_encrypted: input.recipientEmailEncrypted,
@@ -295,6 +316,16 @@ export type UpdateInvitationInput = Partial<{
    *  invitation + reminder send paths in lib/actions/invitations.ts and
    *  /api/cron/send-reminders. */
   lastSendFailedAt: string | null;
+  /** D66 — Vault-encrypted plaintext 6-digit access code. Pass a fresh
+   *  ciphertext on resend (mint a new code alongside the new token), or
+   *  null on revoke to clear (terminal kill, mirrors the
+   *  tokenPlaintextEncrypted nulling at revoke). Never logged. */
+  accessCodeEncrypted: string | null;
+  /** D66 — ISO timestamp (when /enter first fresh-claimed) or null to
+   *  reset. Cleared on resend's `fresh` branch (the new code is unused);
+   *  preserved as-is on resend's `resume` branch (the previous /enter
+   *  fresh-claim, if any, stays attributable). */
+  accessCodeUsedAt: string | null;
 }>;
 
 /** Update an invitation. Owner only (enforced by RLS). */
@@ -318,6 +349,10 @@ export async function updateInvitation(
   if (input.useCount !== undefined) update.use_count = input.useCount;
   if (input.lastSendFailedAt !== undefined)
     update.last_send_failed_at = input.lastSendFailedAt;
+  if (input.accessCodeEncrypted !== undefined)
+    update.access_code_encrypted = input.accessCodeEncrypted; // D66
+  if (input.accessCodeUsedAt !== undefined)
+    update.access_code_used_at = input.accessCodeUsedAt; // D66
 
   const { data, error } = await supabase
     .from("invitations")

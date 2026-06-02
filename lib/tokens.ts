@@ -9,7 +9,7 @@
 // way back from hash to plaintext: re-issuing a link means minting a new
 // token (resend = rotation, 3b-ii).
 
-import { randomBytes, createHash } from "node:crypto";
+import { randomBytes, createHash, randomInt } from "node:crypto";
 
 export type MintedToken = { plaintext: string; hash: string };
 
@@ -17,6 +17,29 @@ export function mintInvitationToken(): MintedToken {
   const plaintext = randomBytes(32).toString("base64url");
   const hash = createHash("sha256").update(plaintext).digest("hex");
   return { plaintext, hash };
+}
+
+/**
+ * D66 — Mint a 6-digit participant access code (the URL-prefetch
+ * fallback). Returns a string in the range "100000".."999999" — no
+ * leading-zero codes, so the user always sees 6 characters regardless
+ * of font/locale and the regex `^\d{6}$` validators stay simple.
+ *
+ * Uses node:crypto randomInt (CSPRNG, uniform distribution over the
+ * 900_000-wide interval) — NOT Math.random(). Same crypto discipline as
+ * mintInvitationToken above.
+ *
+ * The 1M-entropy space is the load-bearing brute-force defense layer
+ * (D66 DECISIONS); the audit-log forensics + the max_uses budget gate
+ * + the 60-day expires_at TTL layer on top. The plaintext exists only
+ * at mint time: it goes into the email body and is shown once on
+ * create (D66 admin UI); only the Vault-encrypted ciphertext is
+ * persisted in invitations.access_code_encrypted.
+ */
+export function generateAccessCode(): string {
+  // randomInt(min, max) — min inclusive, max EXCLUSIVE.
+  // Range 100000–999999 inclusive → call (100_000, 1_000_000).
+  return String(randomInt(100_000, 1_000_000));
 }
 
 /**
