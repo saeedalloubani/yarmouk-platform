@@ -27,12 +27,15 @@ Build/keep the code-exchange path first; switch only if smoke fails. (Also noted
 
 ## Reading invitation-send failures (Session 3b-ii)
 
+> **D64 update**: send-failure surface now has a UI artefact too — the amber **"send failed"** chip on `/admin/invitations` whenever the last send attempt failed (from the original send, a resend, or an auto-reminder dispatch). The chip clears automatically on the next successful send. The console-log distinction below is still useful for the *cause* breakdown, but is no longer Sura's primary signal that a send failed. See "Auto-reminders + send failures (D64)" below for the audit-log surface + diagnostic flow.
+
 When a resend (`resendInvitationAction`) returns `emailed: false`, the UI shows the loud red panel with the new link — but the *cause* lives only in the dev/prod server log, and the two causes mean very different things. Check **which `console.error` fired** in `lib/actions/invitations.ts` / `lib/email/invitation.ts`:
 
 - **`[invitations] resend decrypt_pii failed`** → a **Vault/key sev-1**. `decrypt_pii` couldn't read the recipient address, which means the encryption key path is broken — and that breaks **every PII read app-wide** (consent names, invitation names/emails, future exports). Stop and treat as a key-access incident (see "Disaster recovery: lost encryption key" below). The token *did* rotate (old link dead), so hand off the panel's `tokenUrl` manually, then fix the key path.
-- **`[email] invitation send failed/threw for <refCode>`** → a **transient Resend issue** (API down, rate limit, or — in test mode — recipient isn't the verified account address). Recoverable: resend again once Resend is healthy, or hand off the panel's `tokenUrl`. Not a data-integrity problem.
+- **`[email] invitation send failed/threw for <refCode>` + `errorClass=send`** → a **transient Resend issue** (API down, rate limit, or — in test mode — recipient isn't the verified account address). Recoverable: resend again once Resend is healthy, or hand off the panel's `tokenUrl`. Not a data-integrity problem.
+- **`[invitations] send-at-create email threw for <refCode> errorClass=config` or similar** → a **server misconfig** (missing `RESEND_API_KEY` env var, missing `NEXT_PUBLIC_SITE_URL`, malformed payload). The audit log will show the same `errorClass=config` bucket. Server-side fix needed (Saeed).
 
-Same user-facing surface (loud panel + `tokenUrl`), very different operational severity. The log line is how you tell them apart.
+Same user-facing surface (loud panel + `tokenUrl`), very different operational severity. The log line + the audit `errorClass` is how you tell them apart.
 
 ## Revoking an invitation (owner-driven terminal kill)
 
@@ -118,17 +121,110 @@ The audit chain (`response.withdraw` at alert → subsequent `invitation.resend`
 
 Same as revoke — if two admin tabs both show the same response as withdrawable and one withdraws it, the other tab surfaces `already_withdrawn` on the next click and **auto-refreshes** to the withdrawn state.
 
-## Email templates (the 3 editable templates + reset path)
+## Auto-reminders + send failures (D64)
 
-The platform sends 3 emails, all editable at `/admin/settings/email-templates` (owner-only). The button URL in each is **system-owned** (Sura edits only the LABEL — the link itself cannot be removed or broken from the editor).
+D64 added automated 7d / 14d reminder emails and a "send failed" badge on `/admin/invitations` so Sura can see which invitations didn't reach their recipient. Four workflows below: how the cron works, when to resend vs revoke + create new, editing reminder templates, and a diagnostic flow for "I can't open my invitation link."
+
+### How the auto-reminder cron works
+
+A Vercel cron hits `/api/cron/send-reminders` daily at `0 12 * * *` UTC (Hobby plan: within-the-hour precision; Pro: exact-minute). For each non-submitted invitation:
+
+- ~7 days after `sent_at` → **reminder1** fires (the "First reminder" template).
+- ~14 days after `sent_at` → **reminderFinal** fires (the "Final reminder" template).
+- Both reuse the ORIGINAL token URL (Path B / D64 — no token rotation). Recipients can click EITHER the original invitation email OR the reminder email — both point at the same `/r/<token>` and both work through the entire cycle.
+
+The cron is **idempotent by design**: re-firing the same window produces no double-sends. The candidate query gates on `reminder1_sent_at IS NULL` / `reminder_final_sent_at IS NULL`, and the stamp + the row's failure-clear write in a single atomic UPDATE. You can manually fire the cron for spot-checks using the Bearer auth pattern:
+
+```bash
+export CRON_SECRET="<from Vercel env>"
+curl -i \
+  -H "Authorization: Bearer $CRON_SECRET" \
+  https://karasneh-research.org/api/cron/send-reminders
+```
+
+Response JSON has four counter numbers only — no refCode list, no IDs, no recipient data:
+
+```
+{"reminder1":{"sent":1,"failed":0},"reminderFinal":{"sent":0,"failed":0}}
+```
+
+Auth on the route is **exact-match** on the full `Bearer <secret>` string. A `401 Unauthorized` means the secret is wrong or the header didn't arrive. A `500 Server misconfigured` means a required env var (`RESEND_API_KEY` or `NEXT_PUBLIC_SITE_URL`) is missing — check `console.error` in Vercel function logs for which.
+
+Per-row failures land in `/admin/security` as `invitation.email_failed` (severity=`warn`) and the row gets the amber **"send failed"** chip on `/admin/invitations`. Audit metadata is `{ invitationId, kind, errorClass }` only — never the recipient address or the Resend error message (PII discipline at the audit boundary; D64).
+
+**Vercel cron audit metadata note**: when the cron fires from Vercel (not a manual curl), the audit row's `ip` is a Vercel edge IP and `user_agent` is `vercel-cron/1.0`. A manual curl from your terminal leaves your curl client + IP in the audit row. Both are operational metadata, neither is participant PII.
+
+### Pre-D64 invitations are excluded from auto-reminders
+
+Invitations created BEFORE D64 shipped have `token_plaintext_encrypted IS NULL` (the column didn't exist at their mint time, and there's no cryptographic way to recover the plaintext from `token_hash`). The cron's candidate query excludes them automatically. For these, **click Resend manually on `/admin/invitations`** — that rotates the token, populates the encrypted plaintext column, and from then on the auto-reminder cycle is active for that row.
+
+### Resend (manual nudge) vs Revoke + Create new (restart)
+
+Two distinct workflows; pick by intent:
+
+- **Resend** (the button on `/admin/invitations`): you want to send the recipient ANOTHER copy of their (now-rotated) link. Continues the current outreach cycle. Token rotates (old link dies), new link emailed. **The auto-reminder state is preserved** — if a reminder already fired on this invitation, resend does NOT re-trigger the auto-cycle. Same `ref_code`. Use when: recipient says they didn't get the email but is otherwise reachable; you want to surface the invitation in their inbox again without restarting the 7d/14d nudge clock.
+
+- **Revoke + Create new**: you want to restart the full outreach cycle. Revoke the old invitation (terminal — sets `status='revoked'`, kills the link), then create a fresh invitation with a NEW `ref_code` and a clean 7d/14d window. Use when: the recipient lost the entire email thread and you want a clean restart; OR you want a fresh outreach record in the audit log under a new ref_code; OR you want the recipient to start fresh with no prior tokens in their inbox.
+
+The audit chain preserves the distinction: a resend appears as `invitation.resent` (severity=info); a revoke + create-new appears as `invitation.revoke` (warn) followed by `invitation.create` (info) under a new ref_code.
+
+### Editing reminder templates
+
+Both reminders are editable at `/admin/settings/email-templates` (owner-only) alongside the participant invitation, supervisor invitation, and submission notification. The list page now orders them chronologically by outreach cycle: **invitation → first reminder → final reminder → admin-invite → submission**.
+
+Each reminder inherits the same 5 sections as the participant invitation (`intro`, `cta`, `personal`, `expiry`, `contact`). Sura can edit any section per template independently — for example, removing `personal` from the final reminder if she wants leaner copy on the urgent nudge. The defaults ship with brand-consistent copy across the three respondent-facing emails (invitation → reminder1 → reminderFinal share `personal` / `expiry` / `contact` verbatim; only the `intro` differs + the subjects). All editor controls (placeholder validation, save / reset / send-test, bilingual EN+AR fields) work the same as the participant invitation — see "Email templates" section below for full editor behavior.
+
+**Review the reminder defaults before the first real auto-reminder fires in production.** The defaults are good-enough-to-edit, not good-enough-to-ship-unchanged for high-stakes recipients (Officials, Donors). Open `/admin/settings/email-templates/reminder1` + `/admin/settings/email-templates/reminderFinal` and tune the tone for your voice before any auto-cycle dispatches.
+
+### Diagnosing "I can't open my invitation link"
+
+If a participant says their link is broken:
+
+1. Open `/admin/invitations` and find the row by `ref_code` (or by recipient name if you know it from your own records — names aren't displayed to readonly admins).
+2. Check `status`:
+   - **`revoked`** → the link is permanently dead by design (D61). Create a fresh invitation with a new ref_code.
+   - **`submitted`** → the response is already finalized. The link is one-use post-submit (D44/D52); they're seeing the expected post-submission behavior. If they need to re-submit, withdraw (`/admin/responses/<id>`, Withdraw button) then create a fresh invitation under a new ref_code.
+   - **`expired`** → past `expires_at`. Create a fresh invitation with a new expiry.
+   - **`sent`** / **`opened`** → the link SHOULD work. Continue to step 3.
+3. Check the amber **"send failed"** chip on the row:
+   - **No chip** → the last send succeeded. Ask the participant to check their spam / promotions folder. If they really don't have the email, click **Resend** (sends a fresh token under the same ref_code; auto-reminder state preserved per Option A).
+   - **Chip present** → the most recent send (original, resend, or auto-reminder) failed at the Resend API layer. Open `/admin/security` and find the matching `invitation.email_failed` audit row to read the `errorClass`:
+     - `errorClass=send` → Resend rejected (transient API, malformed address, rate limit). Click Resend to retry; should clear the chip if the issue was transient.
+     - `errorClass=config` → wrapper-layer failure (missing `RESEND_API_KEY`, missing locale defaults, etc.). Server-side fix needed (talk to Saeed).
+
+The `last_send_failed_at` chip clears automatically on the next successful send from the same row. No manual reset needed.
+
+### Inspecting an invitation's reminder state via Supabase Studio
+
+```sql
+SELECT
+  ref_code, status, sent_at,
+  reminder1_sent_at, reminder_final_sent_at,
+  last_send_failed_at,
+  token_plaintext_encrypted IS NOT NULL AS auto_reminder_eligible
+FROM invitations
+WHERE ref_code = '<paste here>';
+```
+
+`auto_reminder_eligible = false` means it's a pre-D64 row — manual Resend will populate the column and the auto-cycle activates from there.
+
+### Known limitation: async bounces don't surface to the chip
+
+Resend's `.invalid` TLD acceptance + async-bounce behavior was observed during D64 smoke: a syntactically-valid but undeliverable address (e.g., `bounce@example.invalid`) returns 200 at the API layer, so the wrapper sees `{ok: true}` and the chip never fires — the bounce surfaces later via Resend's webhook system, which the platform doesn't currently consume. For now, the chip catches sync API rejections only (auth failures, rate limits, malformed addresses Resend validates client-side). A future Resend-webhook integration would close the "email looked sent but didn't arrive" gap. Out of D64 scope. If you suspect a recipient never received a reminder despite `reminder*_sent_at` being stamped, check Resend's dashboard for the bounce event.
+
+## Email templates (the 5 editable templates + reset path)
+
+The platform sends 5 emails, all editable at `/admin/settings/email-templates` (owner-only). The button URL in each is **system-owned** (Sura edits only the LABEL — the link itself cannot be removed or broken from the editor).
 
 | Template | Bilingual? | Recipient | Trigger |
 |---|---|---|---|
 | **Participant invitation** (`invitation`) | EN + AR | Invited expert | Owner clicks "Send" on a new or resent invitation (`lib/actions/invitations.ts`). |
+| **First reminder** (`reminder1`) | EN + AR | Invited expert (not yet submitted) | Auto-sent by `/api/cron/send-reminders` ~7 days after `sent_at` (D64). |
+| **Final reminder** (`reminderFinal`) | EN + AR | Invited expert (not yet submitted) | Auto-sent by `/api/cron/send-reminders` ~14 days after `sent_at` (D64). |
 | **Supervisor invitation** (`admin-invite`) | EN only | Read-only supervisor | Owner adds a supervisor via Settings → Team Access (`lib/actions/admins.ts`). |
 | **Submission notification** (`submission`) | EN only | Active owner(s) | Respondent submits; fan-out via `lib/notifications.ts`. |
 
-EN-only templates HIDE the Arabic column in the editor (NOT render empty AR fields). Same Send-test path on all three — inert button URL lands on `/?preview=<id>-email` (the public landing ignores all query strings; no token is ever consumed by a test click).
+EN-only templates HIDE the Arabic column in the editor (NOT render empty AR fields). Same Send-test path on all five — inert button URL lands on `/?preview=<id>-email` (the public landing ignores all query strings; no token is ever consumed by a test click). The two reminder templates share the participant invitation's 5-section structure (`intro / cta / personal / expiry / contact`); see "Editing reminder templates" above for the per-template editing notes.
 
 ### Resetting a template to defaults
 
