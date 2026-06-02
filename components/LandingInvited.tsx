@@ -15,16 +15,20 @@
 //     this file; file 6 swaps them for the <LanguageSwitcher />
 //     client component
 //
-// Category label: this variant only renders correctly for
-// session.category === 'officials' in pilot V1. Other categories
-// (researchers, donors, ngos) don't have an i18n string yet —
-// those invitations get minted in Session 3+. The current code
-// hardcodes the officials label; if a non-officials session shows
-// up in 2b-2 testing it'll display the wrong category text.
-// Acceptable scope for 2b-2.
+// D67 — Per-category "invited as" label. Pre-D67 this file hardcoded
+// `t.categoryOfficials` regardless of session.category; D66 smoke
+// (SMOKE-D66-002, category=researchers) caught the bug. The 4 pilot
+// categories now route through `categoryLabel(category, t)` from
+// lib/i18n. Main-variant labels ("— Main Study Participant" suffix vs
+// the current "— Pilot Reviewer") are D68 backlog.
 
 import Link from "next/link";
-import { getTranslations, LANG_PICKER_LABELS } from "@/lib/i18n";
+import {
+  getTranslations,
+  LANG_PICKER_LABELS,
+  categoryLabel,
+  type PilotCategory,
+} from "@/lib/i18n";
 import { getLang } from "@/lib/cookies";
 import type { Session } from "@/lib/cookies";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
@@ -69,9 +73,13 @@ export default async function LandingInvited({
           <div className="flex items-start justify-between gap-4 mb-4">
             <div>
               <div className="label mb-1">{t.invitedAs}</div>
-              {/* Only `officials` is supported in 2b-2 — see file header. */}
+              {/* D67 — per-category lookup. session.category is one of the
+                  4 pilot category enum values; the `as PilotCategory` cast
+                  is structurally a no-op but documents the pilot-context
+                  assumption. When D68 ships main_* support, the cast will
+                  be replaced by a variant-aware dispatch. */}
               <div className="text-[18px] font-semibold text-ink">
-                {t.categoryOfficials}
+                {categoryLabel(session.category as PilotCategory, t)}
               </div>
             </div>
             <span className="chip-solid bg-brand-50 text-brand-700 mono">

@@ -19,6 +19,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { consentExistsForResponse } from "@/lib/repos/consent";
 import { getVisibleQuestions } from "@/lib/repos/questions";
 import { getAnswersMap } from "@/lib/repos/answers";
+import type { PilotCategory } from "@/lib/i18n";
 import QuestionnaireWizard, {
   type WizardQuestion,
 } from "@/components/QuestionnaireWizard";
@@ -68,6 +69,11 @@ export default async function QuestionnairePage() {
       initialAnswers={answersMap}
       initialIdx={initialIdx}
       lang={lang}
+      // D67 — pilot category drives the wizard's per-category pilot badge.
+      // session.category is one of the 4 DB enum values; PilotCategory is
+      // structurally identical (4-value union). The cast documents the
+      // pilot-context assumption. Main-variant support is D68 backlog.
+      category={session.category as PilotCategory}
     />
   );
 }

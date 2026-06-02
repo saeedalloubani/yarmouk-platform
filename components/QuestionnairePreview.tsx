@@ -26,7 +26,12 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { getTranslations, type Lang } from "@/lib/i18n";
+import {
+  getTranslations,
+  pilotBadgeLabel,
+  type Lang,
+  type PilotCategory,
+} from "@/lib/i18n";
 
 export type PreviewQuestion = {
   id: string;
@@ -56,6 +61,7 @@ export default function QuestionnairePreview({
   questions,
   hasGated,
   editHref,
+  pilotCategory,
 }: {
   versionLabel: string;
   versionNumber: number;
@@ -63,6 +69,13 @@ export default function QuestionnairePreview({
   questions: PreviewQuestion[];
   hasGated: boolean;
   editHref: string;
+  /** D67 — pilot category drives the per-category pilot badge in the
+   *  respondent-shell header. `null` for any variant that isn't a pilot
+   *  category (main_* and the legacy combined pilot_researchers_donors_
+   *  ngos); for those, the badge falls back to the legacy "Pilot Version
+   *  1 · Officials" text — known-wrong-but-deferred to D68 (admin-only
+   *  preview tool, not a respondent-facing surface). */
+  pilotCategory: PilotCategory | null;
 }) {
   const [lang, setLang] = useState<Lang>("en");
   const [nationality, setNationality] = useState<Nat>("jordanian");
@@ -149,7 +162,13 @@ export default function QuestionnairePreview({
             </span>
             <div className="flex items-center gap-4">
               <span className="chip-solid bg-brand-50 text-brand-700 hidden sm:inline-flex">
-                {t.pilotBadge}
+                {/* D67 — when previewing one of the 4 pilot variants, the
+                    badge resolves to the matching category text. When
+                    previewing a main_* variant (or the legacy combined
+                    pilot variant), pilotCategory is null and we fall back
+                    to the Officials badge — known-wrong text, deferred to
+                    D68. Admin-only preview surface. */}
+                {pilotBadgeLabel(pilotCategory ?? "officials", t)}
               </span>
               {/* EN/AR toggle — LOCAL state only (no cookie, no refresh). */}
               <div className="flex items-center rounded-md border border-line overflow-hidden text-[12px] font-semibold">

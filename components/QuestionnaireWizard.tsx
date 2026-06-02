@@ -25,7 +25,12 @@
 import { useState, useRef, useMemo, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { getTranslations, type Lang } from "@/lib/i18n";
+import {
+  getTranslations,
+  pilotBadgeLabel,
+  type Lang,
+  type PilotCategory,
+} from "@/lib/i18n";
 import { saveAnswer, submitQuestionnaire } from "@/lib/actions/answers";
 import { setLangAction } from "@/lib/actions/setLang";
 
@@ -43,11 +48,18 @@ export default function QuestionnaireWizard({
   initialAnswers,
   initialIdx,
   lang,
+  category,
 }: {
   questions: WizardQuestion[];
   initialAnswers: Record<string, string>;
   initialIdx: number;
   lang: Lang;
+  /** D67 — pilot category drives the per-category pilot badge in the
+   *  header chip. The parent (app/(public)/questionnaire/page.tsx) reads
+   *  session.category and threads it down. PilotCategory is structurally
+   *  identical to the DB category_type enum's 4 values; main-variant
+   *  badges are D68 backlog. */
+  category: PilotCategory;
 }) {
   const t = getTranslations(lang);
   const isAr = lang === "ar";
@@ -215,7 +227,7 @@ export default function QuestionnaireWizard({
           <div className="flex items-center gap-4">
             <SaveIndicator state={saveState} t={t} />
             <span className="chip-solid bg-brand-50 text-brand-700 hidden sm:inline-flex">
-              {t.pilotBadge}
+              {pilotBadgeLabel(category, t)}
             </span>
             <LangToggle lang={lang} pending={pending} onSwitch={handleLangSwitch} />
           </div>
