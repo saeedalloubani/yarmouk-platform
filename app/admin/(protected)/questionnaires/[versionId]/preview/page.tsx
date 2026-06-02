@@ -28,16 +28,18 @@ import QuestionnairePreview, {
 export const dynamic = "force-dynamic";
 
 // D67 — Map a questionnaire variant to its pilot category, or null for
-// non-pilot / legacy-combined variants. The 4 pilot variants each map to
-// their category enum value; main_* variants and the legacy combined
-// pilot_researchers_donors_ngos return null (the preview badge falls
-// back to the Officials badge — known-wrong, deferred to D68).
+// non-pilot / legacy-combined variants. Exhaustive switch — TypeScript flags
+// any future variant enum addition that isn't accounted for.
 //
-// Exhaustive switch — TypeScript flags any future variant enum addition
-// that isn't accounted for. Defensive against variant-enum churn.
+// D68 — Unused since D68 (the preview badge was removed alongside the live
+// wizard's badge). Retained for potential future use (e.g. a variant-aware
+// preview chrome that surfaces "you're previewing X variant" at the top);
+// remove in a later cleanup cycle. Intentional dead code — paired with
+// `pilotBadgeLabel` + the `pilotBadgeX` i18n keys in `lib/i18n.ts`.
 type QuestionnaireVariant =
   Database["public"]["Enums"]["questionnaire_variant"];
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function variantToPilotCategory(
   variant: QuestionnaireVariant
 ): PilotCategory | null {
@@ -52,17 +54,12 @@ function variantToPilotCategory(
       return "ngos";
     case "pilot_researchers_donors_ngos":
       // Legacy combined variant (pre-split, see migration 20260524140002).
-      // Preserved in the enum for FK integrity but no questions live on
-      // it. Falls back to officials badge in preview.
       return null;
     case "main_researchers":
     case "main_donors":
     case "main_ngos":
     case "main_officials_jordanian":
     case "main_officials_syrian":
-      // D68 backlog — main variants need their own mainBadgeX strings +
-      // a `mainCategory` discriminator. Until then the preview badge
-      // falls back to the legacy Officials text.
       return null;
   }
 }
@@ -100,6 +97,9 @@ export default async function PreviewVersionPage({
     (q) => q.visibleNationalities != null && q.visibleNationalities.length > 0
   );
 
+  // D68 — `pilotCategory` prop dropped along with the preview's header
+  // badge. `variantToPilotCategory` survives as dead code (see header
+  // comment) in case a future variant-aware preview chrome wants it.
   return (
     <QuestionnairePreview
       versionLabel={variantLabel(version.variant)}
@@ -108,17 +108,6 @@ export default async function PreviewVersionPage({
       questions={previewQuestions}
       hasGated={hasGated}
       editHref={`/admin/questionnaires/${versionId}`}
-      // D67 — derive PilotCategory from the variant enum. Pilot variants
-      // resolve to the matching category; main_* variants (and the
-      // legacy combined pilot variant) resolve to null, which the
-      // component falls back to the Officials badge — known-wrong-but-
-      // deferred to D68. The cast narrows the repo's `string` back to
-      // the DB enum union — DB CHECK + the variant enum constrain the
-      // runtime value to a member of QuestionnaireVariant; the cast
-      // restores the type system's view to match the runtime guarantee.
-      pilotCategory={variantToPilotCategory(
-        version.variant as QuestionnaireVariant
-      )}
     />
   );
 }

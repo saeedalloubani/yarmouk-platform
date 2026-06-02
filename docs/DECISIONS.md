@@ -854,6 +854,61 @@ Both live in `lib/i18n.ts`. Exhaustive switch — adding a 5th `PilotCategory` v
 - `/enter` / `/invitation-invalid` — unchanged.
 - D68 backlog explicitly carries: (a) `mainBadgeX` strings (5 main variants × 2 langs); (b) `mainCategoryX` labels (with the correct "— Main Study Participant" suffix); (c) variant-aware dispatch in `LandingInvited`, `QuestionnaireWizard`, `QuestionnairePreview` for main_* invitations; (d) elimination of the Officials fallback in `QuestionnairePreview` for non-pilot variants.
 
+### D68. Strip "Pilot" wording from participant surfaces + remove the questionnaire badge
+
+**What D67 didn't fix.** D67 routed the per-category dispatch correctly but locked in the explicit pilot framing across every string it touched — "— Pilot Reviewer" suffix on the landing card, "Pilot Version 1 · …" badge in the questionnaire shell, "Pilot Feedback" + "before it is sent more widely" on the feedback section, "pilot feedback questions" in the question-map hint. As Sura prepared to send the first real (non-smoke) invitations, that framing felt off-key: the invited experts are domain authorities whose answers ARE the dataset, not a dress rehearsal. The respondent shouldn't be told they're a "Pilot Reviewer" — that read implies their input is provisional, when methodologically it is not. D68 strips the framing from every participant-facing surface in one pass.
+
+**D67's D68-backlog list (variant-aware dispatch, "— Main Study Participant" suffix, etc.) is OBVIATED by D68's approach.** Once you strip the phase suffix entirely, the labels become phase-agnostic — the same `categoryLabel` helper serves both pilot and main variants without rename or discriminated dispatch. D68's answer to "what should the main_* label say" is: the same thing the pilot label now says. "Researcher" works for a Researcher in either phase; no D68-as-originally-scoped string set is needed.
+
+**Y3 — remove the questionnaire badge entirely.** Three alternatives were considered for the badge:
+
+- **Y1**: per-category neutral text ("Researcher Questionnaire" / "استبيان للباحثين"). Still leaks phase via the "Version 1" remnant; still tells the respondent which group they're slotted into.
+- **Y2**: study name only ("Yarmouk Study" / "دراسة اليرموك"). Redundant with the header's `studyLabel` element a few pixels to the left.
+- **Y3 (chosen)**: drop the badge entirely. Version tracking is backend-only via `responses.questionnaire_version_id`; the badge added zero analytical value to the respondent. The header now contains study label + save indicator + language toggle — three elements, all functional, none decorative.
+
+**7 string changes + 2 JSX removals + 2 prop drops.** The full participant-facing change set:
+
+1. `studyTitle` — landing H1 reworded to the formal thesis-citation phrasing ("Evaluating the 1987 agreement between Jordan and Syria regarding the utilization of Yarmouk River water" / "تقييم اتفاقية عام ١٩٨٧ بين الأردن وسوريا بشأن استغلال مياه نهر اليرموك"). What the thesis chapter + paper title will actually cite; aligning the landing with the citation language is small but right.
+2. `eyebrowLanding` — dropped "· Pilot Phase" / "· المرحلة التجريبية" suffix.
+3. `categoryOfficials`, `categoryResearchers`, `categoryDonors`, `categoryNGOs` — dropped "— Pilot Reviewer" / "— مراجع للنسخة التجريبية" suffix from all 4.
+4. `feedbackSection` — "Pilot Feedback" / "ملاحظات على النسخة التجريبية" → "Feedback" / "ملاحظات".
+5. `feedbackIntro` — dropped "before it is sent more widely" / "قبل توزيعه على نطاق أوسع" trailer.
+6. `mapHint` — "pilot feedback questions" / "أسئلة الملاحظات على النسخة التجريبية" → "feedback questions" / "أسئلة الملاحظات".
+7. (No 7th string — the 7th change is the badge JSX removal counted separately below.)
+
+JSX:
+- `components/QuestionnaireWizard.tsx` — removed the `<span className="chip-solid …">{pilotBadgeLabel(category, t)}</span>` from the sticky header.
+- `components/QuestionnairePreview.tsx` — removed the same chip from the admin preview shell (it mirrored the wizard's chrome).
+
+Props:
+- `QuestionnaireWizard`'s `category: PilotCategory` prop dropped (sole consumer was the badge).
+- `QuestionnairePreview`'s `pilotCategory: PilotCategory | null` prop dropped (same).
+- Parents (`app/(public)/questionnaire/page.tsx` + `app/admin/(protected)/questionnaires/[versionId]/preview/page.tsx`) drop the pass-through accordingly.
+
+**Dead code retained per A2 deferred-cleanup carve-out.** Kept inert with explicit "Unused since D68; remove in a later cleanup cycle" comments:
+
+- `pilotBadgeOfficials`, `pilotBadgeResearchers`, `pilotBadgeDonors`, `pilotBadgeNGOs` — i18n keys.
+- `pilotBadgeLabel` — helper in `lib/i18n.ts`.
+- `variantToPilotCategory` — local function in the admin preview page (carries an `eslint-disable-next-line @typescript-eslint/no-unused-vars` since it's no longer called).
+
+Rationale for keeping vs ripping: ripping touches 4 more files (the i18n keys, the helper, the preview-page function, the import chain) for inert code. The keys + helper are pure data and a pure switch — no behavioral cost. A future cleanup pass can scrub them in one well-scoped commit when the pilot/main distinction is fully retired. The explicit "remove in a later cleanup cycle" comment makes the intent unambiguous; this is NOT abandoned code.
+
+**Admin-side "Pilot" mentions intentionally retained.** Different concern — internal study-phase markers for Sura/Saeed UI, NOT participant-facing:
+
+- `app/admin/(protected)/page.tsx` — Overview eyebrow "Pilot · Version 1" + variant card "Pilot · V1"
+- `app/admin/(protected)/analytics/feedback/page.tsx` — H1 "Pilot Feedback"
+- `lib/repos/questionnaires.ts` — `variantLabel` map ("Pilot · Officials", "Pilot · Researchers", etc.) shown in the admin variant picker
+- `lib/repos/feedback.ts` — `getPilotFeedback` exported symbol (code-only)
+
+The study IS in pilot phase, and the admin operating the platform needs to see that — which dataset is in scope, which variant is being analysed. The participant doesn't need to (and methodologically shouldn't) carry that label. The split between "what Sura sees" and "what the respondent sees" is the D68 principle.
+
+**Out of D68 scope.**
+
+- Migrations, RPC, schema — none touched.
+- Email templates — clean per the audit (no "Pilot" / "تجريب" wording in any subject or body across all 5 templates).
+- `/admin/callback`, `/r/[token]`, `/enter`, `/consent`, cron — unchanged behaviourally.
+- Pure i18n + 2 JSX badge removals + 2 prop drops + 1 parent-page comment tweak. Forward-only.
+
 ## Out of Scope (Explicitly)
 
 - **AI translation** between EN/AR. Button exists in mock as placeholder; clicking does nothing. Real translation would require GPT-4 or DeepL API; deferred.
