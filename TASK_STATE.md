@@ -1,3 +1,41 @@
+## 🟢 PILOT-READY STATE (2026-06-02) — read first
+
+The platform is production-green at `karasneh-research.org`. **Zero active questionnaire variants.** All 4 pilot variants (`pilot_officials`, `pilot_researchers`, `pilot_donors`, `pilot_ngos`) and all 5 main variants (`main_researchers`, `main_donors`, `main_ngos`, `main_officials_jordanian`, `main_officials_syrian`) are in `draft`. Sura controls activation via Path A: Saeed flips `pilot_researchers` to `active` on her "ready to send" signal.
+
+The newer historical body below (everything from § ⚠️ SESSION CARRYOVER 2026-05-24 onward) was last meaningfully refreshed 2026-05-31 — D65/D66/D67/D68/D69 closures were never appended into the prose sections. This top block is the chronological layer that catches up. Future-Saeed prefers layered append over rewrite; the historical body is intentionally left intact.
+
+### Closed since the 2026-05-24 carryover
+
+- **D63 (2026-05-31)** — Withdraw-response = owner-only soft delete (`responses.status` + structural CHECK + first-use of `alert` severity). Cross-cutting filter pass keeps withdrawn rows out of every aggregation.
+- **D64 (2026-06-01, PR #3, 10 commits)** — Auto-reminders (7d/14d via `/api/cron/send-reminders`) + send-failure surface (amber chip on `/admin/invitations`); Path B (token plaintext at rest via `token_plaintext_encrypted`); `errorClass` bucket keeps Resend strings out of audit metadata.
+- **D65 (2026-06-01)** — Admin login switched from clickable magic-link to 6-digit OTP code (Microsoft 365 Defender URL-prefetch defense). `/admin/callback` retained for backward-compat.
+- **D66 (2026-06-02)** — Same prefetch defense for participant invitations. `access_code_encrypted` column + brute-decrypt scan RPC + `/enter` page + `/invitation-invalid` soft fallback. Fresh-claim stamps `access_code_used_at`; resumption unlimited (mirrors URL semantics). Best-effort in-memory rate limit (5/60s/IP) — friction not security. Migration 12003 was fix-forward.
+- **D67 (2026-06-02)** — Per-category labels for the 4 pilot variants — i18n bug surfaced by D66 smoke ("Official — Pilot Reviewer" was rendering for all categories). `categoryLabel(category, t)` + `pilotBadgeLabel(category, t)` helpers + `PilotCategory` union in `lib/i18n.ts`. NGO AR = "منظمات غير حكومية".
+- **D68 (2026-06-02, commit 9ea4774)** — Stripped "Pilot" wording from 7 participant copy surfaces + removed questionnaire badge entirely (Y3). Phase-agnostic copy serves both pilot and main going forward. Dead code retained per A2 carve-out (now closed in D69). Admin-side "Pilot" labels intentionally kept.
+- **D69 (2026-06-02)** — Deferred cleanup batch: (a) D68 A2 dead code removed (`pilotBadgeX` keys, `pilotBadgeLabel` helper, `variantToPilotCategory` function — zero live consumers confirmed pre-edit); (b) `collection_mode` added to `invitations_redacted` view (migration `20260602130000`) — closes Task #55 audit note AND a latent runtime-undefined bug for readonly callers; (c) this TASK_STATE refresh.
+
+### NEXT QUEUE (green — actionable, no decision needed)
+
+- CSV export of pilot responses (admin convenience for analysis hand-off)
+- Bulk invite for main study scaling (current flow is one-at-a-time)
+- Cross-variant analytics (dashboards currently variant-scoped)
+- Rate-limit hardening on `/enter` (D66's best-effort in-memory → per-IP store)
+- Audit-log review UI surface (filter/search the existing `audit_log` table)
+- D66 smoke cases 4 + 5 retroactive (invalid-code audit row check + resend rotation reveal)
+
+### PENDING SURA DECISION (yellow)
+
+- **D70 main-study category labels — re-evaluate if needed.** D68 already made labels phase-agnostic; D70 may be unnecessary. Decision: do main variants need per-category labels at all, or does the D68 copy already cover them?
+- **Main-study D66 defense decision (post-pilot).** Keep OTP-style for participants in main, or simplify? Depends on pilot UX feedback.
+
+### PENDING SURA ACTION (red)
+
+- Pilot activation + launch (Saeed flips `pilot_researchers` to active on signal)
+- Pilot monitoring + completion (read F1-F4 feedback rolling)
+- Main study planning (post-pilot, depends on feedback)
+
+---
+
 ## ⚠️ SESSION CARRYOVER (2026-05-24) — read first
 
 ### NEW WORKSTREAM: Self-service readiness (gates Saeed-removal)
@@ -758,7 +796,7 @@ Full text in `docs/CONVENTIONS.md`. Load-bearing ones the next session needs to 
 - `NEXT_PUBLIC_SITE_URL` — `http://localhost:3000` for dev, `https://karasneh-research.org` for prod
 
 **Naming conventions**
-- Migration files: `YYYYMMDDHHMMSS_name.sql`. Latest applied: `20260523130001` (migration 019); the Session-1 batch is `2026051917000{1..17}`. Next migration would be `…020_*` or later.
+- Migration files: `YYYYMMDDHHMMSS_name.sql`. Latest applied: `20260602130000` (D69 — `invitations_redacted` adds `collection_mode`); the Session-1 batch is `2026051917000{1..17}`. Next migration is `>= 20260602130001`.
 - Vault secrets for PII keys: `pii_key_v<N>`, integer suffix (do not use leading zeros — sort is integer-cast).
 - Question codes: `Q1`-`Q14` for main, `F1`-`F4` for feedback.
 - Ref codes (anonymized display IDs): `{CAT_PREFIX}-{NAT_PREFIX}-{SEQ}` (e.g., `OFF-J-04`). Per CONVENTIONS.md "Reference Code Pattern".

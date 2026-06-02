@@ -909,6 +909,46 @@ The study IS in pilot phase, and the admin operating the platform needs to see t
 - `/admin/callback`, `/r/[token]`, `/enter`, `/consent`, cron — unchanged behaviourally.
 - Pure i18n + 2 JSX badge removals + 2 prop drops + 1 parent-page comment tweak. Forward-only.
 
+---
+
+### D69. Deferred cleanup batch — D68 dead code + `collection_mode` in `invitations_redacted` + TASK_STATE refresh
+
+**Date:** 2026-06-02. **Branch:** `d69-cleanup-batch`. **PR title:** `chore(D69): pilotBadge dead code · invitations_redacted.collection_mode · TASK_STATE refresh`.
+
+Three small deferred items batched into one atomic cleanup PR — each touches different files, no internal conflict, single review surface. Forward-only; no participant-flow surface changed; no email-template edit; pilot variants in DB unchanged.
+
+**ITEM 1 — D68 A2 dead code removal.**
+
+D68 retained `pilotBadgeOfficials` + 3 sibling i18n keys, the `pilotBadgeLabel` helper, and the `variantToPilotCategory` admin-preview function as "intentional dead code — remove in a later cleanup cycle." This closes that carve-out. Pre-edit grep confirmed **zero live consumers** — every reference was inside the dead-code annotations themselves (the symbol's own definition or its own internal switch body). Each removal site updated:
+
+- `lib/i18n.ts` — 4 `pilotBadgeX` keys + the D67/D68 pre-block comment dropped (27 lines). `pilotBadgeLabel` function + JSDoc dropped (23 lines). D67 helper-section header tightened — `categoryLabel` is now the only surviving helper; a D69 note appended explaining the removal.
+- `app/admin/(protected)/questionnaires/[versionId]/preview/page.tsx` — `import type { PilotCategory }` and `import type { Database }` dropped (only consumers were the function + its `QuestionnaireVariant` alias). `QuestionnaireVariant` alias + `variantToPilotCategory` function + their 12-line comment block + the `eslint-disable-next-line` pragma dropped (36 lines). In-body D68 comment tightened to note D69 closure.
+
+**ITEM 2 — `collection_mode` in `invitations_redacted` (Task #55 closure).**
+
+`collection_mode` was added to the base `invitations` table in D58 (migration `20260523130001`) but never propagated to the redacted view. The repo's read path nonetheless tried to read it for readonly callers via the `row as DbRow` NOT-NULL-recovery cast (watch-out #5) — meaning the mapper was reading an undefined attribute at runtime and casting it to a non-null `InvitationCollectionMode`. **This was a latent bug, not just missing visibility.** D69 closes both.
+
+Migration `20260602130000_invitations_redacted_collection_mode.sql` — DROP+CREATE pattern matching D66 migration `20260602120001`. View grows 22 → **23 columns**, `security_invoker = true` preserved, REVOKE+GRANT restated. New column placed after `nationality` (demographic cluster — purely cosmetic; columns are addressed by name in the mapper). Forward-only: every existing row already has `collection_mode` populated thanks to the NOT NULL DEFAULT on the base.
+
+Code-side delta after `npm run db:types` regen:
+
+- `lib/repos/invitations.ts` — JSDoc added to the `collectionMode` field of the `Invitation` type, matching the D64 `lastSendFailedAt` and D66 `accessCodeUsedAt` annotation pattern. Mapper line unchanged (`r.collection_mode` was already the read path; D69 makes it honest). No functional code edit.
+- `lib/supabase/database.types.ts` — regenerated. `Views.invitations_redacted.Row.collection_mode` is `Database["public"]["Enums"]["collection_mode"] | null` per view nullability (watch-out #5). Base table `invitations.Row.collection_mode` stays non-null.
+
+The D69 brief originally referenced a 3-value enum (`'self_completed' | 'interview' | 'phone'`); the D58 migration confirms 2 values (`'self_completed' | 'interview'`). The `InvitationCollectionMode` TS type was already accurate. No TS-side enum update needed.
+
+**ITEM 3 — `TASK_STATE.md` refresh.**
+
+The file last meaningfully updated 2026-05-31; D65/D66/D67/D68 closures were never appended. D69 closes that gap without rewriting the historical body — Future-Saeed prefers chronological layering, so the approach is minimal bracket, not full rewrite. New top block "🟢 PILOT-READY STATE (2026-06-02)" inserted before the existing 2026-05-24 SESSION CARRYOVER, summarising D63 → D69 closures plus NEXT QUEUE / PENDING SURA DECISION / PENDING SURA ACTION sections. §9 "Latest applied" migration line refreshed from `20260523130001` to `20260602130000`. Historical body (§§1-15 including the SESSION CARRYOVER and §12 Session-4 framing) intact.
+
+**Out of D69 scope.**
+
+- Participant flow (`/r/[token]`, `/enter`, `/consent`, `/questionnaire`) — untouched.
+- Email templates — unchanged (no copy edits, no token substitution edits).
+- `/admin/callback`, cron, RPCs (`validate_invitation_token`, `validate_invitation_code`) — unchanged.
+- Pilot variants in DB — all 4 pilots + 5 mains still draft.
+- D70 main-study category labels — explicitly deferred; D68 made labels phase-agnostic and a re-evaluation may show D70 is unnecessary. Tracked as yellow in `TASK_STATE.md`.
+
 ## Out of Scope (Explicitly)
 
 - **AI translation** between EN/AR. Button exists in mock as placeholder; clicking does nothing. Real translation would require GPT-4 or DeepL API; deferred.
