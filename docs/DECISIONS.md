@@ -983,6 +983,67 @@ The button paragraph (line 369) is excluded — its content is a CTA `<a>` butto
 - Schema, RPCs, migrations — none touched.
 - `/admin/callback`, `/r/[token]`, `/enter`, `/consent`, cron — unchanged behaviourally.
 
+---
+
+### D71. `\n → <br>` fallback for Outlook line-break rendering
+
+**Date:** 2026-06-03. **Branch:** `d71-email-br-fallback`. **PR title:** `fix(D71): \n → <br> fallback for Outlook line-break rendering`.
+
+**Bug.** D70's `white-space:pre-line` CSS shipped clean and works in Gmail and Apple Mail — but Outlook / O365 strips the `white-space` property as part of its HTML safety / standardisation pass, so line breaks collapse to a single space again for academic JUST email addresses (which are O365-hosted) and any other O365 recipient. Sura's pilot audience includes O365 recipients; D70 alone is insufficient for cross-client coverage.
+
+**Approach C — defensive layering** (both layers ship together):
+
+- **Layer 1 (D70):** `white-space:pre-line` on every prose `<p>` inline style. Honoured by Gmail + Apple Mail; stripped by Outlook.
+- **Layer 2 (D71):** post-escape, post-linkify `\n → <br>\n` replacement on every non-button section's HTML. The `<br>` is an explicit tag, not a CSS property, so Outlook's standardisation pass preserves it.
+
+Cross-client matrix after D71:
+
+| Client | Layer 1 (CSS) | Layer 2 (`<br>`) | Result |
+|---|---|---|---|
+| Gmail | honoured | honoured | line break renders (CSS-driven; `<br>` is redundant inside a `pre-line` `<p>` but harmless — it adds one break, no doubling) |
+| Apple Mail | honoured | honoured | same as Gmail |
+| Outlook / O365 | stripped | honoured | line break renders (`<br>`-driven) |
+| Older webmail (any) | maybe | honoured | line break renders (`<br>`-driven) |
+
+The "no doubling" claim is load-bearing: `<br>` inside a `white-space:pre-line` paragraph adds exactly one line break in every major client tested — the surrounding `\n` is collapsed as whitespace per the `pre-line` rule (`pre-line` preserves newlines but still collapses adjacent whitespace runs), so the rendered output is one break per `<br>`, identical to the Outlook-only path.
+
+**Implementation — sequencing is load-bearing.** The transform sits inside the existing `escapedSections` construction loop, after `escapeHtml + interpolate` and after the conditional `linkifyAtoms` call:
+
+```ts
+for (const k of spec.sections) {
+  let h = interpolate(escapeHtml(sectionText(k)), tokenValuesEscaped);
+  if (linkifySet.has(k)) h = linkifyAtoms(h, isAr);
+  if (k !== spec.buttonSection) h = h.replace(/\r?\n/g, "<br>\n");
+  escapedSections[k] = h;
+}
+```
+
+Two order-sensitivity points:
+
+- **Replace must run AFTER `escapeHtml`.** If the literal `"<br>"` substring were inserted into the section text BEFORE escape, `escapeHtml` would convert it to `"&lt;br&gt;"` and Outlook recipients would see the source text of the tag rather than a line break. Post-escape is the only correct position.
+- **Replace runs AFTER `linkifyAtoms`** for the section text — `\n` could theoretically affect linkify regexes (`EMAIL_RE` is unaffected because its character class has no `\s`; `PHONE_RE` uses `\s` which matches `\n`, a pre-existing edge case D71 doesn't address). Running `<br>` injection after linkify means the `<br>` tag is inside any anchor text that linkify produced, which renders correctly (the tag is plain ASCII and survives intact through to the email client).
+
+The regex is `/\r?\n/g` — covers both Unix `\n` and Windows `\r\n`. Old-Mac `\r`-only is dead in 2026; not covered.
+
+**Single-site centralised transform.** The alternative was inlining the `.replace()` at each of the 4 `<p>` template-literal sites (lead × 1 + fine × 3 variants). The centralised version is preferred — one branch, one comment, one regex; easy to keep in sync with future changes to the construction pipeline.
+
+**Button section skipped** for the same reason as D70: the button content is a CTA `<a>` label, not prose; CTA labels are single-line by design and a `<br>` inside the anchor's text would visually fracture the button.
+
+**Defaults unchanged.** As of D71, every section body in `lib/email/templates/defaults.ts` is single-line (zero `\n` in any string). The regex matches zero times for default-template input, so layer 2 produces no output change for defaults. The "byte-equivalent to pre-Stage-2 render.ts" claim in the renderer header continues to hold visually for newline-free input across both layers (raw HTML source style attribute is longer by the `;white-space:pre-line` declaration from D70; D71 adds nothing for default input).
+
+**Plain-text path unchanged.** The text join still uses `\n` directly — section text passes through `interpolate()` verbatim, sections joined with `\n\n`, no HTML, no `<br>`. Already correct pre-D70; remains correct post-D71.
+
+**Editor surface unchanged.** Sura's textarea input still accepts raw `\n`. Validation rules unchanged. The fix is render-layer only.
+
+**Out of D71 scope.**
+
+- D70's `white-space:pre-line` CSS — retained, not removed. The two layers are intentionally complementary.
+- `PHONE_RE`-spanning-newline edge case — pre-existing; not addressed by D71.
+- Email template defaults — unchanged; no `\n` to convert.
+- Plain-text rendering — unchanged.
+- Editor UI, schema, RPCs, migrations, types regen — none touched.
+- `/admin/callback`, `/r/[token]`, `/enter`, `/consent`, cron — unchanged behaviourally.
+
 ## Out of Scope (Explicitly)
 
 - **AI translation** between EN/AR. Button exists in mock as placeholder; clicking does nothing. Real translation would require GPT-4 or DeepL API; deferred.
