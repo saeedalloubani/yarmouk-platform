@@ -949,6 +949,40 @@ The file last meaningfully updated 2026-05-31; D65/D66/D67/D68 closures were nev
 - Pilot variants in DB — all 4 pilots + 5 mains still draft.
 - D70 main-study category labels — explicitly deferred; D68 made labels phase-agnostic and a re-evaluation may show D70 is unnecessary. Tracked as yellow in `TASK_STATE.md`.
 
+---
+
+### D70. Preserve line breaks in HTML email render
+
+**Date:** 2026-06-03. **Branch:** `d70-email-template-line-breaks`. **PR title:** `fix(D70): preserve line breaks in HTML email render`.
+
+**Bug.** Sura, mid-editing pilot email templates, hit a rendering bug: newlines (`\n`) inside a section body (e.g. `"Line one.\n\nLine two."` in the invitation `intro` section) collapsed to a single space in the rendered HTML email. Plain-text alternative was correct. Issue was pre-existing — flagged in the D66 STEP 4 read-first as a latent UX problem; D70 closes it now that Sura is actively writing templates and blocked.
+
+**Root cause.** The HTML renderer (`lib/email/templates/render.ts`) wraps each editable section in a `<p>` with an inline style. Browser default for `<p>` is `white-space:normal`, which collapses runs of whitespace (including newlines) to a single space. Sura's `\n` was passing through the escape + interpolate pipeline correctly — the renderer was emitting the newline character into the HTML — but the email client was rendering it as a space, exactly as a browser would render `<p>foo\nbar</p>`. Plain text was unaffected because the text path joins sections with `\n\n` directly into the body, no HTML, no whitespace collapse.
+
+**Approach A (chosen).** Append `;white-space:pre-line` to the inline style on every prose `<p>` wrapper:
+
+- Lead paragraphs (1 site, line 365) — covers intro / personal / expiry on invitation, greeting / body on admin-invite, etc.
+- Fine paragraphs (3 style variants, lines 383 / 385 / 387) — covers contact line and any future fine-placement sections.
+
+The button paragraph (line 369) is excluded — its content is a CTA `<a>` button label, not prose; Sura would not put `\n` in a button label, and `pre-line` on a `<p>` containing an inline-block `<a>` could cause weird wrapping behaviour.
+
+`pre-line` preserves explicit newlines as line breaks while still collapsing other whitespace runs and wrapping at word boundaries — visually identical to default `white-space:normal` for any string that contains no `\n`, so the existing default-template emails render byte-identically to pre-D70 output. The renderer header comment block was updated to document the deviation from the "BYTE-EQUIVALENT to pre-Stage-2 render.ts" claim, which is now visually-equivalent rather than literally byte-equivalent (the style attribute string is longer).
+
+**Approaches considered and rejected.**
+
+- **Approach B — `\n` → `<br>` conversion in the renderer.** Workable but more code: a post-escape pass that swaps `\n` for `<br>` inside each section's HTML, with a corresponding rule that single `\n` becomes a soft break and double `\n` becomes a paragraph break (otherwise visually different from plain text). Rejected: bigger surface area, harder to read at the call site, no behaviour Approach A doesn't already deliver.
+- **Approach C — per-section opt-in for line-break preservation via spec metadata.** Over-engineered. Every prose section a respondent receives benefits from line-break preservation; there's no section where collapsing newlines is the desired behaviour. Adding a spec flag means every template definition has to make the call. Rejected.
+
+**Editor surface unchanged.** Sura's textarea input is unchanged. Save validation (`validateSections`) doesn't inspect whitespace beyond `.trim().length === 0`, so `\n`-containing bodies pass as before. The fix is render-layer only.
+
+**Out of D70 scope.**
+
+- Plain-text rendering — already correct, no edit.
+- Editor UI — unchanged.
+- Email template defaults (`lib/email/templates/defaults.ts`) — unchanged. No default template uses `\n` in any section, so rendered output of the defaults is identical pre/post-D70.
+- Schema, RPCs, migrations — none touched.
+- `/admin/callback`, `/r/[token]`, `/enter`, `/consent`, cron — unchanged behaviourally.
+
 ## Out of Scope (Explicitly)
 
 - **AI translation** between EN/AR. Button exists in mock as placeholder; clicking does nothing. Real translation would require GPT-4 or DeepL API; deferred.
