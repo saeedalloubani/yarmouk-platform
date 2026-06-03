@@ -44,18 +44,43 @@
 //   paragraphs and -2px on the greeting margin vs its pre-Stage-2
 //   bespoke shell — accepted as brand-unification (D22 Stage 2 note).
 //
-// D70 — every prose <p> wrapper (lead + all three fine variants) gets
-//   `white-space:pre-line` appended to its inline style. This preserves
-//   newlines Sura puts in the editor body as visible line breaks in the
-//   rendered HTML email instead of collapsing them to a single space
-//   (browser-default `white-space:normal`). The button paragraph is
-//   excluded — its content is a CTA <a> button label, not prose. Visible
-//   output for templates with no '\n' in any section is unchanged; only
-//   the HTML source style attribute is longer, so the "byte-equivalent
-//   to pre-Stage-2" claim above is now visually-equivalent (not literally
-//   byte-equivalent) for newline-free inputs. Plain-text path unchanged
-//   — section text already passes through interpolate() verbatim so '\n'
-//   is preserved end-to-end.
+// D70 + D71 — line-break preservation in HTML email (defensive Approach C,
+//   two layers shipped together):
+//
+//     LAYER 1 (D70): every prose <p> wrapper (lead + all three fine
+//       variants) gets `white-space:pre-line` appended to its inline
+//       style. Gmail and Apple Mail respect this and render `\n` in the
+//       section body as a visible line break instead of collapsing it to
+//       a single space (browser-default `white-space:normal`).
+//
+//     LAYER 2 (D71): every non-button section also gets a post-escape
+//       post-linkify `\n → <br>\n` replacement applied inside the
+//       escapedSections construction loop (see below). Outlook / O365
+//       strips the white-space CSS property as part of its HTML
+//       standardization pass, so layer 1 alone fails for academic JUST
+//       addresses; the explicit `<br>` tag is what those clients honour.
+//
+//   The button paragraph is excluded from BOTH layers — its content is a
+//   CTA <a> button label, not prose; CTA labels are short single-line
+//   text and `pre-line` on a <p> containing inline-block <a> could
+//   misbehave; `<br>` inside a CTA label would visually fracture the
+//   button.
+//
+//   Templates whose section bodies contain NO `\n` (which is every
+//   default in defaults.ts as of D71) render byte-identically to
+//   pre-D70 HTML at the visible level: layer 1's CSS is a no-op for
+//   newline-free input (`pre-line` ≡ `normal` when there are no
+//   newlines), and layer 2's regex matches zero times so produces no
+//   change. The "BYTE-EQUIVALENT to pre-Stage-2 render.ts" claim above
+//   is therefore now visually-equivalent for newline-free input — the
+//   raw HTML source style attribute is longer (extra `;white-space:
+//   pre-line`), but the rendered output is unchanged.
+//
+//   Plain-text path UNCHANGED across both layers. Section text passes
+//   through interpolate() verbatim with `\n` preserved; the text join
+//   at lines further down assembles sections with `\n\n` between them
+//   directly into the output body. No HTML, no whitespace collapse, no
+//   `<br>` tags — `\n` IS the line break.
 //
 // VALIDATION pipeline (called by save AND test-send — same rules):
 //   1. Each section the spec declares must be a non-empty string.
@@ -368,6 +393,12 @@ export function renderEmailTemplate(args: {
   for (const k of spec.sections) {
     let h = interpolate(escapeHtml(sectionText(k)), tokenValuesEscaped);
     if (linkifySet.has(k)) h = linkifyAtoms(h, isAr);
+    // D71 — layer 2 of the line-break defense (see header). After escape +
+    // linkify so the literal "<br>" survives as a tag (escape runs first
+    // and would otherwise produce "&lt;br&gt;"). Button section skipped
+    // by intent: CTA labels are single-line and a "<br>" would visually
+    // fracture the button.
+    if (k !== spec.buttonSection) h = h.replace(/\r?\n/g, "<br>\n");
     escapedSections[k] = h;
   }
 
