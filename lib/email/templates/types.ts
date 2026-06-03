@@ -83,12 +83,15 @@ export type TemplateFields = {
  *  Unused fields per template — for uniformity the struct shape stays
  *  constant; the per-section allowlist is what actually constrains
  *  which placeholders get substituted in body text:
- *    - invitation     → uses expiry_date + access_code. name/ref_code unused.
- *    - reminder1      → uses expiry_date + access_code. name/ref_code unused.
- *    - reminderFinal  → uses expiry_date + access_code. name/ref_code unused.
- *    - admin-invite   → uses name.                      others unused.
- *    - submission     → uses ref_code.                  others unused.
- *  Callers pass "" for unused string fields.
+ *    - invitation     → uses expiry_date + access_code + name (D72, optional). ref_code unused.
+ *    - reminder1      → uses expiry_date + access_code + name (D72, optional). ref_code unused.
+ *    - reminderFinal  → uses expiry_date + access_code + name (D72, optional). ref_code unused.
+ *    - admin-invite   → uses name (required in greeting).                      others unused.
+ *    - submission     → uses ref_code.                                         others unused.
+ *  Callers pass "" for unused string fields. `name` is optional in the
+ *  type (undefined → empty interpolation in render.ts:valuesFor); see
+ *  D72 for why participant templates degrade name-decrypt failures to
+ *  empty rather than aborting the send.
  *
  *  D66 — access_code is the participant 6-digit URL-prefetch fallback.
  *  invitation + reminder1 + reminderFinal interpolate {access_code} into
@@ -203,6 +206,12 @@ export const TEMPLATE_SPECS: Record<TemplateId, TemplateSpec> = {
     }),
     linkify: ["contact"],
     allowedPlaceholders: fillSectionRecord<readonly PlaceholderToken[]>([], {
+      // D72 — {name} allowed (not required) in intro across all 3
+      // participant templates. Sura opts in by writing "Hello {name},"
+      // in the editor. Recipients without a name (or whose name decrypt
+      // fails) render the token as empty (see valuesFor() in render.ts:
+      // name ?? "").
+      intro: ["name"],
       expiry: ["expiry_date"],
       // D66 — access_code is REQUIRED in this section (see required map
       // below). Sura editing the body text cannot accidentally ship a
@@ -242,6 +251,8 @@ export const TEMPLATE_SPECS: Record<TemplateId, TemplateSpec> = {
     }),
     linkify: ["contact"],
     allowedPlaceholders: fillSectionRecord<readonly PlaceholderToken[]>([], {
+      // D72 — see invitation spec above for the {name}-in-intro rationale.
+      intro: ["name"],
       expiry: ["expiry_date"],
       access_code: ["access_code"],
     }),
@@ -274,6 +285,8 @@ export const TEMPLATE_SPECS: Record<TemplateId, TemplateSpec> = {
     }),
     linkify: ["contact"],
     allowedPlaceholders: fillSectionRecord<readonly PlaceholderToken[]>([], {
+      // D72 — see invitation spec above for the {name}-in-intro rationale.
+      intro: ["name"],
       expiry: ["expiry_date"],
       access_code: ["access_code"],
     }),

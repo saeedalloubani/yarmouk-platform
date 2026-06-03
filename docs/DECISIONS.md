@@ -1044,6 +1044,70 @@ The regex is `/\r?\n/g` — covers both Unix `\n` and Windows `\r\n`. Old-Mac `\
 - Editor UI, schema, RPCs, migrations, types regen — none touched.
 - `/admin/callback`, `/r/[token]`, `/enter`, `/consent`, cron — unchanged behaviourally.
 
+---
+
+### D72. `{name}` placeholder in participant-template intro sections
+
+**Date:** 2026-06-03. **Branch:** `d72-name-placeholder-intro`. **PR title:** `feat(D72): allow {name} placeholder in intro section across participant templates`.
+
+**Bug.** Sura tried writing `Hello {name},` in the intro of a pilot invitation template and hit the validator: `"intro" contains unknown placeholder "{name}". This section does not accept placeholders.` Standard greeting personalisation was blocked across all 3 participant templates (`invitation`, `reminder1`, `reminderFinal`).
+
+**Brief misread the depth.** The original D72 brief proposed a 3-line edit to `TEMPLATE_SPECS.allowedPlaceholders.intro` in `lib/email/templates/types.ts`. Read-first surfaced two additional gaps that would have made the validator pass while leaving the email broken:
+
+1. **Wrappers don't pass `name`.** Both `lib/email/invitation.ts:144` and `lib/email/reminder.ts:158` call `renderEmailTemplate({ template, values: {...} })` with `expiry_date`, `ref_code`, `access_code`, `button_href` — and no `name` field. `RuntimeValues.name` is optional in the type, so the omission compiles silently.
+2. **`interpolate()` leaves unmapped tokens LITERAL.** `render.ts:191-199` returns the whole `{name}` token unchanged when the value is undefined (the JSDoc on the function makes this explicit — defensive against typos, relying on `requiredPlaceholders` to catch missing load-bearing values). Combined with point 1, shipping the types.ts edit alone would have rendered `Hello {name},` literally in the recipient's email.
+
+**Expanded scope (Approach: proper fix).** Six surgical changes, no migration, no schema, no types regen:
+
+- `lib/email/templates/types.ts` — three identical one-line additions: `intro: ["name"]` in `allowedPlaceholders` for `invitation`, `reminder1`, `reminderFinal`. **Not in `requiredPlaceholders`** — personalisation is opt-in; an intro without `{name}` still saves and renders. The "unused per template" doc block on `RuntimeValues` is refreshed to reflect that `name` is now used (allowed-only) by all 3 participant templates.
+- `lib/email/templates/render.ts` — `valuesFor()` now defaults `name` to `""` when the caller omits it (`values.name ?? ""`). Defensive single-site fix — any current or future caller that forgets to pass `name` degrades to `Hello ,` rather than exposing the literal token. Load-bearing tokens (`expiry_date`, `access_code`) are still protected by the `requiredPlaceholders` save-time validator, so they cannot reach this path empty.
+- `lib/email/invitation.ts` — `SendInvitationEmailInput` gains `name?: string | null`; wrapper passes `input.name ?? ""` into render values.
+- `lib/email/reminder.ts` — same `name?: string | null` field on `SendReminderEmailInput`.
+- `lib/actions/invitations.ts` (two sites):
+  - **Create flow (line 318):** passes `name: v.name` directly — `v.name` is the plaintext name Sura just entered (Zod-validated min(1)). Already in scope; no decrypt needed.
+  - **Resend flow (line 590):** adds a non-fatal decrypt of `inv.recipientNameEncrypted` alongside the existing email decrypt. A name-decrypt failure logs the bucket only and degrades to empty — does NOT abort the send. Contrast with the email decrypt above, which IS fatal (a missing recipient address makes the send impossible). Same scope discipline: name held only for the send, never logged, never audited.
+- `app/api/cron/send-reminders/route.ts`:
+  - Candidate query SELECT widened to include `recipient_name_encrypted`. The row is NOT excluded when the column is NULL (legacy invites without a name).
+  - `Candidate` type gains `recipient_name_encrypted: string | null`.
+  - `dispatchOne` adds a fourth decrypt step (after email, token, access_code): non-fatal, mirrors the resend flow's posture. `namePlaintext` is local, handed once to the wrapper, falls out of scope at return.
+
+**Why name-decrypt is non-fatal and email/token/access_code are fatal.** Email and token are required to deliver the reminder at all (no address, no link, no send). Access code is a required placeholder per `TEMPLATE_SPECS.requiredPlaceholders` and the body's `{access_code}` section will fail save-time validation if Sura tries to ship a template without it — runtime needs a real value. `name` is allowed-only: an intro that doesn't reference `{name}` renders identically with or without it; an intro that does reference it degrades to `Hello ,` (visibly suboptimal but deliverable) rather than failing the send. The load-bearing goal — participant receives their link — survives a name-decrypt hiccup.
+
+**PII discipline preserved.** Both new decrypt sites follow the existing innermost-iteration pattern: decrypt → pass to wrapper → falls out of scope. Never logged, never audited. The cron loop and the resend action both bucket decrypt errors to `errorClass=config` (no PII echo). The new wrapper input field carries an explicit JSDoc reminder of the discipline. The `recipient_name_encrypted` column is the existing PII column populated since invitation create (encrypted at rest via the same Vault key as email); D72 doesn't add a new PII surface, it just consumes an existing one for a new purpose.
+
+**`{name}`-in-intro scope locked.** Not added to `personal`, `cta`, or any other section. Intro is the conventional location for a greeting; spreading `{name}` across multiple sections would create editor ambiguity about where greetings go. The personal/cta sections stay placeholder-free.
+
+**Defaults unchanged.** `lib/email/templates/defaults.ts` continues to ship no-`{name}` intros across all 5 templates × 2 languages — current default copy renders byte-identically pre/post-D72. Sura adds `{name}` to her customised intros via the editor; the validator now accepts it.
+
+**Admin-side templates unchanged.** `admin-invite` already has `{name}` in the dedicated `greeting` section (required there). `submission` has its own scheme (ref_code only). D72 does not touch either spec.
+
+**Bundled fix — pre-existing PII discipline gap at line 581 (D64-era).** While reviewing the resend action for the D72 name-decrypt addition, the verification pass surfaced an adjacent log line from the original D64 work:
+
+```ts
+// pre-D72:
+console.error("[invitations] resend decrypt_pii failed", dErr);
+```
+
+`dErr` is a Supabase `PostgrestError` carrying `message`/`details`/`hint`/`code` strings. In the standard Vault-blind decrypt-failure path these are generic ("function does not exist", "permission denied"), but a misconfigured-RLS error could theoretically echo row content into the message. The D72 logs added immediately below this one (both name-decrypt failures, lines 609-611 and the cron variant) deliberately use literal-bucket-only strings to match the project-wide pattern established in D63 / D64 / D66 / D72 itself — so leaving the adjacent older log in object-passing form is an inconsistency.
+
+The fix is a single-line change in the same file the D72 work already touches:
+
+```ts
+// post-D72:
+console.error("[invitations] resend decrypt_pii failed errorClass=config");
+```
+
+No information loss — the failure is already recorded as `errorClass=config` on the audit row (`recordInvitationSendFailure` at lines 584-589), which is the forensic surface; the `console.error` is incidental operator visibility. Bundled into D72 rather than spun off as D73 because: (a) it's a one-line change in a file D72 already touches, (b) it closes a PII discipline gap immediately adjacent to D72's own work, and (c) PII-discipline absoluteness outranks file-touch minimalism — the project rule is "never log PII," not "wait for a dedicated PR to fix older non-compliance once you're already editing the file." No effect on control flow; same fatal posture for email-decrypt failure (recorded + skipped).
+
+**Out of D72 scope.**
+
+- Email template defaults (`lib/email/templates/defaults.ts`) — unchanged. Sura opts in to `{name}` via the editor; defaults stay clean.
+- `personal`, `cta`, `contact` sections — placeholder rules unchanged.
+- `admin-invite`, `submission` templates — unchanged.
+- Making `{name}` REQUIRED in intro — deliberately not done; recipients without names (or whose name decrypt fails) would block ship.
+- Schema, RPCs, migrations, types regen — none touched.
+- Editor UI, `/admin/callback`, `/r/[token]`, `/enter`, `/consent` — unchanged behaviourally.
+
 ## Out of Scope (Explicitly)
 
 - **AI translation** between EN/AR. Button exists in mock as placeholder; clicking does nothing. Real translation would require GPT-4 or DeepL API; deferred.

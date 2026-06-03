@@ -322,6 +322,11 @@ export async function createInvitationAction(
         tokenUrl,
         expiresAt: new Date(v.expiresAt).toISOString(),
         accessCode: accessCodePlaintext, // D66
+        // D72 — `v.name` is the plaintext name Sura just entered in the
+        // form (Zod-validated min(1)). We already encrypted it into
+        // `nameEnc` above for storage; here we pass the plaintext for
+        // {name} interpolation. Stays in scope only for this send.
+        name: v.name,
       });
       emailed = sent.ok;
       if (sent.ok) {
@@ -573,7 +578,12 @@ export async function resendInvitationAction(
   });
   let emailed = false;
   if (dErr || !email) {
-    console.error("[invitations] resend decrypt_pii failed", dErr);
+    // D72 (bundled) — drop the PostgrestError object from the log: a
+    // misconfigured-RLS error could echo row content. Match the D72
+    // name-decrypt log shape (literal bucket only); the failure is
+    // already recorded as errorClass=config in the audit row below for
+    // forensic context.
+    console.error("[invitations] resend decrypt_pii failed errorClass=config");
     // D64 — decrypt failure prevents the send entirely. Surface as
     // 'config' (vault / key issue, not a Resend layer failure).
     await recordInvitationSendFailure(supabase, {
@@ -583,6 +593,31 @@ export async function resendInvitationAction(
       errorClass: "config",
     });
   } else {
+    // D72 — also try to decrypt the recipient name for {name} interpolation.
+    // Distinct from the email decrypt above: a name-decrypt failure is
+    // NON-FATAL (the reminder body's {name} is allowed-only, not required;
+    // the recipient still needs to receive their link, which is the
+    // load-bearing goal). On failure we degrade to "" — the renderer
+    // interpolates empty harmlessly for any intro that doesn't reference
+    // {name}, and renders "Hello ," (visibly suboptimal but deliverable)
+    // for one that does. Same scope discipline as `email`: held only for
+    // this send, never logged, never audited.
+    let name: string | null = null;
+    if (inv.recipientNameEncrypted) {
+      const { data: nameDec, error: nameErr } = await supabase.rpc(
+        "decrypt_pii",
+        { p_ciphertext: inv.recipientNameEncrypted }
+      );
+      if (nameErr) {
+        // Log the bucket only — error.message could echo PII in
+        // unusual key-rotation states. Don't fail the send.
+        console.error(
+          "[invitations] resend decrypt_pii(name) failed errorClass=config — degrading to empty {name}"
+        );
+      } else if (typeof nameDec === "string") {
+        name = nameDec;
+      }
+    }
     // D64 — try/catch added so a wrapper-throw (missing RESEND_API_KEY)
     // doesn't escape the action and leave the caller with a rotated
     // token AND no audit/badge. Pre-D64 this could propagate out.
@@ -594,6 +629,7 @@ export async function resendInvitationAction(
         tokenUrl,
         expiresAt: newExpiry,
         accessCode: accessCodePlaintext, // D66
+        name, // D72 — null degrades to "" in the wrapper / valuesFor
       });
       emailed = sent.ok;
       if (!sent.ok) {

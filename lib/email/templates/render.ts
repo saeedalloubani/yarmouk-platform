@@ -241,12 +241,22 @@ function interpolate(
  *
  *  D66 — access_code added for invitation + reminder1 + reminderFinal.
  *  Other templates pass "" (uniform struct); the per-section allowlist
- *  ensures only the three participant templates can interpolate it. */
+ *  ensures only the three participant templates can interpolate it.
+ *
+ *  D72 — `name` defaults to "" when the caller doesn't pass it (the field
+ *  is optional in RuntimeValues). Without this, interpolate() would leave
+ *  the literal "{name}" in the rendered output (see its JSDoc) — visible
+ *  to recipients as `Hello {name},`. Defensive at this single site means
+ *  any current or future caller that omits `name` degrades to "Hello ,"
+ *  rather than exposing the template grammar. Load-bearing tokens
+ *  (expiry_date, access_code) are still required to be non-empty by
+ *  TEMPLATE_SPECS.requiredPlaceholders — they cannot reach this code path
+ *  empty without bypassing save-time validation. */
 function valuesFor(
   values: RuntimeValues
 ): Record<PlaceholderToken, string | undefined> {
   return {
-    name: values.name,
+    name: values.name ?? "",
     expiry_date: values.expiry_date,
     ref_code: values.ref_code,
     access_code: values.access_code,

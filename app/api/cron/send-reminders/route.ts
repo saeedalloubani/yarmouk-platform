@@ -224,7 +224,11 @@ async function dispatchKind(
   const { data: candidates, error: queryErr } = await admin
     .from("invitations")
     .select(
-      "id, ref_code, preferred_language, expires_at, recipient_email_encrypted, token_plaintext_encrypted, access_code_encrypted"
+      // D72 — recipient_name_encrypted added so dispatchOne can decrypt
+      // it for {name} interpolation (allowed-only on intro). Non-fatal:
+      // the row is NOT excluded when this column is NULL (legacy invites
+      // without a name) — decrypt-fail degrades to empty.
+      "id, ref_code, preferred_language, expires_at, recipient_email_encrypted, recipient_name_encrypted, token_plaintext_encrypted, access_code_encrypted"
     )
     .in("status", ["sent", "opened"])
     .lte("sent_at", cutoff)
@@ -301,6 +305,10 @@ type Candidate = {
   preferred_language: string; // narrowed below
   expires_at: string;
   recipient_email_encrypted: string;
+  /** D72 — nullable: legacy invites + future flows might not have one.
+   *  dispatchOne attempts decrypt non-fatally; an empty/missing name
+   *  degrades to "" at the renderer (intro's {name} is allowed-only). */
+  recipient_name_encrypted: string | null;
   token_plaintext_encrypted: string | null;
   access_code_encrypted: string | null; // D66
 };
@@ -403,6 +411,36 @@ async function dispatchOne(
     return false;
   }
 
+  // b''. D72 — decrypt the recipient name for {name} interpolation in the
+  //      intro section. Allowed-only placeholder — Sura's intro template
+  //      may or may not reference {name}. NON-FATAL contrasted with the
+  //      email/token/access_code decrypts above: a missing name doesn't
+  //      block the send; the renderer interpolates "" for an absent value
+  //      and a reminder body that doesn't reference {name} renders
+  //      identically. Same scope discipline: `namePlaintext` is local to
+  //      this function, handed once to the wrapper, then falls out of
+  //      scope at return. NEVER logged, NEVER audited.
+  let namePlaintext: string | null = null;
+  if (row.recipient_name_encrypted) {
+    const { data: nameDec, error: decryptNameErr } = await admin.rpc(
+      "decrypt_pii",
+      { p_ciphertext: row.recipient_name_encrypted }
+    );
+    if (decryptNameErr) {
+      // Log the bucket only — error.message could echo PII in unusual
+      // key-rotation states. The send proceeds with empty name.
+      console.error(
+        "[cron]",
+        kind,
+        "decrypt(name) failed for",
+        row.ref_code,
+        "errorClass=config — degrading to empty {name} (non-fatal)"
+      );
+    } else if (typeof nameDec === "string") {
+      namePlaintext = nameDec;
+    }
+  }
+
   // c. Compose the reminder URL — same shape as buildInvitationUrl
   //    (lib/tokens.ts): `${SITE_URL}/r/<plaintext>`. We don't reuse
   //    buildInvitationUrl directly because it reads NEXT_PUBLIC_SITE_URL
@@ -426,6 +464,7 @@ async function dispatchOne(
       expiresAt: row.expires_at,
       kind,
       accessCode: accessCodePlaintext, // D66
+      name: namePlaintext, // D72 — null degrades to "" in wrapper / valuesFor
     });
   } catch {
     console.error(
