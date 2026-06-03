@@ -44,6 +44,19 @@
 //   paragraphs and -2px on the greeting margin vs its pre-Stage-2
 //   bespoke shell — accepted as brand-unification (D22 Stage 2 note).
 //
+// D70 — every prose <p> wrapper (lead + all three fine variants) gets
+//   `white-space:pre-line` appended to its inline style. This preserves
+//   newlines Sura puts in the editor body as visible line breaks in the
+//   rendered HTML email instead of collapsing them to a single space
+//   (browser-default `white-space:normal`). The button paragraph is
+//   excluded — its content is a CTA <a> button label, not prose. Visible
+//   output for templates with no '\n' in any section is unchanged; only
+//   the HTML source style attribute is longer, so the "byte-equivalent
+//   to pre-Stage-2" claim above is now visually-equivalent (not literally
+//   byte-equivalent) for newline-free inputs. Plain-text path unchanged
+//   — section text already passes through interpolate() verbatim so '\n'
+//   is preserved end-to-end.
+//
 // VALIDATION pipeline (called by save AND test-send — same rules):
 //   1. Each section the spec declares must be a non-empty string.
 //   2. Any {token} appearing in a section must be in the per-section
@@ -362,7 +375,7 @@ export function renderEmailTemplate(args: {
   const leadHtml: string[] = leadKeys.map((k, i) => {
     const isLast = i === leadKeys.length - 1;
     const marginBottom = isLast ? "26px" : "16px";
-    return `<p style="margin:0 0 ${marginBottom};font-size:16px;line-height:${introLh};color:#33322f">${escapedSections[k]}</p>`;
+    return `<p style="margin:0 0 ${marginBottom};font-size:16px;line-height:${introLh};color:#33322f;white-space:pre-line">${escapedSections[k]}</p>`;
   });
 
   // Button paragraph — fixed margin 0 0 28px, label = buttonSection text.
@@ -380,11 +393,11 @@ export function renderEmailTemplate(args: {
       let style: string;
       if (isLast) {
         // last fine paragraph — closer styling
-        style = `margin:12px 0 0;font-size:14px;line-height:${fineLh};color:#5f5e59`;
+        style = `margin:12px 0 0;font-size:14px;line-height:${fineLh};color:#5f5e59;white-space:pre-line`;
       } else if (isFirst) {
-        style = `margin:0;font-size:13px;line-height:${fineLh};color:#8a8982`;
+        style = `margin:0;font-size:13px;line-height:${fineLh};color:#8a8982;white-space:pre-line`;
       } else {
-        style = `margin:4px 0 0;font-size:13px;line-height:${fineLh};color:#8a8982`;
+        style = `margin:4px 0 0;font-size:13px;line-height:${fineLh};color:#8a8982;white-space:pre-line`;
       }
       return `<p style="${style}">${escapedSections[k]}</p>`;
     });
