@@ -61,6 +61,14 @@ export type SendInvitationEmailInput = {
    *  caller must always supply a non-empty value for participant invites;
    *  the renderer's validator rejects send-with-empty. */
   accessCode: string;
+  /** D72 — plaintext recipient name for the {name} placeholder in the
+   *  intro section (ALLOWED, not required — Sura opts in by editing the
+   *  intro template). Optional: caller may omit if the name is
+   *  unavailable (legacy row, decrypt failure) — renderer degrades to
+   *  empty interpolation. PII: caller is responsible for keeping this
+   *  scoped (decrypt → pass → falls out of scope after send), NEVER
+   *  log, NEVER audit. Same discipline as `to`. */
+  name?: string | null;
 };
 
 /**
@@ -144,6 +152,11 @@ export async function sendInvitationEmail(
   const { subject, text, html } = renderEmailTemplate({
     template,
     values: {
+      // D72 — pass plaintext name (or empty if caller didn't supply one).
+      // Allowed-only placeholder; empty string interpolates harmlessly
+      // for any intro that doesn't reference {name}. PII discipline: the
+      // value is held only for the duration of this render + Resend call.
+      name: input.name ?? "",
       expiry_date,
       ref_code: input.refCode,
       access_code: input.accessCode, // D66 — 6-digit fallback

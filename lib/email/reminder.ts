@@ -72,6 +72,17 @@ export type SendReminderEmailInput = {
    *  audited). Interpolated into the {access_code} REQUIRED placeholder
    *  on reminder1 + reminderFinal. */
   accessCode: string;
+  /** D72 — plaintext recipient name for the {name} placeholder in the
+   *  intro section (ALLOWED, not required). Decrypted from
+   *  invitations.recipient_name_encrypted by the cron's per-row loop
+   *  alongside email + token + access_code; scoped to the iteration,
+   *  NEVER logged, NEVER audited. Optional in the type: a decrypt
+   *  failure for `name` is NON-FATAL (degrade to empty) because the
+   *  reminder is still deliverable; an empty `Hello ,` is uglier than
+   *  ideal but the participant still gets their link, which is the
+   *  load-bearing goal. Contrast with email/token/access_code where
+   *  decrypt failure aborts the send (those are not optional). */
+  name?: string | null;
 };
 
 /**
@@ -158,6 +169,10 @@ export async function sendReminderEmail(
   const { subject, text, html } = renderEmailTemplate({
     template,
     values: {
+      // D72 — pass plaintext name (or empty if cron decrypt failed). The
+      // reminder body's {name} placeholder is allowed-only; an empty
+      // value renders harmlessly for templates that don't reference it.
+      name: input.name ?? "",
       expiry_date,
       ref_code: input.refCode,
       access_code: input.accessCode, // D66 — 6-digit fallback
