@@ -1108,6 +1108,36 @@ No information loss — the failure is already recorded as `errorClass=config` o
 - Schema, RPCs, migrations, types regen — none touched.
 - Editor UI, `/admin/callback`, `/r/[token]`, `/enter`, `/consent` — unchanged behaviourally.
 
+### D73 — Pilot-Feedback Hub aggregates by question_code (cross-variant pool)
+
+**Bug.** When OFF-JOR-02's submission landed — the first real pilot response — Sura opened `/admin/analytics/feedback` and saw each feedback question (F1–F4) rendered **four times**: one section carrying her real Arabic answer, three empty sections labelled "No responses to this question yet." A 4×-per-code, 1-real-3-empty pattern, on every feedback question.
+
+**Root cause.** `lib/repos/feedback.ts:getPilotFeedback()` pulled the feedback question list with `from("questions").eq("is_feedback", true).order("order_index", ASC)` — **no `version_id` filter, no grouping by `question_code`**. Each of the 4 active pilot variants (officials / researchers / donors / ngos) has its own F1–F4 rows in the `questions` table with distinct UUIDs (`UNIQUE (version_id, question_code)`, so the code appears once *per variant*, 16 rows total). The hub page (`feedback/page.tsx:54`) then mapped one `<FeedbackSection>` per row, producing 16 sections. The in-memory answers join was keyed by `question_id` (one of N variant UUIDs for the same code), so OFF-JOR-02's officials-variant F1 answer landed only in the officials-variant F1 section; the other three F1 sections (researchers / donors / ngos) joined zero answers and rendered the empty-state branch. Same pattern for F2–F4.
+
+**Why first-time-visible.** The hub short-circuits to its empty-state card when `totalAnswers === 0` (`feedback/page.tsx:47`). Since the hub launched with zero submissions, the 16-section map never executed against real data — OFF-JOR-02 was the first to push the sum above zero and surface the duplication.
+
+**Fix — cross-variant pool, display layer only.**
+
+1. After the questions query, build `idToCode: Map<question_id, question_code>` across **all** 16 variant rows (needed before dedupe so the answers-join can collapse any variant's UUID to its canonical code).
+2. Dedupe the questions list by `question_code`, keeping first-seen — since the query is `ORDER BY order_index ASC`, the first-seen row is the lowest-`order_index` representative per code. Text is byte-identical across variants (seed migration `20260524150001` audit: "shared core … md5-verified"), so any variant's row is a valid representative; the donors/ngos rows happen to win the tie because their feedback block starts at the lowest `order_index` (10). Result: 4 questions instead of 16.
+3. Re-key the in-memory answers join from `question_id` to `question_code` via `idToCode.get(a.question_id)`. Answers from **any** variant's F1 now bucket into the single F1 section.
+4. Return shape (`FeedbackQuestion[]`) unchanged — page render at `feedback/page.tsx` and the `FeedbackSection` component contract are untouched. The map's existing `key={q.questionCode}` now receives 4 unique codes instead of 4 each used 4× → a latent React duplicate-key dev warning is resolved as a side benefit.
+
+**Cross-variant pooling — intent confirmed.** F1–F4 are about questionnaire UX (clarity, length, missing topics, completion time) — exactly the kind of signal that should pool across pilot participant categories rather than splitting by category. Sura confirmed at greenlight: this is the correct unit for v1. A per-variant breakdown ("did researchers find F2 too long more than donors?") would be a follow-on analytics feature for the main study, not a regression of D73.
+
+**Real-data safety.** Zero schema change. Zero DB mutation. Pure read-aggregation transform inside one repo function. OFF-JOR-02's row in `answers` is untouched; her four Arabic feedback answers (`لا`, `لا`, the substantive comment about حوض اليرموك, `30 دقيقه مع المراجعه`) re-aggregate under the deduped F1/F2/F3/F4 sections without the underlying row ever being touched. The current DB state has exactly one submitted response, so the pooled view and the single-variant view are visually identical until a second category submits — the fix changes nothing visible *today* and starts doing useful work the moment a researcher/donor/NGO submits.
+
+**Why one file, why display layer.** The brief's safety constraint is absolute: the first real participant's data is sacred. The bug is purely in how the questions table's natural per-variant duplication is consumed by the hub aggregator — not in storage, not in the questionnaire flow, not in the answers shape. Fixing it anywhere downstream of `answers` is safer than touching `questions` (which would invite a `DELETE`/`UPDATE` and possibly orphan the live FK from `answers.question_id`). Repo-layer transform is the smallest, safest, most reversible surface.
+
+**Architectural follow-on (NOT in D73).** When the main study launches and per-variant breakdowns become useful, the right shape is a second function (`getPilotFeedbackByVariant`) or an opt-in flag on this one (`getPilotFeedback({ groupBy: "code" | "variant" })`) — not a refactor of this fix. D73 establishes the pooled view as the v1 contract.
+
+**Out of D73 scope.**
+
+- Response detail page (`/admin/responses/[id]`) — was investigated as the suspected source; turns out it queries by `version_id` and is unaffected. No change.
+- The other 12 feedback question rows (researchers / donors / ngos × F1–F4 with no submissions) — left in place. They become the natural recipient buckets when those variants submit; they are not orphans.
+- Per-variant analytics breakdown — main-study follow-on.
+- Schema, RPCs, RLS, migrations, types regen — none touched.
+
 ## Out of Scope (Explicitly)
 
 - **AI translation** between EN/AR. Button exists in mock as placeholder; clicking does nothing. Real translation would require GPT-4 or DeepL API; deferred.
