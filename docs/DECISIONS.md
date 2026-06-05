@@ -1138,6 +1138,61 @@ No information loss — the failure is already recorded as `errorClass=config` o
 - Per-variant analytics breakdown — main-study follow-on.
 - Schema, RPCs, RLS, migrations, types regen — none touched.
 
+## D74 — Pilot Response Export Center (CSV/XLSX, owner-only, audit-logged)
+
+**Bug / motivation.** First real pilot submission landed (OFF-JOR-02 — Jordanian official, 14 answers, real Arabic content, ~57-minute engagement). Sura needs a way to extract response data for analytical work. With 1–7 responses in flight during the pilot and ATLAS.ti handoff still ~2 months out, an export pipeline is the right foundation: it builds the long-format that becomes the basis for the eventual ATLAS.ti-shaped output (D18/D19 backlog) and lets Sura validate her pipeline on real data before the main study scales it.
+
+**Shape.** Long format — 1 row per (response × answer), 18 denormalized columns: `ref_code`, decrypted `recipient_name` + `recipient_email`, invitation operational state (`category`, `nationality`, `preferred_language`, `collection_mode`, `sent_at`, `opened_at`), response timestamps (`started_at`, `submitted_at`), `consent_signed_at` as a boolean-equivalent timestamp, question metadata (`question_code`, `question_order_index`, `is_feedback`, `question_text_en`, `question_text_ar`), and `answer_text`. Question text repeats per row (ATLAS.ti-friendly). Sorted `submitted_at` ASC × `question.order_index` ASC.
+
+**Access posture — owner-only by construction.** Page (`app/admin/(protected)/exports/page.tsx`) + Route Handler (`app/admin/(protected)/exports/download/route.ts`) gate mirrors `/admin/security` verbatim: anonymous → `/admin/login`, non-owner → `/admin` (page); 401 / 403 (route — no redirect, so fetches see a clear status). The repo (`lib/repos/exports.ts`) deliberately queries the `invitations` BASE TABLE (not `invitations_redacted`) because both call sites redirect/403 non-owners BEFORE the repo loads. A readonly admin reaching this code path is a programming error; the page-level owner gate is the contract.
+
+**Decrypt posture — ALL-OR-NOTHING.** The repo iterates invitations and calls `decrypt_pii` for `recipient_name_encrypted` and `recipient_email_encrypted`. The FIRST decrypt failure throws `ExportDecryptFailedError`; no partial export is ever returned. The route handler catches it, writes a `warn`-severity audit row with `errorClass='config'` (bucket only — `error.message` from the Vault RPC can echo recipient PII in unusual key-rotation states and is NEVER logged or persisted), and surfaces a safe banner to the operator: *"Export failed: PII decrypt error. Check admin DR documentation in RUNBOOK."* This is the same posture the reminder cron uses for its decrypt failures (config-bucket only), elevated to export granularity: ANY failure aborts EVERYTHING.
+
+**Excluded by design.**
+
+- `token_hash`, `token_plaintext_encrypted`, `access_code_encrypted` — one-time auth secrets, NOT research data. NEVER exported (they're RUNBOOK-recovery artifacts and a copy of them in a CSV is a credential leak).
+- `consent_records.signed_name_encrypted` — column 12 is `consent_signed_at` (the timestamp) only, boolean-equivalent: a non-null `signed_at` means consent was given. The participant's name from the invitation row (column 2) is the canonical identity; the consent signature is a legal artifact, not analytical data.
+
+**Filters.**
+
+- `responses.submitted_at IS NOT NULL` AND `responses.status = 'active'` — matches the D63 cross-cutting filter map for analytical surfaces. Withdrawn responses are excluded; participants who withdrew should not appear in Sura's analysis dataset.
+- `is_locked` is NOT a filter (lock = edit gating after submission, not analytical exclusion).
+
+**Audit posture — single entry per attempt, post-completion only.**
+
+- Success: `action='export.responses'`, `severity='info'`, `metadata={scope, format, responseCount, refCodes}`. Ref codes are PUBLIC identifiers (already on `invitations_redacted` + admin chips), so they're the right forensic grain — Saeed/Sura can see exactly WHICH exports happened without leaking PII.
+- Failure: `action='export.responses.failed'`, `severity='warn'`, `metadata={scope, format, errorClass: 'config' | 'unknown'}`. NEVER `error.message`, NEVER decrypted name/email. The failure metadata is PII-free by construction.
+- NO "started" row. The audit log records OUTCOMES, not in-flight attempts. The brief locked this as an explicit posture: a single audit entry per export attempt; if logAudit itself throws after a successful download, the user keeps their data (it already left the server) and the gap surfaces in `console.error` rather than blocking the response.
+
+**Why exceljs (vs xlsx/SheetJS).** `CLAUDE.md` anchors the planned ATLAS.ti exporter to `exceljs` already; adopting it for D74 means D18/D19 won't need to migrate libraries. Server-side only (imported inside the Route Handler), so zero client-bundle impact. Single new top-level dependency.
+
+**CSV encoding.** UTF-8 with BOM prefix (`﻿`). Critical for Arabic rendering in Excel-on-Windows — without it the BOM-less file gets opened as Latin-1 and Arabic surfaces as mojibake. Body uses CRLF line endings per RFC 4180 and double-quote escaping for fields containing comma / quote / CR / LF.
+
+**XLSX layout.** Single sheet "responses"; header row bold; long-text columns (`question_text_en`, `question_text_ar`, `answer_text`) have `wrapText: true` so multi-paragraph Arabic answers render readably without manual column resize. No BOM (XLSX is unicode-safe by container format). Column widths tuned for first-open readability.
+
+**Filename convention.**
+
+- Single: `yarmouk-response-{ref_code}-{YYYYMMDD-HHMM}.{csv|xlsx}`
+- Bulk: `yarmouk-pilot-responses-long-{YYYYMMDD-HHMM}.{csv|xlsx}`
+- Timestamp is the download moment (UTC), not submission time.
+
+**Empty bulk export.** Header-only file with `responseCount: 0` audit row. Lets Sura validate format wiring before participant data lands. Single-scope empty (response not found / withdrawn / not submitted) returns 404 instead — different intent (the URL pointed at nothing).
+
+**Real-data safety.** Read-only across data tables; the only mutation in any code path is the `log_audit` RPC write, which carries no PII. Decrypt failures abort cleanly without writing partial data anywhere. `Cache-Control: no-store, max-age=0` on every export response — PII payloads must not be intermediary-cached under any condition.
+
+**Architectural follow-on (NOT in D74).**
+
+- Per-category bulk export (filter by `category` / `nationality`) — easy add to `getResponsesForExport` once the main study has enough volume that supervisors want subsets.
+- Wide-format pivot (1 row per response, 1 column per question) — alternative shape for survey-style analyses. Long format is canonical for ATLAS.ti and most coding tools.
+- Streaming for very large bulk exports — at pilot scale (≤7 responses × ≤16 questions) we hold the whole result in memory; main-study volume (~100s of responses × ~16 questions) is still small enough that buffered serialization is fine.
+- Per-version export labelling — when V2 launches, add a `questionnaire_version` column to the export so the analyst can distinguish.
+
+**Out of D74 scope.**
+
+- Wide-format export, per-category filters, version labelling, streaming — all listed as follow-ons above; not implemented today.
+- Recordings / transcripts / researcher notes — separate analytical artifacts; ATLAS.ti handoff (D18/D19) will fold them in.
+- Schema, RPCs, RLS, migrations, types regen — none touched.
+
 ## Out of Scope (Explicitly)
 
 - **AI translation** between EN/AR. Button exists in mock as placeholder; clicking does nothing. Real translation would require GPT-4 or DeepL API; deferred.
