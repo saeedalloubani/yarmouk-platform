@@ -1,3 +1,73 @@
+## 🟢 PILOT-ACTIVE STATE (2026-06-05, end-of-session) — read first
+
+The platform is production-green at `karasneh-research.org` and **the pilot is LIVE**. All 4 pilot variants (`pilot_officials`, `pilot_researchers`, `pilot_donors`, `pilot_ngos`) are `active`; the 5 main variants remain in `draft`. **7 SME invitations sent**; **1 submitted** (OFF-JOR-02 — Jordanian official, 14 answers, real Arabic content, ~57-minute engagement); **6 in flight** (5/7 opened, 71% open rate; zero send failures; zero expired). First reminder cron fires ~June 10 — D72's `{name}` placeholder + decrypt path's first real exercise under load.
+
+**Backup posture:** unchanged — `yarmouk-20260524-1206.yarmoukbackup` (pre-launch) + `yarmouk-20260605-1240.yarmoukbackup` (pre-D74) both on Saeed's Mac + offsite. `BACKUP_PASSPHRASE` + Vault `pii_key_v1` confirmed present in password manager. D75 + D76 needed no new backup (D75 pure-perf, D76 read-only).
+
+### Closed since the 2026-06-05 (earlier today) refresh (D75 + D76)
+
+- **D75 (2026-06-05, PR #16)** — `getResponsesForExport` decrypt phase parallelized. `Promise.all` over invitations (each itself a Promise.all of name + email decrypts). Total RPC depth: O(N×2) sequential → O(1) batched. Pilot scale (≤14 decrypts): ~2s → ~0.5s. Main study scale (100–200 decrypts): ~30–60s → ~3–5s. Semantics preserved exactly: same `Map<string, InvDecrypted>` shape, same `ExportDecryptFailedError` class signature, same 3-arg `console.error` log lines (PII echo discipline), same first-observed-rejection behaviour. Single file touched (`lib/repos/exports.ts`). No new deps. Closed the optimization backlog item flagged during D74 TIER 1+2 review.
+- **D76 (2026-06-05, PR #17)** — `/admin/security` audit-log viewer gains filters (severity, date range, action, actor, resource ILIKE), severity-breakdown summary chips with drill-in semantics, and 250-row page cap (was 100). URL-persistent filter state via HTML method=GET, no client JS — filtered views are bookmarkable. Rolling-window date presets ("Last 24 hours / 7 days / 30 days") avoid the UTC-midnight-vs-Jordan-time mismatch; custom range uses inclusive-of-day semantics (`T23:59:59.999Z`). `lib/repos/audit.ts` extended with `AuditFilters` type, `getAuditSummary` (3 parallel count-only round-trips, drill-in short-circuits when severity filter active), `listDistinctActions` (data-sourced, new actions appear automatically). 4 files touched (2 code + 2 docs). `audit_log` table READ-ONLY across the PR; `log_audit` RPC write path unchanged.
+
+### End-of-session production observations (real-data)
+
+- **170 rows in `audit_log`**, **16 distinct action types**. Filters + chip drill-in + bookmarkability all verified against real data via 9 production smokes (Saeed).
+- **IP capture is wired and working** — `audit_log.ip` is populated (e.g. `37.202.78.69` on Saeed's export actions in the D76 smoke screenshot). That means D26 ① (IP + UA capture via `log_audit` extended signature, migration `20260524120001`) is at least partially live. `country` / `city` columns still NULL — D26 ③ (geo resolution) remains deferred as documented. **Next-session work:** a read-only audit of when/where D26 ① got wired vs what TASK_STATE / DECISIONS say is deferred would clarify the D26 picture before tackling ③.
+- **D77 candidate observed during D76 smoke:** the Details column truncates mid-string. Pre-D76 behaviour from the preserved `formatMetadata` helper — not a D76 regression — but with metadata-rich rows now in the table, the crop matters. Likely fix: inline `<details>` element or CSS-only popover for full-string reveal; ~30–50 line change to `security/page.tsx`; can stay no-JS.
+
+### D-counter (sequential, no gaps)
+
+D63 → D76 closed end-to-end. Each operational D-number has DECISIONS.md entry + (where operational) RUNBOOK paragraph. D75 has the perf-refactor PR but no DECISIONS entry (closure-of-backlog; brief didn't ask for one).
+
+### NEXT QUEUE (green — top-of-stack first)
+
+1. **D77 candidate — Audit log Details cell expandable metadata display.** Observed during D76 smoke. Inline `<details>` element or CSS-only popover; ~30–50 lines to `security/page.tsx`; can stay no-JS.
+2. **D26 surface audit (read-only).** Clarify what's actually wired (D26 ① IP + UA capture confirmed working from prod data) vs what TASK_STATE / DECISIONS say is deferred. Drives whether ③ (country / city resolution) is the next D-number or whether ② also lands free.
+3. Per-variant feedback breakdown (D73 foundation — main-study follow-on).
+4. Per-category bulk export filtering (D74 follow-on — easy add to `getResponsesForExport`).
+5. Wide-format export pivot (D74 follow-on — alternative to long-format).
+6. Per-version export labelling (when V2 launches — add `questionnaire_version` column).
+7. Bulk invite for main study scaling (current flow is one-at-a-time).
+8. Cross-variant analytics for main study (D73 enabled the foundation).
+9. Rate-limit hardening on `/enter` (D66's best-effort in-memory → per-IP store).
+10. D66 smoke cases 4 + 5 retroactive (invalid-code audit row check + resend rotation reveal).
+11. D26 ③ geo / device capture (`country` / `city` columns — IP capture already live).
+
+### PENDING SURA DECISION (yellow)
+
+- **Main-study D66 defense decision (post-pilot).** Keep OTP-style for participants in main, or simplify? Depends on pilot UX feedback.
+- **D74 follow-ons priority order.** Per-category filtering vs wide-format pivot vs streaming — order depends on what Sura's ATLAS.ti pipeline asks for first.
+
+### PENDING SURA ACTION (red)
+
+- Pilot monitoring + completion (read F1-F4 feedback rolling, watch for blockers from the 6 in-flight participants).
+- ~~Pilot activation + launch~~ — DONE (7 invitations sent; pilot live).
+- Main study planning (post-pilot, depends on feedback).
+
+### Active pilot guardrails (DO NOT TOUCH while pilot live)
+
+- `validate_invitation_token`, `validate_invitation_code` RPCs
+- `/r/[token]`, `/enter`, `/consent` routes
+- `invitations` table schema (additive columns fine; renames/drops NOT)
+- Pilot questionnaire variants (active — destructive changes orphan invitations)
+- Reminder cron logic (D72 added 4th decrypt step; first fires ~June 10 — name-decrypt path's first real exercise)
+- Email template rendering layer (D70 + D71 + D72 three-layer defensive stack; cross-client verified; BOTH D70's CSS layer AND D71's `<br>` fallback are required cross-client)
+- D73 feedback hub aggregation (let it bake; first non-trivial render happens on category #2's submit)
+- D74 export hub + D75 parallel-decrypt path (real-data-verified; OFF-JOR-02 round-trip clean across 4 formats × 2 perf modes)
+- `log_audit` RPC + `audit_log` schema (D76 read-only enhancement; write path unchanged)
+- `/admin/security` owner-gate pattern (mirrored by D74 + D76; **do not modify the source**)
+- The 12 unused feedback question rows (researchers/donors/ngos × F1–F4 — intentional architecture for when those variants submit)
+
+### Safe areas for new work
+
+- D77+ work, admin UI improvements not touching active pilot surfaces, analytics, per-variant feedback breakdown (D73 foundation), audit-log UI follow-ons (D76 foundation), rate-limit hardening on `/enter`, D26 ③ wiring.
+
+### §9 Latest applied migration — UNCHANGED
+
+D70 → D76 added zero migrations. Counter remains at `20260602130000` (D69 — `invitations_redacted` adds `collection_mode`). Next migration is `>= 20260602130001`.
+
+---
+
 ## 🟢 PILOT-ACTIVE STATE (2026-06-05) — read first
 
 The platform is production-green at `karasneh-research.org` and **the pilot is LIVE**. All 4 pilot variants (`pilot_officials`, `pilot_researchers`, `pilot_donors`, `pilot_ngos`) are `active`; the 5 main variants remain in `draft`. **7 SME invitations sent**; **1 submitted** (OFF-JOR-02 — Jordanian official, 14 answers, real Arabic content, ~57-minute engagement); **6 in flight** (5/7 opened, 71% open rate; zero send failures; zero expired). First reminder cron fires ~June 10 — D72's `{name}` placeholder + decrypt path's first real exercise under load.
