@@ -16,6 +16,16 @@
 // timestamps before they reach the repo, which keeps the repo clock-free.
 // Custom range uses literal <input type="date"> values, inclusive of the
 // `to` day (… T23:59:59.999Z).
+//
+// D77 — the Details cell now expands in-place. When metadata is a non-empty
+// object, the cell is a native HTML <details> element: the <summary> shows
+// the same compact one-liner (formatMetadata) and the disclosure body shows
+// the pretty-printed JSON. No client JS, fully keyboard-accessible (Tab to
+// the summary, Enter/Space to toggle). The native disclosure triangle
+// doubles as the "more is hidden here" affordance, so we don't need a
+// custom truncation indicator. Falls back to the original truncated span
+// when metadata is null / a scalar / an empty object / an array — no point
+// expanding a value that won't read better in pretty-printed form.
 
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -148,6 +158,28 @@ function formatMetadata(meta: Json): string {
         `${k}: ${typeof v === "object" ? JSON.stringify(v) : String(v)}`
     )
     .join(" · ");
+}
+
+// D77 — narrow the metadata to "non-empty plain object" so the table cell
+// knows when the row deserves a <details> expander. Scalars / arrays /
+// nulls / empty objects all keep the original truncated-span rendering.
+function metadataIsExpandable(
+  meta: Json
+): meta is { [k: string]: Json } {
+  return (
+    meta !== null &&
+    typeof meta === "object" &&
+    !Array.isArray(meta) &&
+    Object.keys(meta).length > 0
+  );
+}
+
+// D77 — pretty-printed JSON for the expanded body. 2-space indent;
+// whitespace and long URN-like values wrap inside the <pre>. Kept as a
+// plain JSON.stringify (no field renaming) so the expanded view is a
+// faithful mirror of the underlying metadata.
+function prettyMetadata(meta: { [k: string]: Json }): string {
+  return JSON.stringify(meta, null, 2);
 }
 
 export default async function SecurityPage({
@@ -423,12 +455,35 @@ export default async function SecurityPage({
                           )}
                         </td>
                         <td className="px-4 py-2.5">
-                          <span
-                            className="block max-w-[320px] truncate text-muted"
-                            title={meta}
-                          >
-                            {meta}
-                          </span>
+                          {metadataIsExpandable(e.metadata) ? (
+                            // D77 — native <details> expander. The
+                            // disclosure triangle is the affordance: the
+                            // summary stays truncated single-line so the
+                            // table preserves its compact rhythm, and the
+                            // body pretty-prints the full metadata object
+                            // when toggled open. No client JS; keyboard-
+                            // accessible (Tab to summary, Enter/Space to
+                            // toggle). Multiple rows can be open
+                            // simultaneously.
+                            <details className="max-w-[360px] group">
+                              <summary
+                                className="block truncate text-muted cursor-pointer hover:text-ink"
+                                title={meta}
+                              >
+                                {meta}
+                              </summary>
+                              <pre className="mono mt-2 p-2 bg-bgAlt rounded text-[11px] text-ink whitespace-pre-wrap break-all border-s-2 border-line">
+                                {prettyMetadata(e.metadata)}
+                              </pre>
+                            </details>
+                          ) : (
+                            <span
+                              className="block max-w-[320px] truncate text-muted"
+                              title={meta}
+                            >
+                              {meta}
+                            </span>
+                          )}
                         </td>
                       </tr>
                     );
