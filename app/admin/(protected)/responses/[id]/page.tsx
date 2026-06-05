@@ -377,20 +377,29 @@ export default async function ResponseDetailPage({
           </section>
         )}
 
-        {/* Answers */}
+        {/* Answers — thesis-friendly reader (D79 Feature 2).
+            Each block shows BOTH languages of the question (the participant
+            answered against one but the thesis quotes both), followed by the
+            participant's answer in a punchier treatment so it reads cleanly
+            for copy-paste into thesis prose. The answer's `dir` matches the
+            respondent's language (response.language), which is what they
+            actually wrote in; `whitespace-pre-line` preserves their
+            paragraph breaks without forcing the long-line wrap of pre-wrap. */}
         <section className="card p-5">
           <h2 className="text-[15px] font-semibold text-ink mb-4">Answers</h2>
           {questions.length === 0 ? (
             <p className="text-[13px] text-muted">No questions to show.</p>
           ) : (
-            <ol className="space-y-5">
+            <ol className="space-y-6">
               {questions.map((q) => {
                 const a = answers.get(q.id);
                 const answerText = (a?.answerText ?? "").trim();
-                const questionText = lang === "ar" ? q.textAr : q.textEn;
                 return (
-                  <li key={q.id} className="border-b border-line pb-4 last:border-0 last:pb-0">
-                    <div className="flex items-baseline gap-2 mb-1.5">
+                  <li
+                    key={q.id}
+                    className="border-b border-line pb-5 last:border-0 last:pb-0"
+                  >
+                    <div className="flex items-baseline gap-2 mb-2">
                       <span className="mono text-[11px] font-semibold text-brand-700">
                         {q.code}
                       </span>
@@ -400,22 +409,36 @@ export default async function ResponseDetailPage({
                         </span>
                       )}
                     </div>
+                    {/* Bilingual question display. EN above, AR below; both
+                        muted/prose, neither dominant — the answer is the
+                        primary surface beneath them. */}
                     <p
-                      className="text-[13px] font-medium text-ink mb-2"
-                      dir={lang === "ar" ? "rtl" : "ltr"}
+                      className="text-[13px] text-muted leading-relaxed mb-1"
+                      dir="ltr"
                     >
-                      {questionText}
+                      {q.textEn}
                     </p>
+                    <p
+                      className="text-[13px] text-muted leading-relaxed mb-3"
+                      dir="rtl"
+                    >
+                      {q.textAr}
+                    </p>
+                    {/* Participant's answer — bumped to text-[15px] + full
+                        text-ink + whitespace-pre-line for thesis-readable
+                        treatment. pre-line preserves paragraph breaks but
+                        collapses run-on whitespace, which reads better than
+                        pre-wrap's full preservation. */}
                     {answerText ? (
                       <p
-                        className="text-[13px] text-ink/90 whitespace-pre-wrap"
+                        className="text-[15px] text-ink leading-relaxed whitespace-pre-line"
                         dir={lang === "ar" ? "rtl" : "ltr"}
                       >
                         {answerText}
                       </p>
                     ) : (
                       <p className="text-[13px] text-muted italic">
-                        (not answered)
+                        (no answer)
                       </p>
                     )}
                   </li>
@@ -423,6 +446,42 @@ export default async function ResponseDetailPage({
               })}
             </ol>
           )}
+        </section>
+
+        {/* D79 Feature 2 footer — engagement summary + analytical-pipeline
+            link. Sura's loop: read the response → export to ATLAS.ti.
+            The export center is the next-action surface. */}
+        <section className="card p-5 mt-5">
+          <h2 className="text-[15px] font-semibold text-ink mb-3">
+            Reader summary
+          </h2>
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-[13px] mb-4">
+            <div>
+              <dt className="text-muted mb-0.5">Answered questions</dt>
+              <dd className="text-ink mono">
+                {answeredCount} / {questions.length}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted mb-0.5">Total words</dt>
+              <dd className="text-ink mono">{totalWords}</dd>
+            </div>
+            <div>
+              <dt className="text-muted mb-0.5">Engagement time</dt>
+              <dd className="text-ink">
+                {response.durationMinutes != null
+                  ? `${response.durationMinutes} min`
+                  : "—"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted mb-0.5">Language</dt>
+              <dd className="text-ink uppercase mono">{response.language}</dd>
+            </div>
+          </dl>
+          <Link href="/admin/exports" className="btn-ghost text-[12px]">
+            Export responses →
+          </Link>
         </section>
 
         {/* Tags — applied qualitative codes (3c-ii). Both roles see the

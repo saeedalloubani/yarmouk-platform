@@ -236,25 +236,30 @@ textarea.field {
 /* Mono / code */
 .mono { font-family: "JetBrains Mono", ui-monospace, monospace; }
 
-/* Audit log — disclosure indicator on the Details cell (D78) -----------------
+/* Disclosure indicator on native <details> summaries (D78 → D79) --------------
    D77 made the <details> functional but the native disclosure marker
    disappeared: applying Tailwind's `block` utility to <summary> sets
    display:block, which removes the default `list-item` display that browsers
    use to render the marker. This restores the ▶/▼ affordance via a CSS
    pseudo-element so the cell signals "click to expand" even with
-   display:block on the summary. RTL-safe via padding-inline-end. */
-.audit-summary {
+   display:block on the summary. RTL-safe via padding-inline-end.
+
+   D79 — renamed from .audit-summary to .expandable-summary; now shared
+   between /admin/security (audit log Details cell) and /admin/invitations
+   (email preview row). Two surfaces use the pattern; the abstraction is
+   warranted. */
+.expandable-summary {
   list-style: none;
 }
-.audit-summary::-webkit-details-marker {
+.expandable-summary::-webkit-details-marker {
   display: none;
 }
-.audit-summary::before {
+.expandable-summary::before {
   content: "\25B6"; /* ▶ */
   padding-inline-end: 0.5rem;
   color: #6b7280; /* matches text-muted Tailwind utility */
   font-size: 10px;
 }
-details[open] > .audit-summary::before {
+details[open] > .expandable-summary::before {
   content: "\25BC"; /* ▼ */
 }
