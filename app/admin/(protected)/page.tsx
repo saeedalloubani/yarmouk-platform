@@ -1,15 +1,28 @@
 // app/admin/(protected)/page.tsx
 //
-// Admin Overview dashboard (Session 4 — admin dashboard). Real read-
-// aggregation over existing data via lib/repos/dashboard.ts (identity-free:
-// ref_codes + counts only; reads invitations_redacted, never the PII base
-// table). Mirrors the mock's four real-data sections — KPIs, completion by
-// category, recent activity, at-a-glance — and OMITS the mock's interpretive
-// / later-session pieces (Pilot Feedback Signal, Export/Progress-Report/
-// Publish-V2, analytics links). Every stat is null-safe: a fresh DB reads
-// "0 / 0% / — / No activity yet" by design.
+// Admin Overview — extended in D79 (Feature 1) with pilot-status surfaces
+// while preserving the existing Session 4 real-data sections.
 //
-// Nav + sign-out live in the AdminShell (the layout); this page is content.
+// Layout (top → bottom):
+//   1. Header (eyebrow + H1) — preserved.
+//   2. Flash banner (D79) — surfaces ?reminder=sent|failed&ref=…&reason=…
+//      query params from the SendReminderButton POST redirect.
+//   3. Stalled-invitations table (D79) — owner-only action surface with
+//      one SendReminderButton per row. Two cuts shown distinguished by
+//      chip: "Never opened" vs "Started, not submitted" (FLAG E /
+//      decided Q5 of D79 read-first).
+//   4. 4-stage funnel chips (D79) — replaces the old KPI cards. Sent →
+//      Opened → Started → Submitted with cumulative percentages of Sent.
+//   5. Completion by Category + Recent Activity — preserved verbatim.
+//   6. At a glance — preserved verbatim.
+//   7. Cron schedule footer (D79) — visibility into when the daily
+//      reminder cron fires next.
+//
+// PII discipline: identity-free by construction. Same path as
+// getDashboardData (invitations_redacted, ref_codes + counts only); the
+// stalled-invitation repo also uses the redacted view. Decryption only
+// happens server-side INSIDE the send-reminder POST handler, never on
+// this page.
 
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -17,6 +30,12 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentAdmin } from "@/lib/auth";
 import { getDashboardData, type CategoryStat } from "@/lib/repos/dashboard";
 import { categoryLabel } from "@/lib/repos/invitations";
+import {
+  getStalledInvitations,
+  getPilotFunnel,
+  type StalledInvitation,
+} from "@/lib/repos/pilot";
+import SendReminderButton from "@/components/SendReminderButton";
 
 export const dynamic = "force-dynamic";
 
@@ -45,16 +64,109 @@ function relativeTime(iso: string): string {
   });
 }
 
-export default async function AdminOverviewPage() {
+function fmtDate(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-GB", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+/** Flash-banner shape resolved from the POST redirect's query params. */
+type ReminderFlash =
+  | { kind: "sent"; ref: string }
+  | { kind: "failed"; ref: string; reason: string; waitMin: string | null }
+  | null;
+
+function parseFlash(sp: {
+  reminder?: string;
+  ref?: string;
+  reason?: string;
+  wait?: string;
+}): ReminderFlash {
+  if (sp.reminder === "sent" && sp.ref) {
+    return { kind: "sent", ref: sp.ref };
+  }
+  if (sp.reminder === "failed" && sp.ref) {
+    return {
+      kind: "failed",
+      ref: sp.ref,
+      reason: sp.reason ?? "unknown",
+      waitMin: sp.wait ?? null,
+    };
+  }
+  return null;
+}
+
+/** Friendly text for each failure reason. Falls through to a generic
+ *  "delivery error" copy for buckets we don't have a tailored message
+ *  for. NEVER surfaces raw error.message (PII risk). */
+function flashFailureMessage(
+  ref: string,
+  reason: string,
+  waitMin: string | null
+): string {
+  switch (reason) {
+    case "rate_limited":
+      return waitMin
+        ? `Reminder cooldown active for ${ref}. Please wait ${waitMin} minute(s) before retrying.`
+        : `Reminder cooldown active for ${ref}.`;
+    case "send":
+      return `Email delivery failed for ${ref}. Check Resend dashboard / audit log.`;
+    case "decrypt":
+      return `Could not decrypt recipient data for ${ref}. See RUNBOOK Vault key DR.`;
+    case "config":
+      return `Server misconfigured (RESEND_API_KEY or NEXT_PUBLIC_SITE_URL). See RUNBOOK.`;
+    case "not_found":
+      return `Invitation not found (${ref}).`;
+    case "ineligible":
+      return `${ref} is in a terminal or expired state — cannot send reminder. Resend instead.`;
+    case "invalid_id":
+      return `Invalid invitation id.`;
+    default:
+      return `Could not send reminder to ${ref}.`;
+  }
+}
+
+const STALL_CHIP_LABEL: Record<StalledInvitation["stallReason"], string> = {
+  never_opened: "Never opened",
+  started_not_submitted: "Started, not submitted",
+};
+
+export default async function AdminOverviewPage({
+  searchParams,
+}: {
+  searchParams: Promise<{
+    reminder?: string;
+    ref?: string;
+    reason?: string;
+    wait?: string;
+  }>;
+}) {
   const supabase = await createSupabaseServerClient();
   const admin = await getCurrentAdmin(supabase);
   if (!admin) redirect("/admin/login"); // defensive; layout already guards
 
-  const d = await getDashboardData(supabase);
+  // Parallel — three independent repos. Dashboard is the largest read
+  // (multi-table aggregate); the two pilot reads add ~2 round-trips. All
+  // fan out at once.
+  const sp = await searchParams;
+  const flash = parseFlash(sp);
+  const isOwner = admin.role === "owner";
+
+  const [d, stalled, funnel] = await Promise.all([
+    getDashboardData(supabase),
+    // Stalled-invitations table is owner-action surface. Readonly
+    // supervisors don't get the table at all (the data is benign — no
+    // PII — but the Send Reminder button only makes sense for the
+    // actor who can pull the trigger). Skip the query for non-owner.
+    isOwner ? getStalledInvitations(supabase) : Promise.resolve([]),
+    getPilotFunnel(supabase),
+  ]);
 
   return (
     <div className="p-10 max-w-6xl">
-      <div className="mb-8">
+      <div className="mb-6">
         <div className="eyebrow mb-2">Pilot · Version 1</div>
         <h1 className="text-[28px] font-bold text-ink tracking-tight mb-1">
           Overview
@@ -64,28 +176,177 @@ export default async function AdminOverviewPage() {
         </p>
       </div>
 
-      {/* KPI cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <Kpi label="Invited" value={String(d.invited)} sub="across 4 categories" />
-        <Kpi
-          label="Submitted"
-          value={String(d.submitted)}
-          sub={`${d.completionPct}% completion`}
-          accent
-        />
-        <Kpi
-          label="In progress"
-          value={String(d.inProgress)}
-          sub="started, not submitted"
-        />
-        <Kpi
-          label="Avg. duration"
-          value={d.avgDurationMinutes != null ? `${d.avgDurationMinutes}m` : "—"}
-          sub="end-to-end"
-        />
+      {/* D79 Feature 3 — flash banner from POST redirect. Dismisses on
+          next navigation (it's just URL-param-driven render; no client JS). */}
+      {flash?.kind === "sent" && (
+        <div className="notice-success mb-6">
+          <span>
+            ✓ Reminder sent to <span className="mono">{flash.ref}</span>.
+          </span>
+        </div>
+      )}
+      {flash?.kind === "failed" && (
+        <div className="notice-warn mb-6">
+          <span>{flashFailureMessage(flash.ref, flash.reason, flash.waitMin)}</span>
+        </div>
+      )}
+
+      {/* D79 Feature 1 — stalled invitations table (owner-action surface).
+          Two cuts unioned, chip distinguishes. Empty state when nothing
+          is stalled OR when the viewer is read-only (in which case the
+          stalled array was Promise.resolve([])). The latter case is
+          unsurfaced by design — read-only admins don't need a "the owner
+          has work to do" panel. */}
+      {isOwner && (
+        <section className="card p-6 mb-6">
+          <div className="flex items-start justify-between mb-4">
+            <div>
+              <h2 className="text-[16px] font-bold text-ink mb-1">
+                Needs a nudge
+              </h2>
+              <p className="text-[12px] text-muted">
+                Stalled invitations — manual reminder available. Cron auto-
+                fires reminder1 at sent + 7 days regardless.
+              </p>
+            </div>
+            <Link href="/admin/invitations" className="btn-ghost text-[12px]">
+              All invitations →
+            </Link>
+          </div>
+          {stalled.length === 0 ? (
+            <p className="text-[13px] text-muted">
+              No stalled invitations. Everyone we&apos;ve invited has either
+              submitted, is in a terminal state, or hasn&apos;t crossed a
+              stall threshold yet.
+            </p>
+          ) : (
+            <div className="overflow-hidden">
+              <table className="w-full text-[13px]">
+                <thead className="bg-bgAlt text-muted">
+                  <tr className="text-start">
+                    <th className="text-start font-semibold px-3 py-2">Ref</th>
+                    <th className="text-start font-semibold px-3 py-2">
+                      Category
+                    </th>
+                    <th className="text-start font-semibold px-3 py-2">
+                      Nationality
+                    </th>
+                    <th className="text-start font-semibold px-3 py-2">
+                      Stall
+                    </th>
+                    <th className="text-start font-semibold px-3 py-2">
+                      Days since sent
+                    </th>
+                    <th className="text-start font-semibold px-3 py-2">
+                      Next cron fire
+                    </th>
+                    <th className="text-start font-semibold px-3 py-2">
+                      Expires
+                    </th>
+                    <th className="text-start font-semibold px-3 py-2">
+                      Action
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stalled.map((s) => (
+                    <tr key={s.id} className="border-t border-line">
+                      <td className="px-3 py-2">
+                        <span className="mono font-semibold text-brand-700">
+                          {s.refCode}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2">
+                        {categoryLabel(s.category)}
+                      </td>
+                      <td className="px-3 py-2 capitalize">
+                        {s.nationality ?? "—"}
+                      </td>
+                      <td className="px-3 py-2">
+                        <span
+                          className={
+                            s.stallReason === "started_not_submitted"
+                              ? "chip-solid bg-warnLight text-warn"
+                              : "chip-solid bg-brand-50 text-brand-700"
+                          }
+                        >
+                          {STALL_CHIP_LABEL[s.stallReason]}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 mono">{s.daysSinceSent}d</td>
+                      <td className="px-3 py-2 text-muted">
+                        {s.nextCronFireAt
+                          ? fmtDate(s.nextCronFireAt)
+                          : "—"}
+                      </td>
+                      <td className="px-3 py-2 text-muted">
+                        {fmtDate(s.expiresAt)}{" "}
+                        <span className="text-muted-faint">
+                          ({s.daysUntilExpiry}d)
+                        </span>
+                      </td>
+                      <td className="px-3 py-2">
+                        <SendReminderButton
+                          invitationId={s.id}
+                          refCode={s.refCode}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* D79 Feature 1 — 4-stage funnel chips (replaces old KPI cards).
+          Cumulative: Opened/Sent, Started/Sent, Submitted/Sent (relative
+          to Sent denominator). */}
+      <div className="card p-6 mb-8">
+        <h2 className="text-[16px] font-bold text-ink mb-4">Funnel</h2>
+        <div className="flex flex-wrap items-center gap-2">
+          <FunnelChip
+            label="Sent"
+            value={funnel.sent}
+            pct={null}
+            color="bg-brand-50 text-brand-700"
+          />
+          <FunnelArrow />
+          <FunnelChip
+            label="Opened"
+            value={funnel.opened}
+            pct={funnel.pctOpened}
+            color="bg-brand-100 text-brand-700"
+          />
+          <FunnelArrow />
+          <FunnelChip
+            label="Started"
+            value={funnel.started}
+            pct={funnel.pctStarted}
+            color="bg-accent-100 text-accent-800"
+          />
+          <FunnelArrow />
+          <FunnelChip
+            label="Submitted"
+            value={funnel.submitted}
+            pct={funnel.pctSubmitted}
+            color="bg-accent-600 text-white"
+          />
+        </div>
+        {d.avgDurationMinutes != null && (
+          <p className="text-[12px] text-muted mt-3">
+            Average engagement time:{" "}
+            <span className="font-semibold text-ink">
+              {d.avgDurationMinutes} min
+            </span>
+            {" · "}
+            {funnel.submitted} submitted response{funnel.submitted === 1 ? "" : "s"}.
+          </p>
+        )}
       </div>
 
-      {/* Completion by category + recent activity */}
+      {/* PRESERVED — Completion by Category + Recent Activity */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
         <div className="lg:col-span-2 card p-6">
           <div className="flex items-start justify-between mb-6">
@@ -131,8 +392,8 @@ export default async function AdminOverviewPage() {
         </div>
       </div>
 
-      {/* At a glance */}
-      <div className="card p-6">
+      {/* PRESERVED — At a glance */}
+      <div className="card p-6 mb-8">
         <h2 className="text-[16px] font-bold text-ink mb-5">At a glance</h2>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-6">
           <Mini
@@ -154,46 +415,63 @@ export default async function AdminOverviewPage() {
           />
         </div>
       </div>
+
+      {/* D79 Feature 1 — operational footer. Cron-schedule visibility +
+          deep links to the operational surfaces Sura uses next. */}
+      <div className="card p-5 text-[12px] text-muted">
+        <p className="mb-2">
+          <strong className="text-ink">Reminder cron</strong> runs daily at
+          12:00 UTC (Vercel scheduler). reminder1 fires at sent + 7 days;
+          reminderFinal at sent + 14 days. Manual reminders don&apos;t
+          change cron&apos;s schedule.
+        </p>
+        <div className="flex flex-wrap gap-x-4 gap-y-1">
+          <Link href="/admin/invitations" className="text-brand-700 hover:underline">
+            Invitations
+          </Link>
+          <Link href="/admin/responses" className="text-brand-700 hover:underline">
+            Responses
+          </Link>
+          <Link href="/admin/exports" className="text-brand-700 hover:underline">
+            Export center
+          </Link>
+          {isOwner && (
+            <Link href="/admin/security" className="text-brand-700 hover:underline">
+              Security (audit log)
+            </Link>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
 
-function Kpi({
+function FunnelChip({
   label,
   value,
-  sub,
-  accent,
+  pct,
+  color,
 }: {
   label: string;
-  value: string;
-  sub: string;
-  accent?: boolean;
+  value: number;
+  pct: number | null;
+  color: string;
 }) {
   return (
-    <div
-      className={`${
-        accent ? "bg-accent-600 border-accent-600" : "bg-white border-line"
-      } border rounded-lg p-5`}
+    <span
+      className={`chip-solid ${color} inline-flex items-baseline gap-1.5 text-[12px]`}
     >
-      <div
-        className={`text-[12px] font-semibold mb-2 ${
-          accent ? "text-accent-100" : "text-muted"
-        }`}
-      >
-        {label}
-      </div>
-      <div
-        className={`text-[32px] font-bold leading-none tracking-tight mb-1 ${
-          accent ? "text-white" : "text-ink"
-        }`}
-      >
-        {value}
-      </div>
-      <div className={`text-[12px] ${accent ? "text-accent-100" : "text-muted-faint"}`}>
-        {sub}
-      </div>
-    </div>
+      <span className="font-semibold">{label}</span>
+      <span className="mono text-[13px] font-semibold">{value}</span>
+      {pct != null && (
+        <span className="text-[11px] opacity-80">({pct}%)</span>
+      )}
+    </span>
   );
+}
+
+function FunnelArrow() {
+  return <span className="text-muted-faint text-[14px]">→</span>;
 }
 
 function CategoryBar({ stat }: { stat: CategoryStat }) {

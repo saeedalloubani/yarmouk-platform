@@ -467,7 +467,7 @@ export default async function SecurityPage({
                             // simultaneously.
                             <details className="max-w-[360px] group">
                               <summary
-                                className="audit-summary block truncate text-muted cursor-pointer hover:text-ink"
+                                className="expandable-summary block truncate text-muted cursor-pointer hover:text-ink"
                                 title={meta}
                               >
                                 {meta}
