@@ -121,6 +121,12 @@ export async function getResponsesForExport(
   //    aborts the entire export. We log only the ref_code + errorClass
   //    bucket; the underlying RPC error.message is never persisted or
   //    surfaced.
+  //
+  // D75 — decrypt fan-out is parallel (Promise.all). Each invitation
+  // fires name + email decrypts simultaneously; across invitations,
+  // all run concurrently. Total RPC depth reduced from O(N×2)
+  // sequential to O(1) batch. ExportDecryptFailedError semantics
+  // unchanged: first observed rejection aborts the whole export.
   type InvDecrypted = {
     refCode: string;
     name: string;
@@ -132,42 +138,52 @@ export async function getResponsesForExport(
     sentAt: string | null;
     openedAt: string | null;
   };
-  const invById = new Map<string, InvDecrypted>();
-  for (const inv of invitations) {
-    const { data: name, error: nErr } = await supabase.rpc("decrypt_pii", {
-      p_ciphertext: inv.recipient_name_encrypted,
-    });
-    if (nErr || name == null) {
-      console.error(
-        "[exports] decrypt_pii(name) failed for",
-        inv.ref_code,
-        "errorClass=config"
-      );
-      throw new ExportDecryptFailedError(inv.ref_code);
-    }
-    const { data: email, error: eErr } = await supabase.rpc("decrypt_pii", {
-      p_ciphertext: inv.recipient_email_encrypted,
-    });
-    if (eErr || email == null) {
-      console.error(
-        "[exports] decrypt_pii(email) failed for",
-        inv.ref_code,
-        "errorClass=config"
-      );
-      throw new ExportDecryptFailedError(inv.ref_code);
-    }
-    invById.set(inv.id, {
-      refCode: inv.ref_code,
-      name,
-      email,
-      category: inv.category,
-      nationality: inv.nationality,
-      preferredLanguage: inv.preferred_language,
-      collectionMode: inv.collection_mode,
-      sentAt: inv.sent_at,
-      openedAt: inv.opened_at,
-    });
-  }
+  const results = await Promise.all(
+    invitations.map(async (inv) => {
+      const [{ data: name, error: nErr }, { data: email, error: eErr }] =
+        await Promise.all([
+          supabase.rpc("decrypt_pii", {
+            p_ciphertext: inv.recipient_name_encrypted,
+          }),
+          supabase.rpc("decrypt_pii", {
+            p_ciphertext: inv.recipient_email_encrypted,
+          }),
+        ]);
+      if (nErr || name == null) {
+        console.error(
+          "[exports] decrypt_pii(name) failed for",
+          inv.ref_code,
+          "errorClass=config"
+        );
+        throw new ExportDecryptFailedError(inv.ref_code);
+      }
+      if (eErr || email == null) {
+        console.error(
+          "[exports] decrypt_pii(email) failed for",
+          inv.ref_code,
+          "errorClass=config"
+        );
+        throw new ExportDecryptFailedError(inv.ref_code);
+      }
+      return {
+        id: inv.id,
+        decrypted: {
+          refCode: inv.ref_code,
+          name,
+          email,
+          category: inv.category,
+          nationality: inv.nationality,
+          preferredLanguage: inv.preferred_language,
+          collectionMode: inv.collection_mode,
+          sentAt: inv.sent_at,
+          openedAt: inv.opened_at,
+        },
+      };
+    })
+  );
+  const invById = new Map<string, InvDecrypted>(
+    results.map((r) => [r.id, r.decrypted] as const)
+  );
 
   // 4. Consent timestamps — boolean-equivalent (col 12). signed_name_encrypted
   //    is deliberately NOT read (D74 design call).
