@@ -1,3 +1,89 @@
+## 🟢 END-OF-SESSION-2 STATE (2026-06-05) — read first
+
+The platform is production-green at `karasneh-research.org` and **the pilot is LIVE**. All 4 pilot variants (`pilot_officials`, `pilot_researchers`, `pilot_donors`, `pilot_ngos`) are `active`; the 5 main variants remain in `draft`. **7 SME invitations sent**; **1 submitted** (OFF-JOR-02 — Jordanian official, 14 answers, real Arabic content, ~58-minute engagement); **4 stalled "started, not submitted"** (DON-01, RES-JOR-01, OFF-JOR-03, NGO-02); **2 never opened** (Off-1, NGO-01). **2 manual reminders dispatched in production this session** via the D79 Feature 3 write path (DON-01 + OFF-JOR-03). Reminder cron fires ~June 10 — D72's `{name}` placeholder + decrypt path's first real exercise under load; D79 manual-reminder coexistence preserves the cron schedule by design (FLAG E).
+
+**Backup posture:** unchanged — `yarmouk-20260524-1206.yarmoukbackup` (pre-launch) + `yarmouk-20260605-1240.yarmoukbackup` (pre-D74) both on Saeed's Mac + offsite. `BACKUP_PASSPHRASE` + Vault `pii_key_v1` confirmed present in password manager. D77–D80 needed no new backup (all pure read-path or surface-additive; D79 added a write path but it reuses the verified D70+D71+D72 email render layer + D64 reminder wrapper byte-identically).
+
+### Closed since the 2026-06-05 (earlier today) refresh
+
+- **Item 1 — Pilot status diagnostic (2026-06-05, no PR).** Studio queries A–G against live production data verified: 7 invitations / 1 submitted / 5 started responses (1 finalized + 4 active) / 24 admin.login.failed rows (clustered June 1 retry) / 0 cron firings yet / 4 pilot variants active / 170 audit rows. Surfaced D26 ① + ② as already-wired (and lit D77 + D79 candidates from the cell-truncation + dashboard-shape observations).
+- **Item 2 — D26 read-only audit (2026-06-05, PR #19 — docs only).** Read-only verification clarified phase status against live data. **Phase ① (IP + UA capture):** WIRED end-to-end via `lib/audit.ts:getRequestMeta()`. Production: 170/170 rows have IP, 163/170 have UA. **Phase ② (admin.login success + failed):** WIRED + actively exercised — 32 success + 24 failed rows. **Phase ③ (country/city geo):** NOT WIRED, correctly deferred. Two future paths documented: (a) MaxMind GeoLite2 + license, or (b) Vercel auto-injected `x-vercel-ip-country`/`x-vercel-ip-city` headers (~6-line patch + 1 migration; no per-request lookup cost). **Phase ④ (unknown-email-failure):** NOT WIRED, status unchanged. DECISIONS.md amended with "Audit confirmation (2026-06-05)" block under existing D26 entry; RUNBOOK note added.
+- **D77 (2026-06-05, PR #20)** — `/admin/security` Details cell now expands in-place. Native HTML `<details>` element with `<summary>` showing the formatMetadata one-liner and `<pre>` body showing pretty-printed JSON. Pure no-JS (Tab/Enter/Space keyboard nav out of the box; native disclosure triangle as the affordance). Falls back to the original truncated span for scalars / arrays / nulls / empty objects (no expansion when there's nothing better to show). 1 file touched.
+- **D78 (2026-06-05, PR #21)** — Restored the disclosure indicator that D77's `block` className inadvertently killed (Tailwind's `display: block` removed the default `list-item` rendering). Pure CSS pseudo-element with `[open]` rotation: `▶` collapsed → `▼` open via `\25B6` / `\25BC` escapes; RTL-safe `padding-inline-end`. Named class `.audit-summary` added to globals.css; 1-word JSX className update on security/page.tsx. 2 files touched.
+- **D79 (2026-06-05, PR #22) — Sura-value mega-bundle, 4 features in one PR.**
+  - **Feature 1 — Pilot dashboard extension.** EXTENDS the existing Session-4 dashboard (per read-first FLAG A — preserve real-data KPIs Sura was using). Adds: flash banner (URL-driven, no client JS), "Needs a nudge" stalled-invitations action surface (owner-only) with one SendReminderButton per row + chip distinguishing "Never opened" vs "Started, not submitted", 4-stage cumulative funnel chip strip (replaces old KPI cards), operational cron-schedule footer with deep links. Completion-by-Category + Recent Activity + At-a-glance preserved verbatim.
+  - **Feature 2 — Response reader (`/admin/responses/[id]`).** Per-question block now shows BOTH languages of the question (EN above, AR below, both muted/prose), followed by the participant's answer in a punchier treatment (`text-[15px] text-ink leading-relaxed whitespace-pre-line`, `dir` matches `response.language`). New "Reader summary" footer card with engagement counts + Export Responses link. Identity / Invitation / Response / Consent / Withdrawal / Tags / Notes / Recordings cards preserved verbatim; null-driven PII redaction preserved verbatim.
+  - **Feature 3 — Manual reminder write path.** New owner-only `POST /admin/invitations/[id]/send-reminder` powering a `SendReminderButton` server-component (Path Z locked — native `<form>` + inline `onsubmit="return confirm(...)"` via `dangerouslySetInnerHTML`; refCode JSON.stringified + HTML attribute-escaped across the JS + HTML attribute contexts). Reuses `sendReminderEmail` from `lib/email/reminder.ts` BYTE-IDENTICAL to cron's reminder1 (recipient sees the same email). Two new audit actions: `invitation.reminder_manual` (info) + `invitation.reminder_manual.failed` (warn). **Rate-limited via audit_log** (10-minute per-invitation cooldown — audit_log is source of truth per FLAG D; no schema change). **Does NOT touch** `reminder1_sent_at` / `sent_at` / `use_count` / `last_send_failed_at` (FLAG E — manual nudge does not suppress cron's future fire; recipient may receive manual + cron close together, accepted by design). PII discipline mirrors cron verbatim: 3-arg `console.error` form with refCode + errorClass only; NEVER `error.message`, NEVER recipient address, NEVER token URL. Decrypted PII scoped to function — never in audit metadata.
+  - **Feature 4 — Email preview on `/admin/invitations`.** Reuses the exact `renderEmailTemplate` + `resolveTemplate` + `getDefaults` pipeline from `lib/email/reminder.ts` so preview is byte-identical to what cron or the manual button would send. Owner-only; eager batched decrypt + Promise.all-rendered (~300–500ms at pilot scale). Returns `null` on any decrypt failure (best-effort, no error chrome). Renders via `dangerouslySetInnerHTML` inside a styled `<details>` using the shared `.expandable-summary` class.
+  - **Foundation — `.audit-summary` → `.expandable-summary`** rename in globals.css; D77/D78 callers updated in-place. Two surfaces (audit log Details cell + invitation preview) now share the selector.
+  - 10 files / 1,682 insertions / 149 deletions / net +1,533 lines.
+- **D80 (2026-06-05, PR #23)** — Funnel Started count semantic fix. D79 smoke surfaced internal inconsistency: funnel said Started=1 (14%) while stalled table immediately below showed 4 rows with chip "Started, not submitted". Root cause was two definitions of "started" coexisting (`invitations.started_at` populated on first answer save via Session 2b; `responses.started_at` populated when responder reaches `/consent`). `getPilotFunnel` read invitations-side only; `getStalledInvitations` reads responses-side. The 4 stalled responders hit `/consent` but never saved Q1 → invitations-side undercounts. Fix: `Set<string>` collector unions both signals; one extra scoped responses-side query with server-side `.not("started_at", "is", null)` filter. Sent / Opened / Submitted unchanged (no responses-side divergent semantic). 1 file touched (`lib/repos/pilot.ts`). Post-D80: funnel reads Started=5 (71%) — matches stalled-table.
+
+### End-of-session production observations (real-data, 2026-06-05)
+
+- **Manual reminder write path live + verified.** 2 reminders dispatched to real SMEs this session (DON-01 + OFF-JOR-03). 10-minute cooldown enforced and observed. Vault decrypt cascade (email → token → access_code → name) verified non-fatal on name failure per D72. Cron schedule untouched: `reminder1_sent_at` + `sent_at` + `use_count` preserved on manually-nudged invitations (matches FLAG E intent).
+- **`.expandable-summary` shared class verified** on BOTH `/admin/security` (audit log Details cells, 170-row prod data) AND `/admin/invitations` (per-row email preview disclosures). Single CSS pattern, two surfaces.
+- **Path Z native `confirm()` dialog** working in production via `dangerouslySetInnerHTML`-emitted form — no React state, no client component, no modal scaffolding. Confirms the architectural pattern is reusable for future write-path triggers.
+- **audit_log row inspection on manual-reminder rows**: confirmed `{invitationId, kind: "reminder1", triggeredBy: "manual"}` metadata shape — NO decrypted PII, refCode as resource (public id), all actor fields populated via the BEFORE-INSERT trigger.
+- **Funnel UX-consistent post-D80**: Sent=7, Opened=5 (71%), Started=5 (71%), Submitted=1 (14%) — matches stalled-table chip semantic.
+
+### D-counter (sequential, no gaps)
+
+D63 → D80 closed end-to-end. Each operational D-number has DECISIONS.md entry + (where operational) RUNBOOK paragraph. D77 + D78 + D79 + D80 are pure read-path / surface-additive / cosmetic-CSS changes; no DECISIONS.md or RUNBOOK update was authored for these four since the changes are self-explanatory from inline source comments + commit messages + PR bodies — flag for future-Saeed if a thesis-defense audit needs a single-source narrative for them.
+
+### NEXT QUEUE (green — top-of-stack first)
+
+1. **errorClass naming normalization.** D79 surfaced an inconsistency: `lib/email/preview.ts` logs `'config'` for decrypt failure; `lib/email/reminder-manual.ts` logs `'decrypt'` for the same root cause. Reconcile across the bucket dictionary (`'send' | 'config' | 'decrypt' | 'not_found' | 'ineligible'`) so audit metadata + log lines tell a consistent story.
+2. **parseFlash + flashFailureMessage shared-helper extraction.** D79 duplicated these helpers across `/admin/page.tsx` and `/admin/invitations/page.tsx`. Extract to `lib/admin/flash.ts` or similar — DRY pass.
+3. **Suspense-lazy email preview rendering.** Feature 4 eagerly decrypts + renders all previewable rows on `/admin/invitations` page load. At pilot scale (~7) this is ~300-500ms; main-study scale (~150 rows × 3 decrypts = 450 RPCs) ~1-1.5s. Flip to lazy on-expand via Suspense + a per-row server-action endpoint when needed.
+4. Per-variant feedback breakdown (D73 foundation — main-study follow-on).
+5. Per-category bulk export filtering (D74 follow-on — easy add to `getResponsesForExport`).
+6. Wide-format export pivot (D74 follow-on — alternative to long-format).
+7. Per-version export labelling (when V2 launches — add `questionnaire_version` column).
+8. Bulk invite for main study scaling (current flow is one-at-a-time).
+9. Cross-variant analytics for main study (D73 enabled the foundation).
+10. Rate-limit hardening on `/enter` (D66's best-effort in-memory → per-IP store).
+11. D66 smoke cases 4 + 5 retroactive (invalid-code audit row check + resend rotation reveal).
+12. **D26 Phase ③ implementation** (country/city geo). Per audit Item 2: Vercel-header path is ~6-line patch + 1 migration (`p_country` + `p_city` log_audit signature extension). MaxMind path needs license. Tackle when geo signal becomes load-bearing.
+13. D26 Phase ④ unknown-email-failure logging (Supabase dashboard auth logs cover it meanwhile).
+14. Saved filter presets for `/admin/security` (D76 enhancement — bookmarkable already, but a saved-preset chip would be a UX win for recurring filter combinations).
+
+### PENDING SURA DECISION (yellow)
+
+- **Main-study D66 defense decision (post-pilot).** Keep OTP-style for participants in main, or simplify? Depends on pilot UX feedback.
+- **D74 follow-ons priority order.** Per-category filtering vs wide-format pivot vs streaming — order depends on what Sura's ATLAS.ti pipeline asks for first.
+
+### PENDING SURA ACTION (red)
+
+- Pilot monitoring + completion (read F1-F4 feedback rolling, watch for blockers from the 6 in-flight participants; D79 dashboard's stalled-invitations table now surfaces nudge candidates in one place).
+- Main study planning (post-pilot, depends on feedback).
+
+### Active pilot guardrails (DO NOT TOUCH while pilot live)
+
+- `validate_invitation_token`, `validate_invitation_code` RPCs
+- `/r/[token]`, `/enter`, `/consent` routes
+- `invitations` table schema (additive columns fine; renames/drops NOT)
+- Pilot questionnaire variants (active — destructive changes orphan invitations)
+- Reminder cron logic (D72 added 4th decrypt step; D79 manual-reminder path verified to coexist — cron schedule preserved; first cron fires ~June 10)
+- Email template rendering layer (D70 + D71 + D72 three-layer defensive stack; cross-client verified; BOTH D70's CSS layer AND D71's `<br>` fallback are required; D79 Feature 4 preview reuses this layer byte-identically)
+- D73 feedback hub aggregation (let it bake; first non-trivial render happens on category #2's submit)
+- D74 export hub + D75 parallel-decrypt path (real-data-verified; OFF-JOR-02 round-trip clean across 4 formats × 2 perf modes)
+- D79 manual-reminder write path (live + verified; reuses verified D70+D71+D72 email render layer + D64 reminder wrapper byte-identically; 10-min cooldown via audit_log)
+- `log_audit` RPC + `audit_log` schema (D76 + D79 added new actions as data; write path unchanged)
+- `/admin/security` + `/admin/exports` + `/admin/invitations` + `/admin/responses/[id]` owner-gate patterns (mirror, **do not modify**)
+- `.expandable-summary` shared selector (D78 → D79 abstraction; two surfaces depend)
+- The 12 unused feedback question rows (researchers/donors/ngos × F1–F4 — intentional architecture)
+
+### Safe areas for new work
+
+- errorClass normalization, flash-helper extraction, Suspense-lazy preview rendering, analytics, per-variant feedback breakdown, audit-log UI follow-ons (D76 foundation), rate-limit hardening on `/enter`, D26 ③/④ wiring, saved filter presets.
+
+### §9 Latest applied migration — UNCHANGED
+
+D70 → D80 added zero migrations. Counter remains at `20260602130000` (D69 — `invitations_redacted` adds `collection_mode`). Next migration is `>= 20260602130001`.
+
+---
+
 ## 🟢 PILOT-ACTIVE STATE (2026-06-05, end-of-session) — read first
 
 The platform is production-green at `karasneh-research.org` and **the pilot is LIVE**. All 4 pilot variants (`pilot_officials`, `pilot_researchers`, `pilot_donors`, `pilot_ngos`) are `active`; the 5 main variants remain in `draft`. **7 SME invitations sent**; **1 submitted** (OFF-JOR-02 — Jordanian official, 14 answers, real Arabic content, ~57-minute engagement); **6 in flight** (5/7 opened, 71% open rate; zero send failures; zero expired). First reminder cron fires ~June 10 — D72's `{name}` placeholder + decrypt path's first real exercise under load.
