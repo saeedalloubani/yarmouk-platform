@@ -1,3 +1,69 @@
+## 🟢 PILOT-ACTIVE STATE (2026-06-05) — read first
+
+The platform is production-green at `karasneh-research.org` and **the pilot is LIVE**. All 4 pilot variants (`pilot_officials`, `pilot_researchers`, `pilot_donors`, `pilot_ngos`) are `active`; the 5 main variants remain in `draft`. **7 SME invitations sent**; **1 submitted** (OFF-JOR-02 — Jordanian official, 14 answers, real Arabic content, ~57-minute engagement); **6 in flight** (5/7 opened, 71% open rate; zero send failures; zero expired). First reminder cron fires ~June 10 — D72's `{name}` placeholder + decrypt path's first real exercise under load.
+
+**Backup posture:** fresh full snapshot `yarmouk-20260605-1240.yarmoukbackup` taken pre-D74 and copied offsite to the Mac. Both password-manager secrets (`BACKUP_PASSPHRASE` + Vault key `pii_key_v1`) confirmed present at backup time.
+
+### Closed since the 2026-06-02 refresh (D70 → D74)
+
+- **D70 (2026-06-03)** — Email template render: `white-space: pre-line` on the prose `<p>` wrappers so author-entered newlines render as soft line breaks. CSS-only Gmail/Apple-Mail path. Migrated nothing; default templates unchanged.
+- **D71 (2026-06-03)** — Outlook/O365 fallback: `\n → <br>\n` post-escape replacement in `render.ts`'s `escapedSections` loop. Outlook's HTML standardisation strips `white-space`, so D70 alone failed there. D70 + D71 ship together (defensive layering) and BOTH layers are required cross-client — do not remove either.
+- **D72 (2026-06-04)** — `{name}` placeholder usable in the `intro` section of the 3 participant templates (invitation / reminder1 / reminderFinal). ALLOWED-only (not required). Wrapper inputs widened with `name?: string | null`; renderer defaults to `""` when undefined; create flow passes plaintext name directly, resend + cron decrypt `recipient_name_encrypted` non-fatally (decrypt-fail degrades to empty name so the link still ships — contrast with email/token/access_code where decrypt-fail aborts). Bundled fix on line 581 closed a latent PII-discipline gap. First reminder cron (~June 10) is the path's first real exercise.
+- **D73 (2026-06-05)** — Pilot-Feedback Hub (`/admin/analytics/feedback`) now aggregates by `question_code` across all 4 active pilot variants. Each variant has its own F1–F4 rows (16 total with byte-identical text); before D73, the hub rendered 16 sections (12 empty). Surfaced when OFF-JOR-02 became the first real submission. Fix is pure read-aggregation in `lib/repos/feedback.ts`: `idToCode` built across all variant rows, dedupe questions to one per code, re-key answers join from `question_id → question_code`. Cross-variant pooling locked as the v1 unit (questionnaire UX signal). Per-variant breakdown is a main-study follow-on.
+- **D74 (2026-06-05)** — Pilot Response Export Center at `/admin/exports`. Owner-only (gate mirrors `/admin/security` verbatim). Two scopes × two formats (single/bulk × CSV/XLSX). Long-format: 1 row per (response × answer), 18 denormalized columns. PII decrypted inline (`recipient_name` + `recipient_email`) with **ALL-OR-NOTHING posture** — any decrypt failure aborts the entire export, writes `warn` audit with `errorClass='config'` (never `err.message`), surfaces safe banner. **One audit entry per attempt** (success → `info` with `{scope, format, responseCount, refCodes}`; failure → `warn` with `{scope, format, errorClass}`); no "started" row. Token plaintext + access-code ciphertext + `consent_records.signed_name_encrypted` are NEVER exported by design. Filters: `submitted_at IS NOT NULL AND status='active'` (withdrawn excluded; `is_locked` not a filter). `Cache-Control: no-store, max-age=0` on every response. `exceljs ^4.4.0` added (CLAUDE.md's anchored library for D18/D19 ATLAS.ti exporter; server-side only).
+
+**Operational close (between D72 and D73):** `pilot_officials` was accidentally `closed` mid-pilot via a Studio click; restored to `active` via Studio UPDATE while invitations were still in flight (D64's `version.activate` audit pair from the same window remains the cleanest forensic trace). No respondents lost data.
+
+### D-counter (sequential, no gaps)
+
+D63 → D74 closed end-to-end. Each D-number has DECISIONS.md entry + (where operational) RUNBOOK paragraph. Next D-numbers slotted to top of green queue below.
+
+### NEXT QUEUE (green — top-of-stack first)
+
+1. **D75 — Parallelize export decrypt loop.** Current `getResponsesForExport` is sequential (N invitations × 2 decrypts = 2N RPC round-trips). Fine at pilot scale (≤7). Bulk export at main-study scale (50–100+) will be noticeably slow. `Promise.all` + race-to-first-fail short-circuit. Flagged during D74 TIER 1+2 review.
+2. **D76 — Audit log UI enhancements.** Real data is starting to land (D72/D73/D74 successes, D64 cron, D66 access-code failures). `/admin/security` is currently a flat 100-row table. Filter by action, severity, date range; pagination; CSV export of the filtered view.
+3. Per-category bulk export filtering (D74 follow-on — easy add to `getResponsesForExport`).
+4. Wide-format export pivot (D74 follow-on — alternative to long-format).
+5. Per-version export labelling (when V2 launches — add `questionnaire_version` column).
+6. Bulk invite for main study scaling (current flow is one-at-a-time).
+7. Cross-variant analytics for main study (D73 enabled the foundation).
+8. Rate-limit hardening on `/enter` (D66's best-effort in-memory → per-IP store).
+9. D66 smoke cases 4 + 5 retroactive (invalid-code audit row check + resend rotation reveal).
+10. D26 geo/IP/device capture (columns ready, capture unwired).
+
+### PENDING SURA DECISION (yellow)
+
+- **Main-study D66 defense decision (post-pilot).** Keep OTP-style for participants in main, or simplify? Depends on pilot UX feedback.
+- **D74 follow-ons priority order.** Per-category filtering vs wide-format pivot vs streaming — order depends on what Sura's ATLAS.ti pipeline asks for first.
+
+### PENDING SURA ACTION (red)
+
+- Pilot monitoring + completion (read F1-F4 feedback rolling, watch for blockers from the 6 in-flight participants).
+- ~~Pilot activation + launch~~ — DONE (7 invitations sent; pilot live).
+- Main study planning (post-pilot, depends on feedback).
+
+### Active pilot guardrails (DO NOT TOUCH while pilot live)
+
+- `validate_invitation_token`, `validate_invitation_code` RPCs
+- `/r/[token]`, `/enter`, `/consent` routes
+- `invitations` table schema (additive columns fine; renames/drops NOT)
+- Pilot questionnaire variants (active — destructive changes orphan invitations)
+- Reminder cron logic (D72 just touched; first fires ~June 10 — name-decrypt path's first real exercise)
+- Email template rendering layer (D70 + D71 + D72 just touched — let it bake under real send load; BOTH D70's CSS layer AND D71's `<br>` fallback are required cross-client)
+- D73 feedback hub aggregation (let it bake; first non-trivial render happens on category #2's submit)
+- D74 export hub (just landed — read-only across data, decrypts under owner-only gate; audit-logged)
+- The 12 unused feedback question rows (researchers/donors/ngos × F1–F4 — intentional architecture for when those variants submit)
+
+### Safe areas for new work
+
+- D75+ work, admin UI improvements not touching active pilot surfaces, analytics, per-variant feedback breakdown (D73 foundation), audit-log UI enhancements (D76), rate-limit hardening on `/enter`, D26 capture wiring.
+
+### §9 Latest applied migration — UNCHANGED
+
+D70 → D74 added zero migrations. Counter remains at `20260602130000` (D69 — `invitations_redacted` adds `collection_mode`). Next migration is `>= 20260602130001`.
+
+---
+
 ## 🟢 PILOT-READY STATE (2026-06-02) — read first
 
 The platform is production-green at `karasneh-research.org`. **Zero active questionnaire variants.** All 4 pilot variants (`pilot_officials`, `pilot_researchers`, `pilot_donors`, `pilot_ngos`) and all 5 main variants (`main_researchers`, `main_donors`, `main_ngos`, `main_officials_jordanian`, `main_officials_syrian`) are in `draft`. Sura controls activation via Path A: Saeed flips `pilot_researchers` to `active` on her "ready to send" signal.
