@@ -1193,6 +1193,47 @@ No information loss — the failure is already recorded as `errorClass=config` o
 - Recordings / transcripts / researcher notes — separate analytical artifacts; ATLAS.ti handoff (D18/D19) will fold them in.
 - Schema, RPCs, RLS, migrations, types regen — none touched.
 
+## D76 — Audit log filters + summary chips + higher page size
+
+**Motivation.** `/admin/security` existed as a flat 100-row newest-first list (D27 era). With the pilot active and ~13 D-numbers worth of activity now in `audit_log` (`export.responses`, `invitation.create`/`send`, reminder runs, auth events, etc.), navigating real audit data started to friction. D76 adds a filter surface, severity-breakdown summary chips, and bumps the row cap from 100 → 250 with a "Showing N of M" footer.
+
+**Shape.** Pure read-path enhancement. `lib/repos/audit.ts` grows three exports — `listAuditEvents` now accepts an `AuditFilters` shape and returns `{ rows, totalCount }`; `getAuditSummary` returns the 3-severity breakdown via 3 parallel count-only round-trips (`head: true`, no row payload); `listDistinctActions` feeds the action dropdown via a single `SELECT action ORDER BY action` plus client-side `Set` dedupe. The page parses `searchParams` (Next 15 Promise pattern), resolves filters server-side, fetches the four data sources in parallel via `Promise.all`, and renders chip strip + HTML GET form + table + footer.
+
+**Filter surface (5 filters).**
+
+- `severity` — info / warn / alert (single select, default all)
+- date range — preset rolling windows (Last 24 hours / Last 7 days / Last 30 days), Custom (date inputs), or All time (default)
+- `action` — dynamic dropdown, sourced from `audit_log` via `listDistinctActions`
+- `actor` — dropdown of all admins via existing `listAdmins`, including removed admins so historical filtering against now-removed actors works
+- `resource` — ILIKE substring match (`%text%`)
+
+**Why rolling windows for "Last 24 hours" (not "Today" at UTC midnight).** `audit_log.ts` is `TIMESTAMPTZ` (UTC internally) and the page renders timestamps via `toLocaleString` in the admin's browser TZ. Saeed and Sura are UTC+3 (Jordan). A "today" definition tied to UTC midnight would diverge from the admin's local day by 3h — a 02:00-Jordan query for "today" would return 21:00-yesterday-through-now UTC, which is unintuitive. Defining the preset as a rolling 24h window from server `now` avoids the local-midnight / server-timezone mismatch entirely. The dropdown labels reflect this explicitly: "Last 24 hours" (not "Today"), "Last 7 days", "Last 30 days". Custom range still accepts literal `YYYY-MM-DD` dates and is interpreted inclusive of the `to` day (`T23:59:59.999Z`).
+
+**URL persistence + no client JS.** All filters live in the URL as query params; the form submits via HTML `method=GET`, no client JavaScript. State is bookmarkable, survives back/forward, and works for screenshot evidence. Empty form inputs still get serialized as `&name=` keys (browser default for GET forms); `resolveFilters` treats empty strings as `undefined` so results stay correct, accepting some URL clutter as the tradeoff for no-JS simplicity.
+
+**Custom date inputs stay enabled.** The custom `from` / `to` `<input type="date">` fields are visible alongside the range select regardless of which range option is selected; disabling them via HTML `disabled` would skip them from the submission entirely and create UX confusion when switching between preset and custom. The server only reads them when `range=custom`.
+
+**Summary chips — drill-in semantics.** Chips show filtered totals, not the global breakdown. When a `severity` filter is active, the non-matching chips short-circuit to `0` inside `countAuditBySeverity` without a round-trip; users filtering to `severity=warn` see "{N} events · 0 info · {N} warn · 0 alert" as confirmation the filter took effect.
+
+**Pagination — limit bump + "Showing N of M".** The row cap moves from 100 to 250; below the cap the footer reads "Showing N of N events", above it reads "Showing 250 of M events. Refine filters to see more." `count: 'exact'` returns the FULL filtered count from Postgres, not the `LIMIT`-narrowed count.
+
+**Severity index nuance — not blocking.** `idx_audit_log_severity_warn` is a PARTIAL index (`WHERE severity IN ('warn', 'alert')`). A `severity=info` filter falls back to `idx_audit_log_ts_desc` + filter, or a sequential scan when there's no date filter to narrow it. Fine at pilot scale (hundreds of rows) and main-study scale (expected low thousands). If main-study volume eventually shows real slowness on info-severity queries, adding a full severity index or `(severity, ts)` composite is the obvious next step.
+
+**Owner-gate unchanged.** The page-level redirect pattern (anonymous → `/admin/login`, non-owner → `/admin`) is preserved verbatim. RLS `audit_log_owner_select` is the real backstop — a readonly admin reaching the page would still see zero rows.
+
+**Architectural follow-on (NOT in D76).**
+
+- Per-page pagination beyond 250 with offset / cursor — useful once main-study volume regularly exceeds the cap.
+- Filtered CSV / XLSX export of the audit log itself — the export hub (D74) handles response data, not audit data.
+- Composite `(severity, ts)` index — if info-severity queries get slow.
+- Geo capture (`country` / `city` columns) — deferred D26 ③ surface; would slot into the IP cell.
+
+**Out of D76 scope.**
+
+- Schema, RPCs, RLS, migrations, types regen — none touched.
+- `log_audit` RPC write path — unchanged.
+- Other admin routes — unchanged.
+
 ## Out of Scope (Explicitly)
 
 - **AI translation** between EN/AR. Button exists in mock as placeholder; clicking does nothing. Real translation would require GPT-4 or DeepL API; deferred.

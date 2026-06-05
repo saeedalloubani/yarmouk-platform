@@ -5,19 +5,110 @@
 // is the real backstop; this UI gate keeps a non-owner from reaching the page
 // at all, and the repo would return zero rows anyway.
 //
-// Shows the operational columns only — ip/country/city/user_agent are omitted
-// (NULL until D26 request-context capture is wired). Non-PII by construction:
-// audit rows carry codes/ids/roles, never names or tokens.
+// Shows the operational columns only — country / city are omitted (NULL
+// until D26 ③ is wired). Non-PII by construction: audit rows carry codes /
+// ids / roles, never names or tokens.
+//
+// D76 — filter surface + summary chips + higher page size (250). Filters
+// are URL-persistent (HTML form GET; no client JS), so a filtered view is
+// bookmarkable and survives a back-button navigation. Rolling-window date
+// presets (last 24h / 7d / 30d) are resolved server-side to absolute
+// timestamps before they reach the repo, which keeps the repo clock-free.
+// Custom range uses literal <input type="date"> values, inclusive of the
+// `to` day (… T23:59:59.999Z).
 
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentAdmin } from "@/lib/auth";
-import { listAuditEvents, type AuditEventView } from "@/lib/repos/audit";
+import {
+  listAuditEvents,
+  getAuditSummary,
+  listDistinctActions,
+  type AuditFilters,
+} from "@/lib/repos/audit";
+import { listAdmins } from "@/lib/repos/admins";
 import type { Database, Json } from "@/lib/supabase/database.types";
 
 export const dynamic = "force-dynamic";
 
 type Severity = Database["public"]["Enums"]["event_severity"];
+
+const PAGE_LIMIT = 250;
+
+type RangeKey = "today" | "7d" | "30d" | "custom";
+
+type SearchParamsShape = {
+  severity?: string;
+  range?: string;
+  from?: string;
+  to?: string;
+  action?: string;
+  actor?: string;
+  resource?: string;
+};
+
+function isSeverity(v: string | undefined): v is Severity {
+  return v === "info" || v === "warn" || v === "alert";
+}
+
+function isRangeKey(v: string | undefined): v is RangeKey {
+  return v === "today" || v === "7d" || v === "30d" || v === "custom";
+}
+
+function isValidDateInput(v: string | undefined): v is string {
+  // YYYY-MM-DD shape as emitted by <input type="date">.
+  return typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+}
+
+/**
+ * Translate URL searchParams into the AuditFilters shape the repo expects,
+ * plus the preserved-range key + custom inputs we need to re-select the
+ * dropdown / inputs after the server round-trip.
+ *
+ * Rolling-window date presets are resolved here, server-side, to absolute
+ * ISO timestamps via Date.now(). Custom range uses literal date inputs
+ * (T00:00:00.000Z for `from`; T23:59:59.999Z for `to` to include the full
+ * target day). When `range` is absent or invalid, no date filter is
+ * applied (= "all time").
+ */
+function resolveFilters(sp: SearchParamsShape): {
+  filters: AuditFilters;
+  rangeKey: RangeKey | "";
+  customFrom: string;
+  customTo: string;
+} {
+  const severity = isSeverity(sp.severity) ? sp.severity : undefined;
+  const rangeKey: RangeKey | "" = isRangeKey(sp.range) ? sp.range : "";
+  const customFrom = isValidDateInput(sp.from) ? sp.from : "";
+  const customTo = isValidDateInput(sp.to) ? sp.to : "";
+
+  let from: string | undefined;
+  let to: string | undefined;
+  const HOUR_MS = 3_600_000;
+  if (rangeKey === "today") {
+    from = new Date(Date.now() - 24 * HOUR_MS).toISOString();
+  } else if (rangeKey === "7d") {
+    from = new Date(Date.now() - 7 * 24 * HOUR_MS).toISOString();
+  } else if (rangeKey === "30d") {
+    from = new Date(Date.now() - 30 * 24 * HOUR_MS).toISOString();
+  } else if (rangeKey === "custom") {
+    if (customFrom) from = `${customFrom}T00:00:00.000Z`;
+    if (customTo) to = `${customTo}T23:59:59.999Z`;
+  }
+
+  const action = sp.action && sp.action.trim() !== "" ? sp.action : undefined;
+  const actorId = sp.actor && sp.actor.trim() !== "" ? sp.actor : undefined;
+  const resource =
+    sp.resource && sp.resource.trim() !== "" ? sp.resource.trim() : undefined;
+
+  return {
+    filters: { severity, from, to, action, actorId, resource },
+    rangeKey,
+    customFrom,
+    customTo,
+  };
+}
 
 function fmtTimestamp(iso: string): string {
   return new Date(iso).toLocaleString("en-GB", {
@@ -41,10 +132,10 @@ function severityChipClasses(sev: Severity): string {
   }
 }
 
-// Compact one-line "key: value · key: value" rendering of the metadata object.
-// Empty / non-object metadata renders as an em-dash. Nested values are
-// JSON-stringified so the line stays single-row; the full string is also set as
-// the cell title for hover.
+// Compact one-line "key: value · key: value" rendering of the metadata
+// object. Empty / non-object metadata renders as an em-dash. Nested
+// values are JSON-stringified so the line stays single-row; the full
+// string is also set as the cell title for hover.
 function formatMetadata(meta: Json): string {
   if (meta === null || typeof meta !== "object" || Array.isArray(meta)) {
     return meta === null ? "—" : String(meta);
@@ -52,19 +143,49 @@ function formatMetadata(meta: Json): string {
   const entries = Object.entries(meta as Record<string, unknown>);
   if (entries.length === 0) return "—";
   return entries
-    .map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : String(v)}`)
+    .map(
+      ([k, v]) =>
+        `${k}: ${typeof v === "object" ? JSON.stringify(v) : String(v)}`
+    )
     .join(" · ");
 }
 
-export default async function SecurityPage() {
+export default async function SecurityPage({
+  searchParams,
+}: {
+  searchParams: Promise<SearchParamsShape>;
+}) {
   const supabase = await createSupabaseServerClient();
   const admin = await getCurrentAdmin(supabase);
   if (!admin) redirect("/admin/login");
   if (admin.role !== "owner") redirect("/admin"); // audit log is owner-only
 
-  const events: AuditEventView[] = await listAuditEvents(supabase, {
-    limit: 100,
-  });
+  const sp = await searchParams;
+  const { filters, rangeKey, customFrom, customTo } = resolveFilters(sp);
+
+  // Parallel fetch — 4 outer round-trips; getAuditSummary itself nests 3
+  // parallel count-only round-trips inside Promise.all. Total wall-clock
+  // = max(rows query, summary fan-out, distinct-actions, listAdmins) at
+  // the slowest single round-trip.
+  const [{ rows, totalCount }, summary, distinctActions, admins] =
+    await Promise.all([
+      listAuditEvents(supabase, filters, { limit: PAGE_LIMIT }),
+      getAuditSummary(supabase, filters),
+      listDistinctActions(supabase),
+      listAdmins(supabase),
+    ]);
+
+  const severityQuery = filters.severity ?? "";
+  const actionQuery = filters.action ?? "";
+  const actorQuery = filters.actorId ?? "";
+  const resourceQuery = filters.resource ?? "";
+
+  const hasAnyFilter =
+    !!severityQuery ||
+    !!rangeKey ||
+    !!actionQuery ||
+    !!actorQuery ||
+    !!resourceQuery;
 
   return (
     <main className="min-h-screen bg-white">
@@ -76,96 +197,251 @@ export default async function SecurityPage() {
           </h1>
           <p className="text-[13px] text-muted mt-1">
             Audit log — admin actions, newest first
-            {events.length > 0 && <> · showing {events.length}</>}
-            {events.length === 100 && <> (most recent)</>}
           </p>
         </div>
 
-        {events.length === 0 ? (
+        {/* Summary chips — filtered totals (drill-in feedback). When a
+            severity filter is active, the other-severity chips show 0
+            (countAuditBySeverity short-circuits without a round-trip). */}
+        <div className="flex flex-wrap items-center gap-2 mb-5">
+          <span className="chip-solid bg-bgAlt text-ink">
+            {summary.total} events
+          </span>
+          <span className="chip-solid bg-brand-50 text-brand-700">
+            {summary.info} info
+          </span>
+          <span className="chip-solid bg-warnLight text-warn">
+            {summary.warn} warn
+          </span>
+          <span className="chip-solid bg-dangerLight text-danger">
+            {summary.alert} alert
+          </span>
+        </div>
+
+        {/* Filter form — HTML method=GET, no client JS. Empty inputs
+            still submit as `&name=` keys; the URL gets a little verbose
+            after one filter pass but resolveFilters treats empty strings
+            as undefined, so results stay correct. The "Clear" link
+            navigates to the bare page, stripping all params. The custom
+            from/to inputs stay enabled regardless of the range select
+            (per D76 decision B); the server only reads them when
+            range=custom. */}
+        <form
+          method="GET"
+          action="/admin/security"
+          className="card p-4 mb-5 grid grid-cols-1 md:grid-cols-3 gap-3 items-end text-[13px]"
+        >
+          <label className="flex flex-col gap-1">
+            <span className="text-muted text-[12px]">Severity</span>
+            <select
+              name="severity"
+              defaultValue={severityQuery}
+              className="border border-line rounded-md px-2 py-1.5 bg-white"
+            >
+              <option value="">All severities</option>
+              <option value="info">info</option>
+              <option value="warn">warn</option>
+              <option value="alert">alert</option>
+            </select>
+          </label>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-muted text-[12px]">Date range</span>
+            <select
+              name="range"
+              defaultValue={rangeKey}
+              className="border border-line rounded-md px-2 py-1.5 bg-white"
+            >
+              <option value="">All time</option>
+              <option value="today">Last 24 hours</option>
+              <option value="7d">Last 7 days</option>
+              <option value="30d">Last 30 days</option>
+              <option value="custom">Custom range</option>
+            </select>
+          </label>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-muted text-[12px]">Action</span>
+            <select
+              name="action"
+              defaultValue={actionQuery}
+              className="border border-line rounded-md px-2 py-1.5 bg-white"
+            >
+              <option value="">All actions</option>
+              {distinctActions.map((a) => (
+                <option key={a} value={a}>
+                  {a}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-muted text-[12px]">Custom from</span>
+            <input
+              type="date"
+              name="from"
+              defaultValue={customFrom}
+              className="border border-line rounded-md px-2 py-1.5"
+            />
+          </label>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-muted text-[12px]">Custom to</span>
+            <input
+              type="date"
+              name="to"
+              defaultValue={customTo}
+              className="border border-line rounded-md px-2 py-1.5"
+            />
+          </label>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-muted text-[12px]">Actor</span>
+            <select
+              name="actor"
+              defaultValue={actorQuery}
+              className="border border-line rounded-md px-2 py-1.5 bg-white"
+            >
+              <option value="">All actors</option>
+              {admins.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                  {a.status === "removed" ? " (removed)" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="flex flex-col gap-1 md:col-span-2">
+            <span className="text-muted text-[12px]">
+              Resource contains
+            </span>
+            <input
+              type="text"
+              name="resource"
+              defaultValue={resourceQuery}
+              placeholder="ref code or text…"
+              className="border border-line rounded-md px-2 py-1.5"
+            />
+          </label>
+
+          <div className="flex items-center gap-2">
+            <button type="submit" className="btn-primary text-[12px]">
+              Apply filters
+            </button>
+            {hasAnyFilter && (
+              <Link href="/admin/security" className="btn-ghost text-[12px]">
+                Clear
+              </Link>
+            )}
+          </div>
+        </form>
+
+        {rows.length === 0 ? (
           <div className="card p-8 text-center text-[14px] text-muted">
-            No audit events recorded yet.
+            {hasAnyFilter
+              ? "No audit events match these filters."
+              : "No audit events recorded yet."}
           </div>
         ) : (
-          <div className="card overflow-hidden">
-            <table className="w-full text-[13px]">
-              <thead className="bg-bgAlt text-muted">
-                <tr className="text-start">
-                  <th className="text-start font-semibold px-4 py-2.5">Time</th>
-                  <th className="text-start font-semibold px-4 py-2.5">
-                    Severity
-                  </th>
-                  <th className="text-start font-semibold px-4 py-2.5">Actor</th>
-                  <th className="text-start font-semibold px-4 py-2.5">IP</th>
-                  <th className="text-start font-semibold px-4 py-2.5">Action</th>
-                  <th className="text-start font-semibold px-4 py-2.5">
-                    Resource
-                  </th>
-                  <th className="text-start font-semibold px-4 py-2.5">
-                    Details
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {events.map((e) => {
-                  const meta = formatMetadata(e.metadata);
-                  return (
-                    <tr key={e.id} className="border-t border-line align-top">
-                      <td className="px-4 py-2.5 whitespace-nowrap text-muted">
-                        {fmtTimestamp(e.ts)}
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <span
-                          className={`chip-solid ${severityChipClasses(
-                            e.severity
-                          )}`}
-                        >
-                          {e.severity}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <span className="text-ink">{e.actorName ?? "—"}</span>
-                        {e.actorRole && (
-                          <span className="block text-[11px] text-muted">
-                            {e.actorRole}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-2.5">
-                        {e.ip ? (
+          <>
+            <div className="card overflow-hidden">
+              <table className="w-full text-[13px]">
+                <thead className="bg-bgAlt text-muted">
+                  <tr className="text-start">
+                    <th className="text-start font-semibold px-4 py-2.5">
+                      Time
+                    </th>
+                    <th className="text-start font-semibold px-4 py-2.5">
+                      Severity
+                    </th>
+                    <th className="text-start font-semibold px-4 py-2.5">
+                      Actor
+                    </th>
+                    <th className="text-start font-semibold px-4 py-2.5">IP</th>
+                    <th className="text-start font-semibold px-4 py-2.5">
+                      Action
+                    </th>
+                    <th className="text-start font-semibold px-4 py-2.5">
+                      Resource
+                    </th>
+                    <th className="text-start font-semibold px-4 py-2.5">
+                      Details
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((e) => {
+                    const meta = formatMetadata(e.metadata);
+                    return (
+                      <tr key={e.id} className="border-t border-line align-top">
+                        <td className="px-4 py-2.5 whitespace-nowrap text-muted">
+                          {fmtTimestamp(e.ts)}
+                        </td>
+                        <td className="px-4 py-2.5">
                           <span
-                            className="mono text-[12px]"
-                            title={e.userAgent ?? undefined}
+                            className={`chip-solid ${severityChipClasses(
+                              e.severity
+                            )}`}
                           >
-                            {e.ip}
+                            {e.severity}
                           </span>
-                        ) : (
-                          <span className="text-muted">—</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <span className="mono text-brand-700">{e.action}</span>
-                      </td>
-                      <td className="px-4 py-2.5">
-                        {e.resource ? (
-                          <span className="mono">{e.resource}</span>
-                        ) : (
-                          <span className="text-muted">—</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <span
-                          className="block max-w-[320px] truncate text-muted"
-                          title={meta}
-                        >
-                          {meta}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <span className="text-ink">
+                            {e.actorName ?? "—"}
+                          </span>
+                          {e.actorRole && (
+                            <span className="block text-[11px] text-muted">
+                              {e.actorRole}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          {e.ip ? (
+                            <span
+                              className="mono text-[12px]"
+                              title={e.userAgent ?? undefined}
+                            >
+                              {e.ip}
+                            </span>
+                          ) : (
+                            <span className="text-muted">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <span className="mono text-brand-700">
+                            {e.action}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5">
+                          {e.resource ? (
+                            <span className="mono">{e.resource}</span>
+                          ) : (
+                            <span className="text-muted">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <span
+                            className="block max-w-[320px] truncate text-muted"
+                            title={meta}
+                          >
+                            {meta}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-[12px] text-muted mt-3">
+              {totalCount <= PAGE_LIMIT
+                ? `Showing ${rows.length} of ${totalCount} events.`
+                : `Showing ${rows.length} of ${totalCount} events. Refine filters to see more.`}
+            </p>
+          </>
         )}
       </div>
     </main>
