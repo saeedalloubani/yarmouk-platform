@@ -176,10 +176,11 @@ export async function getStalledInvitations(
  *
  * Each stage is CUMULATIVE — Opened is "ever opened, regardless of
  * whether the recipient progressed further." Computed from invitation
- * lifecycle timestamps (invitation.sent_at / opened_at / started_at /
- * submitted_at) and from the status enum. We use the timestamp form
- * because it's stable across the status transitions a row goes through
- * (a submitted row WAS once opened; opened_at remains populated).
+ * lifecycle timestamps (invitation.sent_at / opened_at / submitted_at)
+ * for three of the four stages, with one deliberate asymmetry for
+ * Started (see D80 note below). We use the timestamp form because it's
+ * stable across the status transitions a row goes through (a submitted
+ * row WAS once opened; opened_at remains populated).
  *
  * Revoked and expired rows are excluded from the funnel (they're
  * terminal off-paths, not in-flight failures). The denominator is the
@@ -188,6 +189,22 @@ export async function getStalledInvitations(
  * Percentages are computed relative to the Sent total (the funnel
  * mouth), which is the most intuitive read: "X% of the people we
  * emailed opened the link; Y% of them started; Z% submitted."
+ *
+ * D80 — STARTED count semantic. Two definitions of "started" coexist:
+ *   - invitations.started_at  populated on first answer save
+ *                             (Session 2b — opened→started transition).
+ *   - responses.started_at    populated when the responder reaches
+ *                             /consent and the response row is created.
+ * The stalled-invitations surface (getStalledInvitations above) reads
+ * responses.started_at; pre-D80 the funnel only read invitations.started_at,
+ * which produced a UX-inconsistent count (funnel said Started=1 while the
+ * stalled table showed 4 rows with "Started, not submitted"). We now
+ * UNION both sources — an invitation counts as Started if EITHER its
+ * invitations.started_at is populated OR a responses row exists with
+ * started_at populated. The Set-based collector dedupes naturally
+ * (multiple responses per invitation never inflate the count). Sent /
+ * Opened / Submitted are NOT updated — there is no responses-side
+ * divergent semantic for those stages; they stay invitations-only.
  */
 export type PilotFunnel = {
   sent: number;
@@ -203,23 +220,53 @@ export type PilotFunnel = {
 export async function getPilotFunnel(
   supabase: SupabaseClient<Database>
 ): Promise<PilotFunnel> {
+  // D80 — `id` added to the SELECT so the responses-side union below
+  // can match by invitation_id.
   const { data, error } = await supabase
     .from("invitations_redacted")
-    .select("status, sent_at, opened_at, started_at, submitted_at");
+    .select("id, status, sent_at, opened_at, started_at, submitted_at");
   if (error) throw error;
   const rows = data ?? [];
 
   let sent = 0;
   let opened = 0;
-  let started = 0;
   let submitted = 0;
+  // D80 — invitations-side started signal feeds the Set; the responses-
+  // side query below adds to the same Set so dedupe is automatic.
+  const startedIds = new Set<string>();
   for (const r of rows) {
     if (r.status === "revoked" || r.status === "expired") continue;
     if (r.sent_at) sent += 1;
     if (r.opened_at) opened += 1;
-    if (r.started_at) started += 1;
     if (r.submitted_at) submitted += 1;
+    if (r.started_at && r.id) startedIds.add(r.id);
   }
+
+  // D80 — supplement with responses.started_at signal. Same defensive
+  // null filter as getStalledInvitations (view metadata reports id as
+  // nullable; runtime non-null for active pilot rows). We scope the
+  // responses query to the non-terminal candidate set so we don't pull
+  // every response row in the DB — at pilot scale (~7 rows) this is
+  // tiny, but at main-study scale (low hundreds) the narrowing matters.
+  // Server-side `.not("started_at", "is", null)` keeps the payload to
+  // just the IDs we'll merge.
+  const candidateIds = rows
+    .filter((r) => r.status !== "revoked" && r.status !== "expired")
+    .map((r) => r.id)
+    .filter((id): id is string => id != null);
+  if (candidateIds.length > 0) {
+    const { data: respRows, error: respErr } = await supabase
+      .from("responses")
+      .select("invitation_id")
+      .in("invitation_id", candidateIds)
+      .not("started_at", "is", null);
+    if (respErr) throw respErr;
+    for (const r of respRows ?? []) {
+      startedIds.add(r.invitation_id);
+    }
+  }
+
+  const started = startedIds.size;
   const pct = (n: number) => (sent > 0 ? Math.round((n / sent) * 100) : 0);
   return {
     sent,
