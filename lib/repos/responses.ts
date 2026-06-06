@@ -51,39 +51,68 @@ function rowToResponse(r: DbRow): ResponseRow {
   // language + status are narrowed via `as` because the DB CHECKs enforce
   // the value sets but Supabase gen types widen both to string.
   //
-  // D81 Item 2 — duration_minutes COLUMN FALLBACK. The schema column has
-  // no write path anywhere in the codebase (verified via grep): no
-  // INSERT/UPDATE site, no trigger, no generated expression. Result:
-  // every response row has duration_minutes = NULL, and every consumer
-  // (list page, detail page, Reader summary) shows "—" even for fully
-  // submitted responses.
+  // D82 — durationMinutes is now a RAW COLUMN PASSTHROUGH (always null in
+  // practice; no write path anywhere in the codebase). The D81 Item 2
+  // compute-on-read fallback was REMOVED because it used the wrong start
+  // milestone: responses.started_at = consent-moment, which includes the
+  // gap between consent and first answer-save (production showed
+  // OFF-JOR-03 at 2911 min / 48.5 hours because the recipient consented
+  // on Day 1 and submitted on Day 3).
   //
-  // Fix is read-only: when the column is null but both timestamps exist,
-  // compute (submitted_at - started_at) in minutes. Matches the exact
-  // formula getDashboardData uses for its aggregate avg engagement time,
-  // so /admin "At a glance · Average engagement time" and the per-row
-  // Duration columns now agree by construction.
-  //
-  // Negative values (clock skew, withdrawn-and-resubmitted edge cases)
-  // degrade to null rather than display a misleading negative — same
-  // posture as the dashboard helper's `if (ms >= 0)` guard.
-  let durationMinutes = r.duration_minutes;
-  if (durationMinutes == null && r.started_at && r.submitted_at) {
-    const ms =
-      new Date(r.submitted_at).getTime() - new Date(r.started_at).getTime();
-    if (ms >= 0) durationMinutes = Math.round(ms / 60000);
-  }
+  // The corrected ACTIVE-engagement duration semantic uses
+  // invitations.started_at (set guard-once by saveAnswer on first answer
+  // upsert — see lib/actions/answers.ts) as the start milestone. That
+  // computation is cross-table (response.submitted_at + invitation.
+  // started_at) so it cannot live inside this single-row mapper. Pages
+  // that have both contexts (list + detail) call
+  // computeActiveDurationMinutes below explicitly using their existing
+  // invitation data — no new queries needed.
   return {
     id: r.id,
     invitationId: r.invitation_id,
     language: r.language as "en" | "ar",
     startedAt: r.started_at,
     submittedAt: r.submitted_at,
-    durationMinutes,
+    durationMinutes: r.duration_minutes,
     isLocked: r.is_locked,
     status: r.status as ResponseStatus,
     withdrawnAt: r.withdrawn_at,
   };
+}
+
+/**
+ * D82 — ACTIVE engagement duration between first-answer-save and submit.
+ *
+ * Start milestone: `invitations.started_at` — set by
+ * lib/actions/answers.ts:saveAnswer on the FIRST answer upsert, guarded
+ * by `.eq("status", "opened")` so it fires exactly once per invitation.
+ * This is the "first_answer_at" moment — the recipient actively started
+ * typing answers, distinct from `responses.started_at` (consent-page
+ * completion moment).
+ *
+ * End milestone: `responses.submitted_at` — submit completion.
+ *
+ * Returns null when EITHER milestone is missing (no fallback to
+ * consent-moment per D82 lock — that's the broken semantic we're
+ * replacing). An in-progress response shows null → em-dash. A submitted
+ * response with no invitations.started_at (legacy / pre-Session-2b)
+ * also shows null → em-dash, an honest signal.
+ *
+ * Clock-skew defense: `if (ms >= 0)` guard mirrors the same posture as
+ * getDashboardData's average computation and D81 Item 2's now-removed
+ * fallback. Negative deltas degrade to null rather than display a
+ * misleading negative.
+ */
+export function computeActiveDurationMinutes(
+  invitationStartedAt: string | null | undefined,
+  responseSubmittedAt: string | null | undefined
+): number | null {
+  if (!invitationStartedAt || !responseSubmittedAt) return null;
+  const ms =
+    new Date(responseSubmittedAt).getTime() -
+    new Date(invitationStartedAt).getTime();
+  if (ms < 0) return null;
+  return Math.round(ms / 60000);
 }
 
 /**

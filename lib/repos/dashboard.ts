@@ -79,10 +79,12 @@ export async function getDashboardData(
   supabase: SupabaseClient<Database>
 ): Promise<DashboardData> {
   // ---- Invitations (redacted view; non-PII columns only) --------------
+  // D82 — `id` added to the SELECT so the responses → invitation join
+  // for the active-duration computation below can match by primary key.
   const { data: invRows, error: invErr } = await supabase
     .from("invitations_redacted")
     .select(
-      "ref_code, category, status, sent_at, opened_at, started_at, submitted_at"
+      "id, ref_code, category, status, sent_at, opened_at, started_at, submitted_at"
     );
   if (invErr) throw invErr;
   const invitations = invRows ?? [];
@@ -124,20 +126,48 @@ export async function getDashboardData(
   // withdrawn responses' children in the word-count and tag-frequency
   // totals. ORDERING IS LOAD-BEARING: this query + Set MUST land before
   // either child loop runs. `id` is added to the select for the Set.
+  //
+  // D82 — added `invitation_id` to the SELECT so the duration loop below
+  // can cross-reference invitations.started_at (the first-answer-save
+  // moment) as the active-engagement start milestone, replacing the
+  // broken responses.started_at (consent moment). The cascade-bridge
+  // Set + word-count + tag-frequency loops below are unaffected.
   const { data: respRows, error: respErr } = await supabase
     .from("responses")
-    .select("id, started_at, submitted_at, language")
+    .select("id, invitation_id, started_at, submitted_at, language")
     .eq("status", "active");
   if (respErr) throw respErr;
   const responses = respRows ?? [];
   const activeResponseIds = new Set(responses.map((r) => r.id));
 
+  // D82 — index invitations.started_at by id so the duration loop below
+  // pulls the ACTIVE-start milestone without re-querying. `invitations`
+  // is already in scope from the redacted-view SELECT above; we now also
+  // SELECT id (above) so the join key is available. invitations.started_at
+  // is set guard-once by saveAnswer on first answer upsert (see
+  // lib/actions/answers.ts) — the "first_answer_at" moment.
+  const invStartedAtById = new Map<string, string | null>();
+  for (const i of invitations) {
+    if (i.id) invStartedAtById.set(i.id, i.started_at);
+  }
+
+  // D82 — duration semantic switched from (response.submitted_at -
+  // response.started_at) [consent moment → submit] to (response.
+  // submitted_at - invitation.started_at) [first-answer-save → submit].
+  // The old formula was capturing CALENDAR time (production OFF-JOR-03 =
+  // 2911 min / 48.5 hours) instead of ACTIVE engagement time. New
+  // formula matches Sura's mental model: "how long did they spend
+  // answering". Null start (legacy / pre-Session-2b) → row excluded
+  // from the average (no fallback per D82 lock — '—' is the honest
+  // signal).
   const durations: number[] = [];
   for (const r of responses) {
-    if (r.submitted_at && r.started_at) {
-      const ms = new Date(r.submitted_at).getTime() - new Date(r.started_at).getTime();
-      if (ms >= 0) durations.push(ms / 60000); // → minutes
-    }
+    if (!r.submitted_at) continue;
+    const invStartedAt = invStartedAtById.get(r.invitation_id);
+    if (!invStartedAt) continue;
+    const ms =
+      new Date(r.submitted_at).getTime() - new Date(invStartedAt).getTime();
+    if (ms >= 0) durations.push(ms / 60000); // → minutes
   }
   const avgDurationMinutes =
     durations.length > 0

@@ -328,6 +328,25 @@ export async function getStalledInvitations(
  * pilot scale this is not the case (consent is gated upstream of
  * answer saves).
  *
+ * D82 — STARTED ⊆ CONSENT GRANTED. Smoke surfaced a funnel monotonicity
+ * violation: pilot data showed Started=9 while Consent granted=5, which
+ * is invalid (a funnel must be non-increasing left-to-right). Root cause:
+ * the D80 union admits invitations whose `invitations.started_at` is
+ * populated but which have no `consent_records` row (legacy / pre-
+ * Session-2b data, or future flow shortcuts). After D82, the Started
+ * Set is INTERSECTED with the Consent Set before the count is taken —
+ * an invitation must have BOTH a started signal AND a consent record
+ * to count as Started.
+ *
+ * Asymmetry: only Started gets the tighten. Sent / Opened / Consent /
+ * Submitted are unchanged (no analogous union → narrowing). The chip
+ * order Sent → Opened → Consent → Started → Submitted now reads as a
+ * proper monotonic funnel by construction.
+ *
+ * The avgStartedProgress computation (below) iterates over the
+ * TIGHTENED set so phantom-Started rows don't contribute fractions to
+ * the in-flight average.
+ *
  * D81 — AVG STARTED PROGRESS. For dashboard "Started: 5 (71%) avg X/Y
  * answered" treatment. Scope: invitations counted in Started but NOT
  * in Submitted (i.e. mid-flow). For each such invitation, compute
@@ -452,24 +471,43 @@ export async function getPilotFunnel(
   }
   const consentGranted = consentInvIds.size;
 
+  // D82 — TIGHTEN Started: the funnel must be monotonically non-
+  // increasing left-to-right. Intersect the D80 union-Started Set with
+  // the Consent Set so an invitation counts as Started only when BOTH
+  // a started signal exists AND a consent_records row exists. Phantom-
+  // Started rows (legacy / pre-Session-2b data with invitations.
+  // started_at populated but no consent record) fall out of the count.
+  // See the docblock above for full reasoning.
+  //
+  // This narrowed Set is the source of truth for the rest of getPilot
+  // Funnel — `started`, `inFlightInvIds`, and the avgStartedProgress
+  // iteration all read from it instead of the raw startedIds.
+  const startedWithConsentIds = new Set<string>();
+  for (const id of startedIds) {
+    if (consentInvIds.has(id)) startedWithConsentIds.add(id);
+  }
+
   // D81 — AVG STARTED PROGRESS for in-flight rows. Scope: invitations
   // in startedIds AND NOT in submittedIds. For each, look up its first
   // started response, count non-blank answers, divide by visible non-
   // feedback question count for (variant, nationality). Average the
   // per-row fractions.
   //
+  // D82 — read from the TIGHTENED startedWithConsentIds so the avg
+  // doesn't include phantom-Started rows that would otherwise skew it.
+  //
   // Same denominator computation as getStalledInvitations — universal
   // questions (visible_nationalities IS NULL) + nationality-specific
   // questions for the row's nationality. Two batched queries (answers
   // + questions) keep this O(1) round-trips regardless of in-flight
   // count.
-  const inFlightInvIds = Array.from(startedIds).filter(
+  const inFlightInvIds = Array.from(startedWithConsentIds).filter(
     (id) => !submittedIds.has(id)
   );
   const inFlightInvToResp = new Map<string, string>();
   for (const r of allResponses) {
     if (!r.started_at) continue;
-    if (!startedIds.has(r.invitation_id)) continue;
+    if (!startedWithConsentIds.has(r.invitation_id)) continue;
     if (submittedIds.has(r.invitation_id)) continue;
     if (inFlightInvToResp.has(r.invitation_id)) continue; // first wins
     inFlightInvToResp.set(r.invitation_id, r.id);
@@ -569,7 +607,10 @@ export async function getPilotFunnel(
     }
   }
 
-  const started = startedIds.size;
+  // D82 — `started` reflects the TIGHTENED Set so the funnel chip count
+  // and the (Started/Sent) percentage both honor the Started ⊆ Consent
+  // invariant.
+  const started = startedWithConsentIds.size;
   const pct = (n: number) => (sent > 0 ? Math.round((n / sent) * 100) : 0);
   return {
     sent,
