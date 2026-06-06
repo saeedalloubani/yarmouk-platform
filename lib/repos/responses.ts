@@ -50,13 +50,36 @@ export type AnswerDetail = {
 function rowToResponse(r: DbRow): ResponseRow {
   // language + status are narrowed via `as` because the DB CHECKs enforce
   // the value sets but Supabase gen types widen both to string.
+  //
+  // D81 Item 2 — duration_minutes COLUMN FALLBACK. The schema column has
+  // no write path anywhere in the codebase (verified via grep): no
+  // INSERT/UPDATE site, no trigger, no generated expression. Result:
+  // every response row has duration_minutes = NULL, and every consumer
+  // (list page, detail page, Reader summary) shows "—" even for fully
+  // submitted responses.
+  //
+  // Fix is read-only: when the column is null but both timestamps exist,
+  // compute (submitted_at - started_at) in minutes. Matches the exact
+  // formula getDashboardData uses for its aggregate avg engagement time,
+  // so /admin "At a glance · Average engagement time" and the per-row
+  // Duration columns now agree by construction.
+  //
+  // Negative values (clock skew, withdrawn-and-resubmitted edge cases)
+  // degrade to null rather than display a misleading negative — same
+  // posture as the dashboard helper's `if (ms >= 0)` guard.
+  let durationMinutes = r.duration_minutes;
+  if (durationMinutes == null && r.started_at && r.submitted_at) {
+    const ms =
+      new Date(r.submitted_at).getTime() - new Date(r.started_at).getTime();
+    if (ms >= 0) durationMinutes = Math.round(ms / 60000);
+  }
   return {
     id: r.id,
     invitationId: r.invitation_id,
     language: r.language as "en" | "ar",
     startedAt: r.started_at,
     submittedAt: r.submitted_at,
-    durationMinutes: r.duration_minutes,
+    durationMinutes,
     isLocked: r.is_locked,
     status: r.status as ResponseStatus,
     withdrawnAt: r.withdrawn_at,

@@ -487,9 +487,20 @@ export default async function ResponseDetailPage({
         {/* Tags — applied qualitative codes (3c-ii). Both roles see the
             chips; only the owner gets the add form + remove controls
             (canEdit). The server action + RLS enforce the write boundary
-            independently of canEdit. */}
+            independently of canEdit.
+
+            D81 Item 5 — inline help text below the header so Sura (and
+            future readonly supervisors) understand what tags are for
+            without leaving the page. Persistent UI explanation; mirrors
+            the "Researcher notes" section's short help line treatment. */}
         <section className="card p-5 mt-5">
           <h2 className="text-[15px] font-semibold text-ink mb-3">Tags</h2>
+          <p className="text-[12px] text-muted mb-3">
+            Qualitative codes for thematic categorization — useful for
+            ATLAS.ti pre-coding. Apply themes like &ldquo;water_quality&rdquo;
+            or &ldquo;transboundary_cooperation&rdquo; to organize responses
+            analytically. (Not exported to .xlsx by default.)
+          </p>
           <ResponseTagEditor
             responseId={response.id}
             initialTags={appliedTags.map((t) => ({
