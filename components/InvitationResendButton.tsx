@@ -152,7 +152,7 @@ export default function InvitationResendButton({
         disabled={pending}
         aria-label={`Resend ${refCode} — rotate token + access code`}
         title={pending ? "Resending…" : "Resend (rotates link + code)"}
-        className="btn-ghost inline-flex items-center justify-center w-8 h-8 p-0 disabled:opacity-40"
+        className="btn-ghost inline-flex items-center justify-center w-8 h-8 !p-0 disabled:opacity-40"
       >
         <RotateCwIcon />
       </button>
