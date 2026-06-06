@@ -1,3 +1,95 @@
+## 🟢 END-OF-SESSION-3 STATE (2026-06-06) — read first
+
+The platform is production-green at `karasneh-research.org` and **the pilot remains LIVE** with overnight recruiting growth. All 4 pilot variants stay `active`; the 5 main variants remain `draft`. **12 SME invitations sent** (up from 7 at end-of-session-2: +RES-JOR-04, +OFF-JOR-04, +RES-JOR-03, +RES-SY-01 [first Syrian respondent]); **4 submitted** (up from 1: OFF-JOR-02 + the RES-JOR-03 batch produced the first submitted Syrian response too); **5 in various stages of flight**; **3 stalled** (down from 4 — DON-01 + OFF-JOR-03 progressed post-manual-reminder, NGO-02 still pending). Reminder cron fired ~June 10 in flight — D72 `{name}` placeholder + decrypt path under load (TBD smoke). Post-D82, the funnel reads as a proper monotonic non-increasing chain by construction.
+
+**Backup posture:** unchanged — `yarmouk-20260524-1206.yarmoukbackup` (pre-launch) + `yarmouk-20260605-1240.yarmoukbackup` (pre-D74) both on Saeed's Mac + offsite. `BACKUP_PASSPHRASE` + Vault `pii_key_v1` confirmed present in password manager. D81 + D82 needed no new backup (D81 was UI/CSS additions + 1 write path that reuses verified D79 reminder-send pipeline byte-identically; D82 is pure read-side semantic correction).
+
+### Closed since the 2026-06-05 end-of-session-2 refresh
+
+- **D81 (2026-06-06, PR #25 / merge `65a1367`) — Sura UX polish mega-bundle, 5 items in one PR.**
+  - **Item 1 — 5-stage funnel + chip palette + progress bars.** Adds Consent granted stage between Opened and Started (sourced from `consent_records_redacted` view — both roles get the count via the readonly_select RLS policy on the underlying base). Five-color chip palette via new `lib/funnel-stages.ts` single-source-of-truth module exporting `STAGE_PALETTE`, `OFF_FUNNEL_PALETTE`, `stageFor()`, `chipClassFor()` — three surfaces (funnel chips on `/admin`, stalled-table chips on `/admin`, status chips on `/admin/invitations`) all import. Started bumped to `bg-orange-200 text-orange-900` for clearer amber↔orange separation. New aggregate avg-progress strip below funnel chip row for in-flight Started rows; new Progress column on stalled-table for "Started, not submitted" cut (compact bar + numeric `[██░░] 2/14`); both null-safe with zero-denom guards. Variant-question denominator computation: universal (`visible_nationalities IS NULL`) + nationality-specific, cached per (versionId, nationality) tuple, O(1) round-trips regardless of stalled-row count. Six invitation statuses now visually distinct vs 2 pre-D81. `lib/repos/pilot.ts` extended with `StalledInvitation.progress` field + `PilotFunnel.consentGranted` + `PilotFunnel.avgStartedProgress`.
+  - **Item 2 — Duration compute-on-read.** `lib/repos/responses.ts` `rowToResponse` mapper computed `durationMinutes` from `(submitted_at - started_at)` when the schema column was null (it always is — no write path anywhere in the codebase). Matched `getDashboardData`'s aggregate formula verbatim. ⚠️ This used `responses.started_at` (consent moment) which turned out to be the wrong start milestone — **D82 corrects this** (see below).
+  - **Item 3 — Security audit-log overflow.** `/admin/security` widened `max-w-5xl` → `max-w-6xl` (localized; rest of `/admin/*` stays narrow for text-density). Inner `overflow-x-auto` wrapper inside `card overflow-hidden` chrome preserves rounded corners while letting the table scroll horizontally on narrow viewports. Time / Severity / IP padding tightened `px-4` → `px-3` to recover ~50px for Details. D76 filters / D77 expander / D78 indicator / owner gate **functionally unchanged**.
+  - **Item 4 — Icon-only action buttons (Path Z preserved).** `SendReminderButton` (Bell, server component via `dangerouslySetInnerHTML`), `InvitationResendButton` (RotateCw, client component), `InvitationRevokeButton` (Trash2, client component, red via `text-danger` → currentColor inheritance). All three: 14×14 SVG inside 32×32 hit target (WCAG 2.5.5), stroke-width=2 visual rhythm, aria-hidden + focusable=false on inner svg, aria-label + title attributes. Send Reminder's Path Z escape chain BYTE-IDENTICAL to D79 — only the button's INNER content + attributes changed. ⚠️ **First push had a CSS specificity collision** — D81 fix-up landed it (see below).
+  - **Item 5 — Tags help text.** One `<p>` inserted between `<h2>Tags</h2>` and `<ResponseTagEditor>` on `/admin/responses/[id]`. Both roles see the explanation; `canEdit` gating + RLS write boundary untouched. Wording: "Qualitative codes for thematic categorization — useful for ATLAS.ti pre-coding. Apply themes like 'water_quality' or 'transboundary_cooperation' to organize responses analytically. (Not exported to .xlsx by default.)"
+  - 10 files / +736 / -55 / 1 new file (`lib/funnel-stages.ts`).
+
+- **D81 icon-button fix-up (2026-06-06, PR #26 / merge `e3c776f`) — CSS specificity → `!p-0` override.** D81 smoke surfaced a critical regression: the three icon buttons rendered as empty 32×32 rectangles. **DevTools confirmed**: SVG markup IS in the rendered HTML (paths visible), button outer box is 32×32. Root cause was Case (c) CSS class conflict: `globals.css` declares `.btn-secondary { padding: 0.625rem 1.25rem }` (line 87) and `.btn-ghost { padding: 0.5rem 0.875rem }` (line 107) AFTER `@tailwind utilities;`. Both selectors have identical specificity (0,1,0) to Tailwind's generated `.p-0`; same-specificity ties resolve by source order → btn-* padding WINS. Combined with `w-8 h-8` + `box-sizing: border-box`, content area collapsed to negative/4-pixel sliver, geometrically squashing the SVG out of visible space. **Fix**: prepend `!` to `p-0` on all three icon buttons. Tailwind v3's important modifier generates `padding: 0 !important`, defeating same-specificity competitors regardless of source order. Tailwind version verified as v3.4.15 (so `!p-0` prefix syntax is correct; v4 uses `p-0!` postfix instead). 3 files / +3 / -3 lines (exactly 3 `!` characters added). **⚠️ MERGE-TIMING RACE LESSON**: original fix-up commit `ea2844b` was pushed to `feat/d81-sura-ux-bundle` AFTER PR #25 was already merged-closed. The commit orphaned on the branch and never reached main. Required reopening as fresh PR `fix/d81-icon-button-padding-followup` off post-merge main with the identical 3 character changes re-applied. **NEW STANDING RULE BAKED IN** (see below): never push to a closed PR branch.
+
+- **D82 (2026-06-06, PR #27 / merge `40ef638`) — Funnel monotonicity + duration semantic, paired follow-on from D81 smoke.**
+  - **Bug 1 — Funnel monotonicity violation.** Pilot data showed Started=9 while Consent granted=5 — invalid (a funnel must be non-increasing left-to-right). The D80 union admits invitations whose `invitations.started_at` is populated but which have no `consent_records` row (legacy / pre-Session-2b data). Fix: intersect the D80 union-Started Set with the Consent Set in `getPilotFunnel`. An invitation counts as Started only when BOTH a started signal exists AND a consent_records row exists. Phantom-Started rows fall out. `avgStartedProgress` also iterates over the tightened Set so phantom rows don't skew the in-flight average. **Asymmetry**: only Started gets the tighten; Sent / Opened / Consent / Submitted unchanged. The chip order Sent → Opened → Consent → Started → Submitted now reads as a proper monotonic funnel by construction.
+  - **Bug 2 — Duration semantic (consent moment → first-answer moment).** Production showed OFF-JOR-03 at 2911 min (48.5 hours) because the D81 Item 2 fallback used `responses.started_at` as the start milestone — that's the consent-page completion moment, includes the gap between consent and first answer-save. Fix: use `invitations.started_at` as the start milestone — set guard-once by `saveAnswer` on first answer upsert in `lib/actions/answers.ts` (the "first_answer_at" moment). New helper exported: `computeActiveDurationMinutes(invStartedAt, respSubmittedAt) → number | null`. Called by `/admin/responses` list (with `invMap.get(r.invitationId)?.startedAt`) and `/admin/responses/[id]` detail (single compute, used by both Duration field + Engagement time field for guaranteed display consistency). Dashboard At-a-glance Average engagement time inlines the math (same formula) using `invStartedAtById` Map. D81 Item 2 fallback REMOVED from `rowToResponse`. **No fallback** for legacy data without `invitations.started_at` — em-dash is the honest signal.
+  - 5 files / +169 / -38.
+
+### End-of-session production observations (real-data, 2026-06-06)
+
+- **Funnel reads as a proper monotonic funnel post-D82.** Sent=12 ≥ Opened ≥ Consent granted ≥ Started ≥ Submitted=4 by construction (intersection guarantees it). The pre-D82 Started=9 / Consent=5 anomaly is resolved.
+- **Durations realistic post-D82.** OFF-JOR-03's 2911-min (48.5h) calendar-time figure replaced by actual active-engagement time. Dashboard At-a-glance average dropped from 783 min (13h) to realistic ~30-50 min depending on the cohort. List + detail Duration + Reader-summary Engagement-time fields all agree by construction (single helper / single inline formula, identical math).
+- **Sura's overnight recruiting growth.** 7 → 12 invitations; 1 → 4 submitted. New invitations: RES-JOR-04, OFF-JOR-04, RES-JOR-03, RES-SY-01 (**first Syrian respondent** — completes the geographic coverage matrix Sura needed). RES-JOR-03 batch produced the first submitted Syrian response too.
+- **D81 icon-button fix verified in production.** DevTools confirms `class="... !p-0 ..."` deployed; Bell + RotateCw + Trash2 icons all visible across `/admin` Needs-a-nudge action column + `/admin/invitations` action column; Trash2 visibly red; Path Z native `confirm()` still fires on Send Reminder click.
+- **Manual reminder write path continues to perform.** No new failures since D79 + 2 pre-D81 dispatches. Cron schedule preserved on manually-nudged invitations per FLAG E.
+- **`.expandable-summary` shared class** continues to work on both `/admin/security` (audit log Details cells) AND `/admin/invitations` (email preview disclosures). Two surfaces, one CSS pattern.
+
+### NEW STANDING RULE — propagated from D81 fix-up race
+
+**NEVER push commits to a closed PR branch.** Once Saeed merges a PR, that branch is dead for follow-ups regardless of what GitHub shows. If a fix-up is needed post-merge, **always**:
+1. `git fetch origin && git checkout main && git pull --ff-only` to sync to the post-merge tip.
+2. Create a **fresh branch** off the latest main.
+3. Re-apply the fix-up on the fresh branch.
+4. Push the fresh branch and open a NEW PR.
+
+The race condition: pushing to the original branch AFTER merge appears to succeed (`git push` reports ok, the branch advances on origin), but the PR is closed and never reopens. The commit orphans on the branch and never lands on main. Vercel may build the orphan and show green for the branch preview — that's a false positive vs. production main. **Always re-verify main contains the expected commit before declaring a fix-up landed.**
+
+This rule supersedes any prior implicit "push to the same branch for fix-ups" pattern. Documented here so future-Claude (or future-Saeed) doesn't repeat the D81 race.
+
+### D-counter (sequential, no gaps)
+
+D63 → D82 closed end-to-end. Each operational D-number has DECISIONS.md entry + (where operational) RUNBOOK paragraph. D77 + D78 + D79 + D80 + D81 + D82 are pure read-path / surface-additive / cosmetic-CSS / semantic-correction changes; no DECISIONS.md or RUNBOOK update was authored for these six since the changes are self-explanatory from inline source comments + commit messages + PR bodies — flag for future-Saeed if a thesis-defense audit needs a single-source narrative for them.
+
+### NEXT QUEUE (green — top-of-stack first, post-D82 reordering)
+
+1. **errorClass naming normalization** (carry-over from end-of-session-2). `lib/email/preview.ts` logs `'config'` for decrypt failure; `lib/email/reminder-manual.ts` logs `'decrypt'` for the same root cause. Reconcile across the bucket dictionary (`'send' | 'config' | 'decrypt' | 'not_found' | 'ineligible'`) so audit metadata + log lines tell a consistent story.
+2. **parseFlash + flashFailureMessage shared-helper extraction** (carry-over). D79 duplicated these across `/admin/page.tsx` and `/admin/invitations/page.tsx`. Extract to `lib/admin/flash.ts` — DRY pass.
+3. **Dashboard inline-math consolidation** (NEW from D82). `lib/repos/dashboard.ts` inlines the duration formula instead of calling `computeActiveDurationMinutes`. Three implementation sites total (helper + 2 callers + 1 inline) — math is verifiably identical and the inline form fits the dashboard's accumulate-into-array shape better, but a future signature extension (e.g. batch `computeActiveDurationsForMany`) could let this site refactor to a single helper. Not blocking; documented at the call site.
+4. **Suspense-lazy email preview rendering** (carry-over). At main-study scale (~150 rows × 3 decrypts = 450 RPCs) the eager render hits ~1-1.5s. Flip to lazy on-expand via Suspense + a per-row server-action endpoint when needed.
+5. Per-variant feedback breakdown (D73 foundation — main-study follow-on).
+6. Per-category bulk export filtering (D74 follow-on).
+7. Wide-format export pivot (D74 follow-on).
+8. Per-version export labelling (when V2 launches).
+9. Bulk invite for main study scaling.
+10. Cross-variant analytics for main study (D73 foundation).
+11. Rate-limit hardening on `/enter` (D66 in-memory → per-IP store).
+12. D66 smoke cases 4 + 5 retroactive.
+13. **D26 Phase ③** geo (Vercel-header path ~6-line patch + 1 migration).
+14. D26 Phase ④ unknown-email-failure logging.
+15. Saved filter presets for `/admin/security` (D76 enhancement).
+
+### Active pilot guardrails — UPDATED (DO NOT TOUCH while pilot live)
+
+- `validate_invitation_token`, `validate_invitation_code` RPCs
+- `/r/[token]`, `/enter`, `/consent` routes
+- `invitations` table schema (additive columns fine; renames/drops NOT)
+- Pilot questionnaire variants (active — destructive changes orphan invitations)
+- Reminder cron logic (D72 + D79 manual-reminder coexistence verified)
+- Email template rendering layer (D70 + D71 + D72 three-layer defensive stack; D79 Feature 4 preview + Feature 3 send reuse byte-identically)
+- D73 feedback hub aggregation
+- D74 export hub + D75 parallel-decrypt
+- D79 manual-reminder write path (live + verified)
+- `log_audit` RPC + `audit_log` schema (D76 + D79 added new actions as data; write path unchanged)
+- `/admin/security` + `/admin/exports` + `/admin/invitations` + `/admin/responses/[id]` owner-gate patterns (mirror, **do not modify**)
+- `.expandable-summary` shared selector (D78 → D79 abstraction)
+- **`lib/funnel-stages.ts` single-source-of-truth palette (D81)** — three surfaces depend; future stage additions OR color rebrands land here once
+- **`computeActiveDurationMinutes` helper signature (D82)** — list page + detail page + (inlined) dashboard all share semantics; changes propagate via the helper
+- **`invitations.started_at` first-answer-save semantic (D82)** — guard-once write in `saveAnswer` is the source of truth for active-engagement duration; don't repurpose
+- **Started ⊆ Consent intersection invariant (D82)** — preserves funnel monotonicity; don't bypass in future stage additions
+- The 12 unused feedback question rows
+
+### §9 Latest applied migration — UNCHANGED
+
+D70 → D82 added zero migrations. Counter remains at `20260602130000` (D69 — `invitations_redacted` adds `collection_mode`). Next migration is `>= 20260602130001`.
+
+---
+
 ## 🟢 END-OF-SESSION-2 STATE (2026-06-05) — read first
 
 The platform is production-green at `karasneh-research.org` and **the pilot is LIVE**. All 4 pilot variants (`pilot_officials`, `pilot_researchers`, `pilot_donors`, `pilot_ngos`) are `active`; the 5 main variants remain in `draft`. **7 SME invitations sent**; **1 submitted** (OFF-JOR-02 — Jordanian official, 14 answers, real Arabic content, ~58-minute engagement); **4 stalled "started, not submitted"** (DON-01, RES-JOR-01, OFF-JOR-03, NGO-02); **2 never opened** (Off-1, NGO-01). **2 manual reminders dispatched in production this session** via the D79 Feature 3 write path (DON-01 + OFF-JOR-03). Reminder cron fires ~June 10 — D72's `{name}` placeholder + decrypt path's first real exercise under load; D79 manual-reminder coexistence preserves the cron schedule by design (FLAG E).
