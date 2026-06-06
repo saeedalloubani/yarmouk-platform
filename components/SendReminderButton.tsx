@@ -88,7 +88,7 @@ export default function SendReminderButton({
     `style="display:inline" ` +
     `onsubmit='${onsubmitAttr}'>` +
     `<button type="submit" ` +
-    `class="btn-secondary inline-flex items-center justify-center w-8 h-8 p-0" ` +
+    `class="btn-secondary inline-flex items-center justify-center w-8 h-8 !p-0" ` +
     `aria-label="${safeAriaLabel}" title="Send reminder">` +
     `${BELL_SVG}` +
     `</button>` +
