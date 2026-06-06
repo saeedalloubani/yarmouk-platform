@@ -167,7 +167,7 @@ export default function InvitationRevokeButton({
         disabled={pending}
         aria-label={`Revoke ${refCode} — kill the magic link`}
         title={pending ? "Revoking…" : "Revoke (kills the link permanently)"}
-        className="btn-ghost inline-flex items-center justify-center w-8 h-8 p-0 text-danger disabled:opacity-40"
+        className="btn-ghost inline-flex items-center justify-center w-8 h-8 !p-0 text-danger disabled:opacity-40"
       >
         <Trash2Icon />
       </button>
