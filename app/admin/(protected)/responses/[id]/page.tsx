@@ -26,7 +26,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentAdmin } from "@/lib/auth";
-import { getResponse, getAnswersForResponse } from "@/lib/repos/responses";
+import {
+  getResponse,
+  getAnswersForResponse,
+  computeActiveDurationMinutes,
+} from "@/lib/repos/responses";
 import { getInvitation, categoryLabel, collectionModeLabel } from "@/lib/repos/invitations";
 import { getConsentForResponse } from "@/lib/repos/consent";
 import { getVisibleQuestions } from "@/lib/repos/questions";
@@ -136,6 +140,19 @@ export default async function ResponseDetailPage({
   const totalWords = [...answers.values()].reduce(
     (sum, a) => sum + a.wordCount,
     0
+  );
+
+  // D82 — ACTIVE engagement duration (first-answer-save → submit). Start
+  // milestone sourced from invitations.started_at (set guard-once by
+  // saveAnswer); end from response.submittedAt. Replaces the D81 Item 2
+  // fallback that used responses.started_at (consent moment) and
+  // produced misleading 48-hour values. Used by both the Response
+  // metadata block (Duration field) and the Reader summary footer
+  // (Engagement time field) below — single computation, two consumers,
+  // identical value by construction.
+  const activeDurationMinutes = computeActiveDurationMinutes(
+    invitation?.startedAt ?? null,
+    response.submittedAt
   );
 
   const refCode = invitation?.refCode ?? "—";
@@ -265,8 +282,8 @@ export default async function ResponseDetailPage({
             <div>
               <dt className="text-muted mb-0.5">Duration</dt>
               <dd className="text-ink">
-                {response.durationMinutes != null
-                  ? `${response.durationMinutes} min`
+                {activeDurationMinutes != null
+                  ? `${activeDurationMinutes} min`
                   : "—"}
               </dd>
             </div>
@@ -469,8 +486,8 @@ export default async function ResponseDetailPage({
             <div>
               <dt className="text-muted mb-0.5">Engagement time</dt>
               <dd className="text-ink">
-                {response.durationMinutes != null
-                  ? `${response.durationMinutes} min`
+                {activeDurationMinutes != null
+                  ? `${activeDurationMinutes} min`
                   : "—"}
               </dd>
             </div>

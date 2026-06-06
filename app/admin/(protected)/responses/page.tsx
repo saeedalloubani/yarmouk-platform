@@ -26,7 +26,11 @@ import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentAdmin } from "@/lib/auth";
 import { listInvitations, categoryLabel } from "@/lib/repos/invitations";
-import { listResponses, getAnswerCounts } from "@/lib/repos/responses";
+import {
+  listResponses,
+  getAnswerCounts,
+  computeActiveDurationMinutes,
+} from "@/lib/repos/responses";
 
 export const dynamic = "force-dynamic";
 
@@ -85,7 +89,17 @@ export default async function ResponsesPage({
       language: r.language,
       startedAt: r.startedAt,
       submittedAt: r.submittedAt,
-      durationMinutes: r.durationMinutes,
+      // D82 — ACTIVE engagement duration (first-answer-save → submit), NOT
+      // consent-to-submit calendar time. Start milestone sourced from
+      // invitations.started_at (set guard-once by saveAnswer on first
+      // upsert); end from response.submittedAt. The invMap.get is the
+      // same one used for category/nationality above — zero extra queries.
+      // Null when invitation.startedAt is null (legacy/pre-Session-2b) or
+      // response isn't submitted — em-dash renders in either case.
+      durationMinutes: computeActiveDurationMinutes(
+        inv?.startedAt ?? null,
+        r.submittedAt
+      ),
       answerCount: counts.get(r.id) ?? 0,
       responseStatus: r.status,
     };
