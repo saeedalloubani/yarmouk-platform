@@ -33,6 +33,7 @@ import InvitationResendButton from "@/components/InvitationResendButton";
 import InvitationRevokeButton from "@/components/InvitationRevokeButton";
 import SendReminderButton from "@/components/SendReminderButton";
 import { renderReminderPreview, type EmailPreview } from "@/lib/email/preview";
+import { chipClassFor } from "@/lib/funnel-stages";
 
 export const dynamic = "force-dynamic";
 
@@ -229,10 +230,13 @@ export default async function InvitationsPage({
                 {invitations.map((inv) => {
                   const isTerminal =
                     inv.status === "submitted" || inv.status === "revoked";
-                  const chipClass =
-                    inv.status === "revoked"
-                      ? "chip-solid bg-dangerLight text-danger"
-                      : "chip-solid bg-brand-50 text-brand-700";
+                  // D81 Item 1 — chip palette pulled from the shared
+                  // 5-stage map so the status chip color reads
+                  // consistently with the funnel strip + stalled-table
+                  // chip on /admin. Covers all six invitation statuses
+                  // (sent / opened / started / submitted / revoked /
+                  // expired) without per-call ternary tangle.
+                  const chipClass = `chip-solid ${chipClassFor(inv.status)}`;
                   const preview = previewMap.get(inv.id);
                   return (
                     <Fragment key={inv.id}>

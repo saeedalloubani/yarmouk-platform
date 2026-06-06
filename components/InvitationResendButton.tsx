@@ -17,6 +17,13 @@
 // "shown once" wording applies to the code identically (resend rotates
 // both; the OLD code is dead the instant access_code_encrypted is
 // overwritten by the rotation UPDATE).
+//
+// D81 Item 4 — icon-only trigger button. Text label ("Resend" / "Resending…")
+// replaced by an inline RotateCw SVG (lucide-style geometry, hand-coded,
+// no new dep). aria-label embeds the refCode, title gives a hover tooltip,
+// disabled:opacity-40 retained from the prior text button as the pending
+// affordance. The reveal panels + error variants below are UNCHANGED — only
+// the trigger button surface gets the icon treatment.
 
 import { useState, useTransition } from "react";
 import {
@@ -27,6 +34,29 @@ import {
 // D66 — per-field copy state so URL and code can each show "Copied"
 // independently.
 type CopiedField = null | "tokenUrl" | "accessCode";
+
+// D81 Item 4 — RotateCw icon (lucide geometry, hand-coded inline).
+// stroke-width=2 matches Bell (SendReminder) + Trash2 (Revoke) for
+// consistent visual weight across the action bar.
+function RotateCwIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="14"
+      height="14"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+      <path d="M21 3v5h-5" />
+    </svg>
+  );
+}
 
 export default function InvitationResendButton({
   invitationId,
@@ -120,9 +150,11 @@ export default function InvitationResendButton({
         type="button"
         onClick={onResend}
         disabled={pending}
-        className="btn-ghost text-[12px] disabled:opacity-40"
+        aria-label={`Resend ${refCode} — rotate token + access code`}
+        title={pending ? "Resending…" : "Resend (rotates link + code)"}
+        className="btn-ghost inline-flex items-center justify-center w-8 h-8 p-0 disabled:opacity-40"
       >
-        {pending ? "Resending…" : "Resend"}
+        <RotateCwIcon />
       </button>
 
       {result?.ok && result.emailed && (

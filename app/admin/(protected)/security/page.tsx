@@ -221,7 +221,12 @@ export default async function SecurityPage({
 
   return (
     <main className="min-h-screen bg-white">
-      <div className="max-w-5xl mx-auto px-6 py-10">
+      {/* D81 Item 3 — widened to max-w-6xl from max-w-5xl. Audit log is
+          data-dense (7 columns) and the Details column was overflowing the
+          old container; the wider container relieves cumulative column
+          pressure. Localized to /admin/security; the rest of /admin/*
+          stays text-dense at max-w-5xl. */}
+      <div className="max-w-6xl mx-auto px-6 py-10">
         <div className="mb-6">
           <div className="eyebrow mb-1">Admin</div>
           <h1 className="text-[24px] font-bold text-ink tracking-tight">
@@ -378,20 +383,28 @@ export default async function SecurityPage({
           </div>
         ) : (
           <>
+            {/* D81 Item 3 — inner overflow-x-auto wrapper preserves the
+                card's rounded corners while letting the table scroll
+                horizontally when the cumulative column widths exceed the
+                viewport (the Details column was being clipped off-screen
+                before this). Density-tightened columns (Time / Severity /
+                IP → px-3) recover ~50px for Details inside the visible
+                width before scroll kicks in. */}
             <div className="card overflow-hidden">
+              <div className="overflow-x-auto">
               <table className="w-full text-[13px]">
                 <thead className="bg-bgAlt text-muted">
                   <tr className="text-start">
-                    <th className="text-start font-semibold px-4 py-2.5">
+                    <th className="text-start font-semibold px-3 py-2.5">
                       Time
                     </th>
-                    <th className="text-start font-semibold px-4 py-2.5">
+                    <th className="text-start font-semibold px-3 py-2.5">
                       Severity
                     </th>
                     <th className="text-start font-semibold px-4 py-2.5">
                       Actor
                     </th>
-                    <th className="text-start font-semibold px-4 py-2.5">IP</th>
+                    <th className="text-start font-semibold px-3 py-2.5">IP</th>
                     <th className="text-start font-semibold px-4 py-2.5">
                       Action
                     </th>
@@ -408,10 +421,10 @@ export default async function SecurityPage({
                     const meta = formatMetadata(e.metadata);
                     return (
                       <tr key={e.id} className="border-t border-line align-top">
-                        <td className="px-4 py-2.5 whitespace-nowrap text-muted">
+                        <td className="px-3 py-2.5 whitespace-nowrap text-muted">
                           {fmtTimestamp(e.ts)}
                         </td>
-                        <td className="px-4 py-2.5">
+                        <td className="px-3 py-2.5">
                           <span
                             className={`chip-solid ${severityChipClasses(
                               e.severity
@@ -430,7 +443,7 @@ export default async function SecurityPage({
                             </span>
                           )}
                         </td>
-                        <td className="px-4 py-2.5">
+                        <td className="px-3 py-2.5">
                           {e.ip ? (
                             <span
                               className="mono text-[12px]"
@@ -490,6 +503,7 @@ export default async function SecurityPage({
                   })}
                 </tbody>
               </table>
+              </div>
             </div>
             <p className="text-[12px] text-muted mt-3">
               {totalCount <= PAGE_LIMIT

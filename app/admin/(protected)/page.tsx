@@ -35,6 +35,7 @@ import {
   getPilotFunnel,
   type StalledInvitation,
 } from "@/lib/repos/pilot";
+import { STAGE_PALETTE } from "@/lib/funnel-stages";
 import SendReminderButton from "@/components/SendReminderButton";
 
 export const dynamic = "force-dynamic";
@@ -131,6 +132,16 @@ function flashFailureMessage(
 const STALL_CHIP_LABEL: Record<StalledInvitation["stallReason"], string> = {
   never_opened: "Never opened",
   started_not_submitted: "Started, not submitted",
+};
+
+// D81 Item 1 — map each stall reason to the funnel stage the row is
+// stuck at, so chip color reads consistently with the funnel strip:
+//   never_opened → Opened palette (informational; recipient is at /
+//     before the Opened gate)
+//   started_not_submitted → Started palette (orange; actively mid-flow)
+const STALL_CHIP_PALETTE: Record<StalledInvitation["stallReason"], string> = {
+  never_opened: STAGE_PALETTE.opened,
+  started_not_submitted: STAGE_PALETTE.started,
 };
 
 export default async function AdminOverviewPage({
@@ -237,6 +248,14 @@ export default async function AdminOverviewPage({
                     <th className="text-start font-semibold px-3 py-2">
                       Days since sent
                     </th>
+                    {/* D81 Item 1 — Progress column, non-empty only for
+                        the "Started, not submitted" cut. Sits between
+                        Days since sent and Next cron fire so the read
+                        order is: ref → stall reason → time stalled →
+                        how far along they got → when cron auto-nudges. */}
+                    <th className="text-start font-semibold px-3 py-2">
+                      Progress
+                    </th>
                     <th className="text-start font-semibold px-3 py-2">
                       Next cron fire
                     </th>
@@ -263,17 +282,30 @@ export default async function AdminOverviewPage({
                         {s.nationality ?? "—"}
                       </td>
                       <td className="px-3 py-2">
+                        {/* D81 Item 1 — chip palette pulled from the
+                            shared 5-stage map so the stall reason chip
+                            reads consistently with the funnel strip. */}
                         <span
-                          className={
-                            s.stallReason === "started_not_submitted"
-                              ? "chip-solid bg-warnLight text-warn"
-                              : "chip-solid bg-brand-50 text-brand-700"
-                          }
+                          className={`chip-solid ${STALL_CHIP_PALETTE[s.stallReason]}`}
                         >
                           {STALL_CHIP_LABEL[s.stallReason]}
                         </span>
                       </td>
                       <td className="px-3 py-2 mono">{s.daysSinceSent}d</td>
+                      {/* D81 Item 1 — per-row progress for the
+                          "Started, not submitted" cut. Renders as a
+                          compact bar + numeric (e.g. [██░░] 2/14).
+                          "Never opened" rows have no response → em-dash. */}
+                      <td className="px-3 py-2">
+                        {s.progress ? (
+                          <StalledProgress
+                            answered={s.progress.answered}
+                            total={s.progress.total}
+                          />
+                        ) : (
+                          <span className="text-muted">—</span>
+                        )}
+                      </td>
                       <td className="px-3 py-2 text-muted">
                         {s.nextCronFireAt
                           ? fmtDate(s.nextCronFireAt)
@@ -300,9 +332,12 @@ export default async function AdminOverviewPage({
         </section>
       )}
 
-      {/* D79 Feature 1 — 4-stage funnel chips (replaces old KPI cards).
-          Cumulative: Opened/Sent, Started/Sent, Submitted/Sent (relative
-          to Sent denominator). */}
+      {/* D79 Feature 1 + D81 Item 1 — 5-stage funnel chips. Adds
+          "Consent granted" between Opened and Started, and applies the
+          shared STAGE_PALETTE map so the chip colors stay in sync with
+          the stalled-table chips + invitations-list status chip. The
+          Sent chip skips the percentage (it IS the denominator); the
+          others show cumulative % of Sent. */}
       <div className="card p-6 mb-8">
         <h2 className="text-[16px] font-bold text-ink mb-4">Funnel</h2>
         <div className="flex flex-wrap items-center gap-2">
@@ -310,30 +345,63 @@ export default async function AdminOverviewPage({
             label="Sent"
             value={funnel.sent}
             pct={null}
-            color="bg-brand-50 text-brand-700"
+            color={STAGE_PALETTE.sent}
           />
           <FunnelArrow />
           <FunnelChip
             label="Opened"
             value={funnel.opened}
             pct={funnel.pctOpened}
-            color="bg-brand-100 text-brand-700"
+            color={STAGE_PALETTE.opened}
+          />
+          <FunnelArrow />
+          <FunnelChip
+            label="Consent granted"
+            value={funnel.consentGranted}
+            pct={funnel.pctConsentGranted}
+            color={STAGE_PALETTE.consent_granted}
           />
           <FunnelArrow />
           <FunnelChip
             label="Started"
             value={funnel.started}
             pct={funnel.pctStarted}
-            color="bg-accent-100 text-accent-800"
+            color={STAGE_PALETTE.started}
           />
           <FunnelArrow />
           <FunnelChip
             label="Submitted"
             value={funnel.submitted}
             pct={funnel.pctSubmitted}
-            color="bg-accent-600 text-white"
+            color={STAGE_PALETTE.submitted}
           />
         </div>
+        {/* D81 Item 1 — aggregate progress for in-flight Started rows
+            (Started AND NOT Submitted). Sits on its own line below the
+            chip strip so the chip-row stays compact. Hidden when no
+            in-flight rows exist (avgStartedProgress === null). */}
+        {funnel.avgStartedProgress && (
+          <div className="mt-4 flex items-center gap-3">
+            <span className="text-[12px] text-muted">
+              In-flight progress:
+            </span>
+            <div className="flex-1 max-w-[240px] h-1.5 bg-orange-100 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-orange-600 rounded-full"
+                style={{ width: `${funnel.avgStartedProgress.pct}%` }}
+              />
+            </div>
+            <span className="text-[12px] font-semibold text-ink">
+              avg {funnel.avgStartedProgress.pct}% answered
+            </span>
+            <span className="text-[11px] text-muted-faint">
+              ({funnel.avgStartedProgress.num}/
+              {funnel.avgStartedProgress.denom} across {funnel.started -
+                funnel.submitted}{" "}
+              in-flight)
+            </span>
+          </div>
+        )}
         {d.avgDurationMinutes != null && (
           <p className="text-[12px] text-muted mt-3">
             Average engagement time:{" "}
@@ -510,6 +578,41 @@ function Mini({ label, value }: { label: string; value: string }) {
     <div>
       <div className="text-[11px] font-semibold text-muted mb-1">{label}</div>
       <div className="text-[15px] font-semibold text-ink">{value}</div>
+    </div>
+  );
+}
+
+/**
+ * D81 Item 1 — per-row progress visual for the stalled-table's
+ * "Started, not submitted" cut. Eight-segment bar (each segment lit
+ * proportionally to answered/total) + numeric counter. Tailwind orange
+ * palette matches the Started funnel chip (visual consistency).
+ *
+ * Capped at total to defend against degenerate data (answered > total
+ * could happen if a feedback question was incorrectly marked non-
+ * feedback after answers landed; we'd rather render 100% than show
+ * 200% bar fill).
+ */
+function StalledProgress({
+  answered,
+  total,
+}: {
+  answered: number;
+  total: number;
+}) {
+  const safeAnswered = Math.min(Math.max(answered, 0), total);
+  const pct = total > 0 ? Math.round((safeAnswered / total) * 100) : 0;
+  return (
+    <div className="flex items-center gap-2">
+      <div className="w-20 h-1.5 bg-orange-100 rounded-full overflow-hidden">
+        <div
+          className="h-full bg-orange-600 rounded-full"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <span className="mono text-[11px] text-ink">
+        {safeAnswered}/{total}
+      </span>
     </div>
   );
 }
