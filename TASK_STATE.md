@@ -1,3 +1,117 @@
+## 🟢 END-OF-SESSION-4 STATE (2026-06-07) — read first
+
+The platform is production-green at `karasneh-research.org` and the pilot remains LIVE post-Sessions 3 + 4. D-counter is **D63 → D85 sequential, no gaps**. Session 4 shipped 3 D-numbers (D83 token-burn-timing + backfill; D84 ATLAS.ti wide-format export; D85 paired-bug filter handling) plus one operational track (DON-01 forensic recovery via Resend rotation). **13 invitations total** (12 SMEs + DON-01 rotated); **5 submitted** (OFF-JOR-02, OFF-JOR-03, RES-SY-01, RES-JOR-03, OFF-JOR-04 — the RES-SY-01 submission completed the geographic coverage matrix during Session 3); **2 in flight signed-and-active** (RES-JOR-02, DON-01); **2 unblocked-and-waiting** (RES-JOR-01, NGO-02 — both backfilled by D83 + manual reminder dispatched this session); **4 never-opened** (Off-1, NGO-01, RES-JOR-04, OFF-JOR-05). Reminder cron's next fire is June 10 (sent+7d window for the early invitees).
+
+**Backup posture (updated):** three backups now offsite — `yarmouk-20260524-1206.yarmoukbackup` (pre-launch) + `yarmouk-20260605-1240.yarmoukbackup` (pre-D74) + **`yarmouk-20260607-1706.yarmoukbackup` (pre-D83 — the rollback point for the first migration since D69)**. `BACKUP_PASSPHRASE` + Vault `pii_key_v1` confirmed present in password manager. D83 established the **pre-flight SELECT discipline**: for any data-mutating migration, run the predicate SELECT in Studio AFTER backup BEFORE `supabase db push` and verify the affected-count matches the brief's expected blast radius — halt if it differs.
+
+### Closed in Session 4 (2026-06-07)
+
+- **D83 (PR #28) — Token burn timing fix + backfill 2 stuck participants.** First migration since D69 (`20260607120000_d83_token_burn_timing_and_backfill.sql`). Three-part:
+  - **RPC redefinitions:** `validate_invitation_token` + `validate_invitation_code` lose `use_count = use_count + 1` from their fresh-claim UPDATE blocks. `opened_at` + status sent→opened transition + (code RPC only) `access_code_used_at = NOW()` forensic stamp all preserved.
+  - **New `commit_consent_sign` SECURITY DEFINER RPC.** Atomic 3-write transaction: INSERT consent_records ON CONFLICT (response_id) DO NOTHING RETURNING id → if RETURNING returned a row, UPDATE invitations SET use_count = use_count + 1 → INSERT audit_log row (`invitation.consent_signed`, severity=info, metadata={invitationId, refCode, language, audioConsent}). Idempotent via ON CONFLICT; concurrent double-submit collapses to one consent row, one burn, one audit row. Triple-REVOKE + service_role-only EXECUTE grant (defends against Supabase ALTER DEFAULT PRIVILEGES; mirrors D26 log_audit grant pattern).
+  - **Backfill.** UPDATE invitations SET use_count = 0 for the 2 stuck rows (RES-JOR-01 since June 3, NGO-02 since June 4) matching the "non-terminal status + no submission + pre-burned + still time-valid + no consent_records exists" predicate. Pre-flight SELECT in Studio confirmed exactly 2 affected rows before push.
+  - **Code change:** `lib/actions/consent.ts:submitConsent` replaces `insertConsentRecord` + 23505 handling with a single `admin.rpc("commit_consent_sign", {...})` call. The `consentExistsForResponse` early-guard is preserved as a pre-flight optimization (saves one RPC round-trip on the back-button re-entry case).
+  - **Post-deploy:** manual reminders dispatched for RES-JOR-01 + NGO-02 via the D79 Bell-icon write path. Both recipients received the same reminder1 email template as cron would send (`sendReminderEmail` reused byte-identically per FLAG E).
+  - **3 files:** new migration + `lib/actions/consent.ts` + `lib/supabase/database.types.ts` (`commit_consent_sign` RPC signature added in alphabetical placement).
+  - **New audit event** `invitation.consent_signed` is now part of the forensic trail for every signed consent going forward.
+
+- **D84 (PR #29) — ATLAS.ti-friendly wide-format export alongside D74 long-format.** Largest single PR of the project arc (**1,324 +/163 - across 6 files** — 3 modified + 3 new). Research-driven scope expansion from the initial "tags in export" framing:
+  - **Research finding (mid-session pivot):** ATLAS.ti's Survey Import expects WIDE-format (one row per respondent, one column per question) with column-header prefix syntax — `!` (document name), `:` (single-value group), `&` (date), `::` (code::label), `#` (multi-value group), `<` (ignore). Initial framing (tags as appended long-format rows) was incompatible.
+  - **Sura is a FIRST-TIME ATLAS.ti user** (hasn't signed up yet). Friction-minimizing design goal: she should `Import > Survey` and have the data parse cleanly without manual reshaping.
+  - **Strategy 3 (single-variant scope per wide-format export).** Studio verification revealed Q5-Q11 in `pilot_officials` and `pilot_researchers` have **completely DIFFERENT question text under the same code** (same Q-code, different meaning) — Strategy 1 union would have corrupted the data semantically. Strategy 3 was the correct call. Enforced at **dual layers**: UI modal collapses category to single-select radios when shape=wide; backend `getResponsesForAtlasExport` throws `AtlasMultiVariantError` when matched invitations span ≥2 `questionnaire_version_ids`.
+  - **Column header schema (locked):** `!ref_code` → `:category` → `:nationality` → `:language` → `:collection_mode` → `&submitted_at` → `&consent_signed_at` → `Q1::<text_en>` … `Q14::<text_en>` → `F1::<text_en>` … `F4::<text_en>` → `#tags` last. Bilingual headers cap at English (ATLAS UI is English-default; AR garbles in some Excel readers). Dates emitted as ISO 8601 UTC Z with no milliseconds.
+  - **PII EXCLUDED** from wide-format (`recipient_name` + `recipient_email` absent). Uses `invitations_redacted` view → zero `decrypt_pii` calls on the wide branch. Faster than long-format. Anonymization-at-the-API D31 posture extended to analytical pipelines. Long-format retains the existing D74 PII columns for supervisor identity-cross-reference workflows.
+  - **3 new files:** `lib/exports/atlasti-xlsx.ts` (wide-format XLSX serializer with ATLAS prefixes; sheet name = variant; wrapText on Q-cols + #tags), `lib/exports/atlasti-csv.ts` (wide-format CSV, UTF-8 BOM + RFC 4180, symmetric to xlsx), `components/ExportModal.tsx` (client component replacing the prior inline Single + Bulk forms — shape radio with wide default per Q-I, scope radio, format radio, filter checkbox/radio groups, first-time-friendly explainer text).
+  - **3 modified files:** `lib/repos/exports.ts` (additive `AtlasMultiVariantError` + `AtlasQuestion` + `AtlasResponseRow` + `AtlasExportPayload` + `AtlasExportFilters` + `getResponsesForAtlasExport`), route handler (three-axis grid: scope × format × **shape**; backward-compat `shape` default = `long`; filter param parsing + Strategy 3 backend defense), `/admin/exports/page.tsx` (modal trigger replaces inline forms).
+  - **Audit metadata extended** with `shape` + `filters: {category?, nationality?, language?}` + `variant` (wide only). All non-PII (enum members + UUIDs + ref_codes).
+  - **D74 + D75 long-format paths BYTE-UNTOUCHED.** `lib/exports/csv.ts` + `lib/exports/xlsx.ts` not modified. `getResponsesForExport` body unchanged.
+  - **D63 cascade filter** (`.eq("status", "active")`) mirrored on the new repo helper.
+  - **Tag separator: literal comma** (Q-K). Studio pre-flight confirmed tags table empty today. Backlog item filed for tag-name validation at apply time (forbid commas).
+  - **ZERO new npm dependencies** — exceljs + native serialization reused.
+
+- **D85 (PR #30) — Empty-filter handling fix + long-format filter wiring (bundled β).** Paired-bug discovery from D84 post-merge smoke; both bugs root-caused in the same architectural gap (modal exposed filter UX that the backend didn't honor honestly):
+  - **Bug 1 — `parseList` absent-vs-invalid conflation.** When Sura left a filter group entirely unchecked, the modal omitted that URL param. `url.searchParams.get(<axis>)` returned `null` → `parseList(null, …)` returned `null` (the INVALID sentinel) → route 400'd "invalid <axis>" despite the modal inviting that input. Contradicted the D84 Q-E lock ("leave all unchecked = include all").
+  - **Bug 2 (pre-existing D84 silent bug) — long-format pipeline dropped filters entirely.** `getResponsesForExport` had no filters arg; route's long-branch always called `{ scope: 'bulk' }` regardless of URL filter params. Sura's "long-format with category=officials" returned ALL submitted responses. Also contradicted the Q-E lock.
+  - **Fix 1 (1-char semantic distinction):** `parseList` returns `[]` (absent → "no filter applied") vs `null` (invalid → 400). The route's existing `if (categoryList === null) return badRequest(...)` check now fires ONLY on invalid; absent passes through to the dispatch.
+  - **Fix 2 (option β bundle):** `ExportScope` bulk arm extends with optional `filters` (new `ExportFilters` type exported alongside). `getResponsesForExport` gains in-memory filter pass at step 2b — between fetching invitations and the D75 decrypt fan-out. Filter posture mirrors `getResponsesForAtlasExport`: empty/undefined/missing axis → null Set → predicate returns true → filter skipped on that axis. **D75 parallel decrypt now operates on the narrowed set** — filters are also a perf win.
+  - **Audit posture (Q-Audit lock):** `metadata.filters = {}` when no filters were applied (honest "no filter" signal); populated keys when filters present.
+  - **Modal text unchanged** ("leave all unchecked to include all") — now matches backend reality on BOTH shapes.
+  - **Strategy 3 enforcement unchanged.** `categoryList.length !== 1` still 400s wide+bulk with empty or multi-category.
+
+- **DON-01 forensic recovery (operational, no D-number).** Complaint surfaced; reconstructed across 3 tables via 4 SQL queries; resolved via Resend rotation (use_count reset + fresh credentials dispatched). Post-D83, DON-01 + RES-JOR-01 + NGO-02 all have working links + manual reminders dispatched.
+
+### Production observations end-of-session-4 (real-data, 2026-06-07)
+
+- **D83 deploy went clean.** Pre-flight SELECT returned exactly 2 rows (RES-JOR-01 + NGO-02) BEFORE push — the discipline caught nothing wrong but proved the pattern. Migration applied via `supabase db push`. Backfill verified: post-deploy `SELECT use_count FROM invitations WHERE ref_code IN ('RES-JOR-01','NGO-02')` → both `0`. Other 11 invitations unchanged.
+- **`commit_consent_sign` exercised by 0 new sign-ups during the session** (no new consent.sign actions fired since deploy — all 5 submitted responses pre-date D83). The RPC's first production fire will happen the next time a not-yet-signed invitation reaches `/consent` and the participant signs. Audit row visibility unchanged until then.
+- **D84 wide-format smoke green for positive cases 1-8** (Sura's locked smoke plan). Modal opens with wide pre-selected, Strategy 3 single-category enforcement visible, XLSX downloads with full ATLAS prefix headers, PII columns absent, empty cells for variant-specific questions + untagged responses. Long-format regression-checked.
+- **D85 fix verified by D84 smoke** — the empty-filter regression was the reason D85 existed. Post-D85: wide + 1-category + 0-nationality + 0-language succeeds.
+- **Audit_log inspection** on `export.responses` rows confirmed `metadata.shape` + `metadata.filters` + `metadata.variant` (wide only) populated correctly; PII discipline maintained throughout (no `error.message`, no decrypted PII).
+
+### D-counter (sequential, no gaps)
+
+D63 → D85 closed end-to-end. D-numbers without DECISIONS.md / RUNBOOK paragraphs (D77 + D78 + D79 + D80 + D81 + D82 + D83 + D84 + D85) are documented by inline source comments + commit messages + PR bodies. Carry-forward flag from Session 3: if thesis-defense audit needs a single-source narrative for these, draft them then.
+
+### Standing rules carried forward (UPDATED for Session 4)
+
+Unchanged from Session 3:
+- Read-first before EVERY D-number.
+- Atomic PR per logical concern.
+- PII discipline absolute (no `error.message`, no decrypted PII in audit metadata, refCode-only as identifier).
+- Forward-only fixes (no destructive migrations, no rewriting prior migration files).
+- `npm run build` before every push.
+- Planning Claude always produces PR title + body alongside any PR URL.
+- TIER-paste protocol for large Checkpoint 7 reviews.
+- **D81 fix-up race lesson: NEVER push to closed PR branches.** Fresh branch off post-merge main, always. D83 / D84 / D85 all merged cleanly with no orphan commits — the rule continued to hold throughout Session 4.
+
+NEW in Session 4:
+- **Pre-deploy backup mandatory for data-mutating migrations.** Triggered + verified before D83 push (`yarmouk-20260607-1706.yarmoukbackup`).
+- **Pre-flight SELECT discipline for data-mutating migrations.** Run the migration's predicate SELECT in Studio AFTER backup BEFORE `supabase db push`; halt if affected-count differs from the brief's expected blast radius.
+
+### Active pilot guardrails — UPDATED for D83 + D84 + D85
+
+In addition to existing carry-forward guardrails (validate_invitation_* RPCs, /r/[token] + /enter + /consent, cron, email render layer, D73 feedback hub, D74+D75 export hub, audit_log write path, owner-gate patterns, .expandable-summary, 12 unused feedback rows, lib/funnel-stages.ts D81 palette, computeActiveDurationMinutes D82, invitations.started_at first-answer semantic, Started ⊆ Consent invariant):
+
+- **D83 `commit_consent_sign` SECURITY DEFINER RPC** — atomic 3-write transaction. ON CONFLICT (response_id) DO NOTHING + RETURNING id short-circuit is load-bearing for idempotency; don't change. Triple-REVOKE + service_role-only EXECUTE — don't loosen.
+- **D83 use_count = burn-on-commit semantic** — counter only ever climbs inside `commit_consent_sign`. The use-exhausted defensive gate in both validate_* RPCs is now effectively unreachable on the normal flow but kept for prior-contract preservation (backlog item flagged for future cleanup).
+- **D84 ATLAS column header schema** — `!ref_code` → `:` group columns → `&` date columns → `Q-code::label` columns → `#tags` last. ATLAS prefix mappings are vendor-defined; don't drift.
+- **D84 Strategy 3 single-variant invariant** — dual-layer enforcement (UI single-select radios + backend `AtlasMultiVariantError`). Studio-verified that same Q-codes differ across variants; bypassing would semantically corrupt the export.
+- **D84 wide-format PII exclusion (Q-J)** — wide-format reads `invitations_redacted` view; never decrypts; never includes recipient_name / recipient_email. Don't backdoor PII into the wide pipeline.
+- **D85 `ExportFilters` empty-array semantic** — `[]` means "no filter applied for this axis" across both long-format and wide-format. Don't conflate with `null` (which now exclusively means INVALID input).
+- **D85 audit metadata `filters: {}`** — emit always-present `filters` key in `export.responses` audit metadata. Empty `{}` is the honest "no filter" signal; populated keys signal filtered exports.
+
+### NEXT QUEUE (green — top-of-stack first, post-Session-4 reordering)
+
+**Operational (Sura-side / time-sensitive):**
+
+1. **RES-JOR-01 + NGO-02 re-engagement** — both backfilled + manual-reminded today; watch for sign-up activity.
+2. **DON-01 re-engagement** — recovered via Resend rotation earlier in Session 4; watch for response progression.
+3. **June 10 cron fire** — automated reminder1 fires for the early invitees (sent+7d window).
+4. **Sura tasks (carry-forward)** — read 5 submitted responses for thesis quality; apply Tags to submitted responses (will exercise D84's `#tags` export column for the first time); capture verbal feedback from participants; sign up for ATLAS.ti free trial + validate wide-format XLSX import works; iterate questionnaire for main study when ready; pilot retrospective fill-in (template at `/docs/pilot-retrospective-template.md`).
+
+**Platform backlog (top-10, post-Session-4 reordering):**
+
+1. **ExportModal — XLSX hint when shape=wide selected** (D84 backlog observation). First-timer UX polish: "ATLAS.ti recommends XLSX for survey imports."
+2. **Format-on-shape-flip auto-switch** (D84 backlog observation). When user has long+csv selected and switches to wide, optionally auto-switch to xlsx unless they've explicitly chosen csv in this session. Tracker bit needed.
+3. **Tag-name comma validation at apply time** (D84 Q-K backlog). Forbid commas in tag names via Server Action validation OR a CHECK constraint on `tags.name`. Locks in the D85 literal-comma assumption when Sura starts coding.
+4. **errorClass naming normalization** (carry-forward from Session 3). `preview.ts` logs `'config'`; `reminder-manual.ts` logs `'decrypt'` for the same root cause.
+5. **parseFlash + flashFailureMessage shared-helper extraction** (carry-forward). D79 duplicated across `/admin/page.tsx` + `/admin/invitations/page.tsx`. Extract to `lib/admin/flash.ts`.
+6. **Dashboard inline-math consolidation** (D82 backlog). Dashboard inlines `computeActiveDurationMinutes` formula instead of calling the helper.
+7. **Use-exhausted defense-in-depth gate cleanup** (D83 backlog observation). The `IF v_inv.use_count >= v_inv.max_uses THEN RETURN` block in both validate_* RPCs is now effectively unreachable on the normal post-D83 flow. Cleanup preserves prior contract; document as forward-only relaxation.
+8. **D63 withdrawn-response edge** (D83 read-first E2). `validate_invitation_token`'s resumption gate doesn't filter `status='active'`. A withdrawn response with `is_locked=true` would still allow resumption-into-locked-questionnaire.
+9. **Suspense-lazy email preview rendering** (carry-forward). Feature 4 eagerly decrypts all previewable rows; flip to lazy on-expand when main-study scale hits ~150 rows.
+10. **D26 Phase ③ / ④** (carry-forward). Country/city geo (Vercel-header path: ~6-line patch + 1 migration) + unknown-email-failure logging.
+
+### §9 Latest applied migration — UPDATED
+
+`20260607120000_d83_token_burn_timing_and_backfill.sql` (D83). First migration since D69's `20260602130000_invitations_redacted_collection_mode.sql`. The intervening D70 → D82 + D84 + D85 all deliberately avoided migrations (operational + repo-only + serializer-only changes). Migration counter for §5 advances from "19 total" to "20 total" if/when §5 is refreshed (out of scope here — §5 hasn't been updated since Session 2b).
+
+### Session 3 TASK_STATE refresh — STILL PENDING
+
+The Session 3 closure PR (`docs/d82-task-state-refresh`, commit `a7d3441`, opened end of Session 3) was authored to add an "END-OF-SESSION-3 STATE (2026-06-06)" block covering D81 mega-bundle + D81 icon-button fix-up + D82 paired follow-on. **That PR has NOT been merged** — the branch still exists on origin (`origin/docs/d82-task-state-refresh`) but no merge commit. The Session 3 events (D81, D82, the standing rule "never push to closed PR branches") are documented inline in commit messages + PR bodies + DECISIONS.md, AND are referenced throughout this Session 4 block. Operational debt: merge the Session 3 refresh PR for full continuity. Out of scope for the current Session 4 closure PR.
+
+---
+
 ## 🟢 END-OF-SESSION-2 STATE (2026-06-05) — read first
 
 The platform is production-green at `karasneh-research.org` and **the pilot is LIVE**. All 4 pilot variants (`pilot_officials`, `pilot_researchers`, `pilot_donors`, `pilot_ngos`) are `active`; the 5 main variants remain in `draft`. **7 SME invitations sent**; **1 submitted** (OFF-JOR-02 — Jordanian official, 14 answers, real Arabic content, ~58-minute engagement); **4 stalled "started, not submitted"** (DON-01, RES-JOR-01, OFF-JOR-03, NGO-02); **2 never opened** (Off-1, NGO-01). **2 manual reminders dispatched in production this session** via the D79 Feature 3 write path (DON-01 + OFF-JOR-03). Reminder cron fires ~June 10 — D72's `{name}` placeholder + decrypt path's first real exercise under load; D79 manual-reminder coexistence preserves the cron schedule by design (FLAG E).
