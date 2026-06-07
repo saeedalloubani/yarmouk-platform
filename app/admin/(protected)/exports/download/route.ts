@@ -61,8 +61,25 @@ const CATEGORIES = new Set(["officials", "researchers", "donors", "ngos"]);
 const NATIONALITIES = new Set(["jordanian", "syrian", "not_applicable"]);
 const LANGUAGES = new Set(["en", "ar"]);
 
+/**
+ * D85 — Parse a comma-separated filter param and validate every value
+ * against the allowlist. Returns:
+ *   - [] when the param is absent OR has no non-empty values (Q-E
+ *     locked semantic: "no filter applied for this axis" — the modal's
+ *     "leave all unchecked" UX). The CALLER decides whether empty is
+ *     ALSO a hard error (Strategy 3 enforces non-empty category on
+ *     wide-format bulk).
+ *   - null when the param is non-empty but contains at least one value
+ *     outside the allowlist (HARD validation failure — the route's
+ *     null-check 400s the request).
+ *   - string[] of allowlist-clean values when valid + non-empty.
+ *
+ * The pre-D85 implementation conflated absent + invalid into one
+ * `null` return value, which 400'd any export submitted with empty
+ * filter groups despite the modal explicitly inviting that input.
+ */
 function parseList(raw: string | null, allowed: Set<string>): string[] | null {
-  if (!raw) return null;
+  if (!raw) return [];
   const out: string[] = [];
   for (const part of raw.split(",")) {
     const v = part.trim();
@@ -219,7 +236,22 @@ export async function GET(request: NextRequest) {
               scope: "single",
               responseId: responseId!,
             })
-          : await getResponsesForExport(supabase, { scope: "bulk" });
+          : await getResponsesForExport(supabase, {
+              // D85 — wire bulk filters into the long-format pipeline
+              // (pre-D85 the modal exposed filters here but the
+              // backend dropped them, contradicting the Q-E lock).
+              // Empty arrays from parseList are passed straight
+              // through; the repo's in-memory filter pass treats
+              // empty as "no filter applied" via `?.length` guards
+              // (mirrors the wide-format pattern in
+              // getResponsesForAtlasExport).
+              scope: "bulk",
+              filters: {
+                category: categoryList ?? [],
+                nationality: nationalityList ?? [],
+                language: languageList ?? [],
+              },
+            });
     } else {
       // shape === "wide"
       atlasPayload =
