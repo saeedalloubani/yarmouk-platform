@@ -58,9 +58,25 @@ export type ExportRow = {
   answerText: string;
 };
 
+/**
+ * D85 — Optional bulk-scope filters. Empty array on any axis means
+ * "no filter applied for this axis" (matches the wide-format posture
+ * in AtlasExportFilters + the modal's "leave all unchecked" UX). The
+ * route validates enum membership BEFORE the call reaches this layer;
+ * by the time we filter, every value here is allowlist-safe.
+ *
+ * Single-scope ignores filters entirely (responseId is authoritative);
+ * the type encodes this by attaching `filters?` only to the bulk arm.
+ */
+export type ExportFilters = {
+  category?: string[];
+  nationality?: string[];
+  language?: string[];
+};
+
 export type ExportScope =
   | { scope: "single"; responseId: string }
-  | { scope: "bulk" };
+  | { scope: "bulk"; filters?: ExportFilters };
 
 /**
  * Thrown when ANY decrypt_pii call returns an error or null. Carries the
@@ -406,9 +422,21 @@ export async function getResponsesForAtlasExport(
  * responses match (the route handler treats single-empty as 404 and
  * bulk-empty as a header-only file).
  *
- * ALL-OR-NOTHING decrypt: if any of the matched invitations' name or
- * email fails to decrypt, throws ExportDecryptFailedError before any
- * row is returned. No partial output is possible.
+ * D85 — bulk scope accepts optional `filters` (category, nationality,
+ * language). Empty arrays / undefined / missing filters = "no filter
+ * applied for that axis" (matches the wide-format posture in
+ * getResponsesForAtlasExport + the modal's "leave all unchecked" UX).
+ * Single scope ignores filters entirely (responseId is authoritative).
+ * Filter values are allowlist-validated at the route layer BEFORE
+ * reaching this function; the in-memory filter pass here just narrows
+ * the invitation set — no enum-validation defense duplicated.
+ *
+ * ALL-OR-NOTHING decrypt: if any of the SURVIVING (post-filter)
+ * invitations' name or email fails to decrypt, throws
+ * ExportDecryptFailedError before any row is returned. No partial
+ * output is possible. D75 parallel decrypt fan-out preserved — only the
+ * surviving set is decrypted, which means filters are also a perf win
+ * (skipped invitations skip their decrypt pair).
  */
 export async function getResponsesForExport(
   supabase: SupabaseClient<Database>,
@@ -424,17 +452,17 @@ export async function getResponsesForExport(
   if (scope.scope === "single") rq = rq.eq("id", scope.responseId);
   const { data: respRows, error: rErr } = await rq;
   if (rErr) throw rErr;
-  const responses = respRows ?? [];
+  let responses = respRows ?? [];
   if (responses.length === 0) return [];
 
   const invitationIds = Array.from(
     new Set(responses.map((r) => r.invitation_id))
   );
-  const responseIds = responses.map((r) => r.id);
 
   // 2. Invitations — BASE TABLE (owner-only call site). Pulls the two
   //    PII ciphertexts plus the operational columns we need for the
-  //    export grid.
+  //    export grid + the filter axes (category, nationality,
+  //    preferred_language).
   const { data: invRows, error: iErr } = await supabase
     .from("invitations")
     .select(
@@ -442,7 +470,42 @@ export async function getResponsesForExport(
     )
     .in("id", invitationIds);
   if (iErr) throw iErr;
-  const invitations = invRows ?? [];
+  let invitations = invRows ?? [];
+
+  // 2b. D85 — apply bulk-scope filters in-memory BEFORE the decrypt
+  //     fan-out. Mirrors the getResponsesForAtlasExport filter posture:
+  //     empty/undefined array → null Set → predicate returns true →
+  //     filter skipped for that axis. PostgREST IN-list could also do
+  //     this in SQL, but the response set is small at pilot scale and
+  //     keeping the filter logic adjacent to the wide-format pattern
+  //     makes future drift easier to catch. Single scope ignores
+  //     filters entirely (responseId is authoritative).
+  if (scope.scope === "bulk") {
+    const f = scope.filters;
+    const catSet = f?.category?.length ? new Set(f.category) : null;
+    const natSet = f?.nationality?.length ? new Set(f.nationality) : null;
+    const langSet = f?.language?.length ? new Set(f.language) : null;
+    if (catSet || natSet || langSet) {
+      const survivingInvIds = new Set(
+        invitations
+          .filter((i) => (catSet ? catSet.has(i.category) : true))
+          .filter((i) =>
+            natSet ? i.nationality !== null && natSet.has(i.nationality) : true
+          )
+          .filter((i) =>
+            langSet ? langSet.has(i.preferred_language) : true
+          )
+          .map((i) => i.id)
+      );
+      invitations = invitations.filter((i) => survivingInvIds.has(i.id));
+      responses = responses.filter((r) =>
+        survivingInvIds.has(r.invitation_id)
+      );
+      if (responses.length === 0) return [];
+    }
+  }
+
+  const responseIds = responses.map((r) => r.id);
 
   // 3. Decrypt PII per invitation — ALL OR NOTHING. The first failure
   //    aborts the entire export. We log only the ref_code + errorClass
