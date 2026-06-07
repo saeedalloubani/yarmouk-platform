@@ -1038,6 +1038,18 @@ export type Database = {
       }
     }
     Functions: {
+      commit_consent_sign: {
+        Args: {
+          p_response_id: string
+          p_signed_name_encrypted: string
+          p_audio_consent: boolean
+          p_agreed_to_read: boolean
+          p_agreed_to_participate: boolean
+          p_language: string
+          p_consent_text_version?: string
+        }
+        Returns: string
+      }
       current_admin: {
         Args: never
         Returns: {

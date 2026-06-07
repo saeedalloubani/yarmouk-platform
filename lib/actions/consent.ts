@@ -2,23 +2,37 @@
 
 // lib/actions/consent.ts
 //
-// submitConsent Server Action. Validates the consent inputs SERVER-SIDE
-// (never trusts the client gate), encrypts the signed name in the DB
-// via encrypt_pii (key in Vault, app never sees it — D36), writes the
-// consent_records row through the public-flow repo helpers (D48), and
-// redirects to /questionnaire.
+// submitConsent Server Action — D83 atomic-commit version.
+//
+// Validates the consent inputs SERVER-SIDE (never trusts the client
+// gate), encrypts the signed name in the DB via encrypt_pii (key in
+// Vault, app never sees it — D36), then calls the new D83
+// commit_consent_sign SECURITY DEFINER RPC, which atomically:
+//   1. INSERT consent_records ON CONFLICT (response_id) DO NOTHING
+//      RETURNING id  — idempotent against double-submit / network
+//      retry.
+//   2. If RETURNING returned a row: UPDATE invitations SET use_count
+//      = use_count + 1 — the burn-on-commit semantic (pre-D83, this
+//      fired inside validate_invitation_token's fresh-claim UPDATE,
+//      collapsing arrival and commitment into one counter).
+//   3. If RETURNING returned a row: INSERT audit_log row
+//      (action='invitation.consent_signed', severity='info',
+//      metadata={invitationId, refCode, language, audioConsent}).
+// All three writes share one transaction (Postgres SECURITY DEFINER
+// body); a crash in the middle rolls back atomically.
+//
+// Both terminal RPC outcomes (UUID returned on fresh sign, NULL on
+// already-consented) route forward to /questionnaire — the downstream
+// gate is `consentExistsForResponse`, which is true either way.
 //
 // response_id is derived from the session cookie — never passed by the
 // client. Re-entry to /consent after consenting redirects forward
-// (response_id is UNIQUE; you can't re-consent).
+// (response_id is UNIQUE in consent_records; you can't re-consent).
 
 import { redirect } from "next/navigation";
 import { getSession, getLang } from "@/lib/cookies";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import {
-  consentExistsForResponse,
-  insertConsentRecord,
-} from "@/lib/repos/consent";
+import { consentExistsForResponse } from "@/lib/repos/consent";
 
 export type ConsentInput = {
   agreedToRead: boolean;
@@ -39,7 +53,11 @@ export async function submitConsent(
 
   const admin = createSupabaseAdminClient();
 
-  // Re-entry guard: consent already exists (response_id UNIQUE) → forward.
+  // Re-entry pre-flight optimization: if consent already exists for
+  // this response, redirect forward without calling the RPC. The RPC
+  // ALSO handles this case (ON CONFLICT → returns NULL); this guard
+  // just saves one round-trip when the user reaches /consent via
+  // back-button after committing.
   if (await consentExistsForResponse(admin, session.responseId)) {
     redirect("/questionnaire");
   }
@@ -67,21 +85,24 @@ export async function submitConsent(
 
   const lang = await getLang();
 
-  const { error: insErr } = await insertConsentRecord(admin, {
-    responseId: session.responseId,
-    signedNameEncrypted: encryptedName,
-    audioConsent: input.audioChoice === "audio",
-    agreedToRead: true,
-    agreedToParticipate: true,
-    language: lang,
-    consentTextVersion: "v1.0", // bump when consent wording changes (ethics trail)
+  // D83 — atomic commit via commit_consent_sign SECURITY DEFINER RPC.
+  // The RPC's body does INSERT consent_records + UPDATE invitations
+  // use_count++ + INSERT audit_log inside one transaction. Idempotent
+  // via ON CONFLICT — a concurrent double-submit collapses to one
+  // row, no double-burn, no double-audit. Returns UUID on fresh
+  // sign, NULL on already-consented; both route forward.
+  const { error: rpcErr } = await admin.rpc("commit_consent_sign", {
+    p_response_id: session.responseId,
+    p_signed_name_encrypted: encryptedName,
+    p_audio_consent: input.audioChoice === "audio",
+    p_agreed_to_read: true,
+    p_agreed_to_participate: true,
+    p_language: lang,
+    p_consent_text_version: "v1.0", // bump when consent wording changes (ethics trail)
   });
 
-  if (insErr) {
-    // 23505 = unique_violation: a concurrent submit already wrote consent.
-    // Idempotent → treat as success and move forward.
-    if (insErr.code === "23505") redirect("/questionnaire");
-    console.error("[consent] insert failed", insErr);
+  if (rpcErr) {
+    console.error("[consent] commit_consent_sign failed", rpcErr);
     return { ok: false, error: "server" };
   }
 
