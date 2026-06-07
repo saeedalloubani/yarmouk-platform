@@ -3,17 +3,15 @@
 // D74 — Pilot Response Export Center. Owner-only (gate mirrors
 // /admin/security verbatim).
 //
-// Two export paths:
-//   - Single response: pick from a list of submitted+active responses
-//   - Bulk: all submitted+active responses, long-format
-// Each path offers CSV (UTF-8 with BOM) or XLSX. The actual download is
-// handled by app/admin/(protected)/exports/download/route.ts; the form
-// submits there with GET so the browser's download UX is the carrier.
+// D84 — Replaced inline Single + Bulk forms with the unified
+// ExportModal client component. One trigger button → modal that handles
+// shape (long | wide) + scope (single | bulk) + format (csv | xlsx) +
+// filters (category, nationality, language) in one place. The download
+// route contract is unchanged — modal builds the same /admin/exports/
+// download URL with the appropriate query params.
 //
-// EMPTY STATE: when no responses are submitted yet, both sections are
-// hidden and an explanatory card renders instead. (Bulk export still
-// works server-side for testing, but there's no UI button until at
-// least one response exists.)
+// EMPTY STATE: when no responses are submitted yet, the trigger button
+// is hidden and an explanatory card renders instead.
 
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -21,6 +19,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentAdmin } from "@/lib/auth";
 import { listResponses } from "@/lib/repos/responses";
 import { listInvitations, categoryLabel } from "@/lib/repos/invitations";
+import ExportModal from "@/components/ExportModal";
 
 export const dynamic = "force-dynamic";
 
@@ -56,7 +55,9 @@ export default async function ExportsPage() {
   const invById = new Map(invitations.map((i) => [i.id, i] as const));
 
   // Single-response options — sorted newest-submitted first (Sura will
-  // most likely want the freshest one).
+  // most likely want the freshest one). D84 — submittedAt formatted
+  // server-side to a stable label string the client modal can render
+  // without locale-divergence (server vs browser Intl differences).
   const options = submitted
     .map((r) => {
       const inv = invById.get(r.invitationId);
@@ -65,9 +66,19 @@ export default async function ExportsPage() {
         refCode: inv?.refCode ?? "—",
         categoryLbl: inv ? categoryLabel(inv.category) : "—",
         submittedAt: r.submittedAt,
+        submittedAtLabel: fmtDateTime(r.submittedAt),
       };
     })
     .sort((a, b) => (b.submittedAt ?? "").localeCompare(a.submittedAt ?? ""));
+
+  // Shape adapter for the modal — strip the raw timestamp, keep the
+  // formatted label only.
+  const modalOptions = options.map((o) => ({
+    responseId: o.responseId,
+    refCode: o.refCode,
+    categoryLbl: o.categoryLbl,
+    submittedAtLabel: o.submittedAtLabel,
+  }));
 
   const totalSubmitted = submitted.length;
 
@@ -94,133 +105,38 @@ export default async function ExportsPage() {
           </div>
         ) : (
           <div className="space-y-6">
-            {/* Section 1 — Single response */}
+            {/* D84 — Unified Export modal trigger. Replaces the prior
+                inline Single + Bulk forms with one button that opens a
+                modal handling shape (long | wide), scope (single |
+                bulk), format (csv | xlsx), and filters (category +
+                nationality + language). */}
             <section className="card p-6">
               <h2 className="text-[16px] font-semibold text-ink mb-1">
-                Single Response Export
+                Export Pilot Responses
               </h2>
               <p className="text-[13px] text-muted mb-4">
-                Export one response as a long-format file (1 row per question).
+                ATLAS.ti Wide-format is the new default — one row per
+                respondent, one column per question, ready for
+                <span className="mono"> Import &gt; Survey</span> in
+                ATLAS.ti. Long-format (D74) is preserved for stats
+                software and supervisor review with PII.
               </p>
-              <form
-                method="GET"
-                action="/admin/exports/download"
-                target="_blank"
-                className="space-y-4"
-              >
-                <input type="hidden" name="scope" value="single" />
-                <div>
-                  <label
-                    htmlFor="responseId"
-                    className="block text-[12px] font-semibold text-ink mb-1"
-                  >
-                    Response
-                  </label>
-                  <select
-                    id="responseId"
-                    name="responseId"
-                    required
-                    defaultValue=""
-                    className="w-full border border-line rounded-md px-3 py-2 text-[13px] bg-white"
-                  >
-                    <option value="" disabled>
-                      Choose a response…
-                    </option>
-                    {options.map((o) => (
-                      <option key={o.responseId} value={o.responseId}>
-                        {o.refCode} — {o.categoryLbl} · submitted{" "}
-                        {fmtDateTime(o.submittedAt)}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <fieldset>
-                  <legend className="block text-[12px] font-semibold text-ink mb-1">
-                    Format
-                  </legend>
-                  <label className="inline-flex items-center gap-1.5 me-4 text-[13px]">
-                    <input
-                      type="radio"
-                      name="format"
-                      value="csv"
-                      defaultChecked
-                    />
-                    CSV (UTF-8 with BOM)
-                  </label>
-                  <label className="inline-flex items-center gap-1.5 text-[13px]">
-                    <input type="radio" name="format" value="xlsx" />
-                    XLSX
-                  </label>
-                </fieldset>
-                <button
-                  type="submit"
-                  className="px-4 py-2 rounded-md bg-brand-600 text-white text-[13px] font-semibold hover:bg-brand-700"
+              <ExportModal options={modalOptions} />
+              <p className="text-[12px] text-muted mt-4">
+                Long-format export decrypts recipient name + email for
+                analytical use. Wide-format excludes PII (ref_code is the
+                ATLAS.ti document handle). Every download is audited
+                (action <span className="mono">export.responses</span>,
+                metadata includes shape + filters). Token and access-code
+                secrets are never exported.{" "}
+                <Link
+                  className="text-brand-700 underline"
+                  href="/admin/security"
                 >
-                  Download
-                </button>
-              </form>
-            </section>
-
-            {/* Section 2 — Bulk */}
-            <section className="card p-6">
-              <h2 className="text-[16px] font-semibold text-ink mb-1">
-                Bulk Export (All Submitted)
-              </h2>
-              <p className="text-[13px] text-muted mb-4">
-                Export every submitted+active response in one long-format file.
-                Withdrawn responses are excluded.
+                  View audit log →
+                </Link>
               </p>
-              <form
-                method="GET"
-                action="/admin/exports/download"
-                target="_blank"
-                className="space-y-4"
-              >
-                <input type="hidden" name="scope" value="bulk" />
-                <fieldset>
-                  <legend className="block text-[12px] font-semibold text-ink mb-1">
-                    Format
-                  </legend>
-                  <label className="inline-flex items-center gap-1.5 me-4 text-[13px]">
-                    <input
-                      type="radio"
-                      name="format"
-                      value="csv"
-                      defaultChecked
-                    />
-                    CSV (UTF-8 with BOM)
-                  </label>
-                  <label className="inline-flex items-center gap-1.5 text-[13px]">
-                    <input type="radio" name="format" value="xlsx" />
-                    XLSX
-                  </label>
-                </fieldset>
-                <p className="text-[12px] text-muted">
-                  {totalSubmitted}{" "}
-                  {totalSubmitted === 1 ? "response" : "responses"} · long
-                  format (1 row per question per response)
-                </p>
-                <button
-                  type="submit"
-                  className="px-4 py-2 rounded-md bg-brand-600 text-white text-[13px] font-semibold hover:bg-brand-700"
-                >
-                  Download bulk export
-                </button>
-              </form>
             </section>
-
-            <p className="text-[12px] text-muted">
-              Export decrypts recipient name + email for analytical use. Every
-              download is audited (action{" "}
-              <span className="mono">export.responses</span>). Token and
-              access-code secrets are never exported.{" "}
-              <Link
-                className="text-brand-700 underline"
-                href="/admin/security"
-              >
-                View audit log →
-              </Link>
-            </p>
           </div>
         )}
       </div>

@@ -74,6 +74,333 @@ export class ExportDecryptFailedError extends Error {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// D84 — ATLAS.ti wide-format export
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Sister pipeline to getResponsesForExport. Same access posture
+// (OWNER-ONLY by construction — route gates before this loads), but a
+// different INTERNAL SHAPE for wide-format pivot in the serializers:
+//
+//   - 1 row per RESPONSE (not per answer). Answers carried as a
+//     Map<questionCode, answerText>; serializers fan out into columns.
+//   - Single-variant scope ENFORCED (D84 Strategy 3): all rows in one
+//     export share one questionnaire_version_id. The category filter is
+//     the UI-side constraint; the BACKEND DEFENDS by computing the set
+//     of distinct version_ids from the matched invitations and throwing
+//     AtlasMultiVariantError if more than one is present.
+//   - NO PII columns (D84 Q-J): wide-format excludes recipient_name +
+//     recipient_email. The whole decrypt fan-out from D75 is SKIPPED.
+//     ref_code is the document handle in ATLAS; PII isn't analytical.
+//
+// Filters (bulk scope only — single scope is authoritative via responseId):
+//   - category: single category (Strategy 3 single-variant requirement)
+//   - nationality: subset of {jordanian, syrian, not_applicable}; empty = all
+//   - language: subset of {en, ar}; empty = all
+//
+// The serializers (lib/exports/atlasti-xlsx.ts, lib/exports/atlasti-csv.ts)
+// consume the returned AtlasExportPayload, build their header row from
+// payload.questions (in order_index ASC), and emit one row per
+// payload.rows entry.
+
+/** Thrown when a wide-format export's matched responses span more than
+ *  one questionnaire_version_id. Strategy 3 single-variant invariant. */
+export class AtlasMultiVariantError extends Error {
+  constructor(public readonly variantCount: number) {
+    super(
+      `Wide-format export requires a single questionnaire variant; ${variantCount} variants matched`
+    );
+    this.name = "AtlasMultiVariantError";
+  }
+}
+
+/** Question metadata for the column-header build pass. Mirrors the
+ *  visible-question set of the scoped variant (ALL questions, regardless
+ *  of visible_nationalities — for SYR-only questions, JOR respondents
+ *  show empty cells, which is what ATLAS expects). */
+export type AtlasQuestion = {
+  code: string;        // "Q1", "F1", ...
+  textEn: string;      // label after `::` in column header
+  orderIndex: number;
+  isFeedback: boolean;
+};
+
+/** One row of the wide-format pivot. Static metadata + answers map keyed
+ *  by question_code + tags array. The serializers fan out `answers` into
+ *  per-question columns from payload.questions; tags is joined by `,`
+ *  for the `#tags` column (D84 Q-K — tags table empty today, literal
+ *  comma is safe; backlog item for tag-name validation at apply time). */
+export type AtlasResponseRow = {
+  refCode: string;
+  category: string;
+  nationality: string | null;
+  preferredLanguage: string;
+  collectionMode: string;
+  submittedAt: string;
+  consentSignedAt: string | null;
+  /** question_code → answer_text (empty/missing entries → blank cell). */
+  answers: Map<string, string>;
+  /** Tag names in apply-order (newest first to match the UI surface). */
+  tags: string[];
+};
+
+export type AtlasExportPayload = {
+  /** Variant of the scoped questionnaire (e.g. "pilot_officials"). One
+   *  per export by Strategy 3 invariant. Surfaced for filename + audit. */
+  variant: string;
+  /** Questions in column order (order_index ASC). Q1-Qn first, then
+   *  F1-Fn (is_feedback=true also sorted by order_index). The
+   *  serializers emit one Q::label column per entry. */
+  questions: AtlasQuestion[];
+  /** One entry per matched submitted+active response. Empty array is
+   *  valid (header-only output for bulk; route handler maps to 404 for
+   *  single). */
+  rows: AtlasResponseRow[];
+};
+
+export type AtlasExportFilters =
+  | {
+      scope: "single";
+      responseId: string;
+    }
+  | {
+      scope: "bulk";
+      category: string;             // single value (Strategy 3); enum: officials|researchers|donors|ngos
+      nationality?: string[];       // empty/undefined = all
+      language?: string[];          // empty/undefined = all (en|ar)
+    };
+
+/**
+ * D84 — Wide-format response export aggregator.
+ *
+ * Reads:
+ *   1. responses — submitted + active (matches D63 cascade).
+ *   2. invitations (NON-PII columns ONLY via invitations_redacted view —
+ *      wide-format excludes recipient name/email per Q-J, so we don't
+ *      need base-table access). Defense-in-depth: even if the route's
+ *      owner gate slipped, no PII column is selected.
+ *   3. questionnaire_versions — for variant label + single-variant guard.
+ *   4. questions — full question set for the scoped variant, used as the
+ *      column header source (every Q-code becomes a column; respondents
+ *      who didn't see that question have a blank cell).
+ *   5. answers — flat (response_id, question_code, answer_text) joined to
+ *      questions for code resolution.
+ *   6. consent_records — signed_at timestamp only.
+ *   7. response_tags + tags — name list per response.
+ *
+ * Returns AtlasExportPayload. Empty payload (zero rows) is a legitimate
+ * return — the route handler treats it the same way as long-format
+ * empty (404 for single, header-only for bulk).
+ *
+ * Throws AtlasMultiVariantError if the matched invitations span more
+ * than one questionnaire_version_id. This is a Strategy 3 invariant
+ * violation; the UI single-category enforcement is the primary
+ * protection.
+ */
+export async function getResponsesForAtlasExport(
+  supabase: SupabaseClient<Database>,
+  filters: AtlasExportFilters
+): Promise<AtlasExportPayload> {
+  // ── 1. Responses — submitted + active ─────────────────────────────
+  let rq = supabase
+    .from("responses")
+    .select("id, invitation_id, language, submitted_at, status")
+    .not("submitted_at", "is", null)
+    .eq("status", "active")
+    .order("submitted_at", { ascending: true });
+  if (filters.scope === "single") rq = rq.eq("id", filters.responseId);
+  const { data: respRows, error: rErr } = await rq;
+  if (rErr) throw rErr;
+  let responses = respRows ?? [];
+  if (responses.length === 0) {
+    // Empty payload — caller decides 404 vs header-only-file. We still
+    // need a `variant` label for filename + audit even on empty; for
+    // single-scope this means there was no row at all (404), for
+    // bulk-scope the filter matched zero responses (header-only). We
+    // can't resolve a variant without at least one matched row, so
+    // we return a synthetic "no_variant" sentinel. The route handler
+    // for bulk-empty doesn't surface the variant to the user.
+    return { variant: "no_variant", questions: [], rows: [] };
+  }
+
+  // ── 2. Invitations (NON-PII columns only via invitations_redacted) ─
+  // The redacted view exposes ref_code + category + nationality +
+  // preferred_language + collection_mode + questionnaire_version_id —
+  // exactly what we need. recipient_*_encrypted is NULLed in the view.
+  // D74 base-table access pattern intentionally NOT mirrored here:
+  // wide-format excludes PII (Q-J), so the view is the right read.
+  const invitationIds = Array.from(
+    new Set(responses.map((r) => r.invitation_id))
+  );
+  const { data: invRows, error: iErr } = await supabase
+    .from("invitations_redacted")
+    .select(
+      "id, ref_code, category, nationality, preferred_language, collection_mode, questionnaire_version_id"
+    )
+    .in("id", invitationIds);
+  if (iErr) throw iErr;
+  const invitations = invRows ?? [];
+
+  // ── 2b. Apply bulk-scope filters in-memory ────────────────────────
+  // PostgREST IN-list filters would also work, but applying in-memory
+  // keeps the SQL simpler and the response set is small (pilot scale).
+  // Single-scope filters are IGNORED — the responseId is authoritative.
+  let filteredInvIds: Set<string>;
+  if (filters.scope === "bulk") {
+    const natSet = filters.nationality?.length
+      ? new Set(filters.nationality)
+      : null;
+    const langSet = filters.language?.length
+      ? new Set(filters.language)
+      : null;
+    filteredInvIds = new Set(
+      invitations
+        .filter((i) => i.category === filters.category)
+        .filter((i) =>
+          natSet ? i.nationality !== null && natSet.has(i.nationality) : true
+        )
+        .filter((i) =>
+          langSet ? langSet.has(i.preferred_language ?? "") : true
+        )
+        .map((i) => i.id!)
+        .filter((id): id is string => id !== null)
+    );
+  } else {
+    filteredInvIds = new Set(
+      invitations
+        .map((i) => i.id)
+        .filter((id): id is string => id !== null && id !== undefined)
+    );
+  }
+
+  responses = responses.filter((r) => filteredInvIds.has(r.invitation_id));
+  if (responses.length === 0) {
+    return { variant: "no_variant", questions: [], rows: [] };
+  }
+
+  // ── 3. Single-variant guard (Strategy 3) ──────────────────────────
+  // After filter, surviving invitations must share one
+  // questionnaire_version_id. If more than one, the UI single-category
+  // enforcement was bypassed — error loudly.
+  const filteredInvs = invitations.filter((i) =>
+    i.id !== null && i.id !== undefined ? filteredInvIds.has(i.id) : false
+  );
+  const versionIds = Array.from(
+    new Set(
+      filteredInvs
+        .map((i) => i.questionnaire_version_id)
+        .filter((v): v is string => v !== null && v !== undefined)
+    )
+  );
+  if (versionIds.length !== 1) {
+    throw new AtlasMultiVariantError(versionIds.length);
+  }
+  const versionId = versionIds[0];
+
+  // ── 4. Variant label + question set for the scoped variant ────────
+  // Pull `variant` for filename/audit; pull ALL questions for header
+  // build (including SYR-only ones — JOR respondents have empty cells
+  // for those columns, which ATLAS reads as no-answer).
+  const { data: versionRow, error: vErr } = await supabase
+    .from("questionnaire_versions")
+    .select("variant")
+    .eq("id", versionId)
+    .single();
+  if (vErr) throw vErr;
+  const variant = versionRow.variant as string;
+
+  const { data: qRows, error: qErr } = await supabase
+    .from("questions")
+    .select("id, question_code, order_index, is_feedback, text_en")
+    .eq("version_id", versionId)
+    .order("order_index", { ascending: true });
+  if (qErr) throw qErr;
+  const questionRows = qRows ?? [];
+  const questions: AtlasQuestion[] = questionRows.map((q) => ({
+    code: q.question_code,
+    textEn: q.text_en,
+    orderIndex: q.order_index,
+    isFeedback: q.is_feedback,
+  }));
+  const questionCodeById = new Map(
+    questionRows.map((q) => [q.id, q.question_code] as const)
+  );
+
+  // ── 5. Answers — keyed by (response_id, question_code) ────────────
+  const responseIds = responses.map((r) => r.id);
+  const { data: ansRows, error: aErr } = await supabase
+    .from("answers")
+    .select("response_id, question_id, answer_text")
+    .in("response_id", responseIds);
+  if (aErr) throw aErr;
+  const answersByResponse = new Map<string, Map<string, string>>();
+  for (const a of ansRows ?? []) {
+    const qCode = questionCodeById.get(a.question_id);
+    if (!qCode) continue; // defensive — version_id mismatch shouldn't happen
+    let bucket = answersByResponse.get(a.response_id);
+    if (!bucket) {
+      bucket = new Map<string, string>();
+      answersByResponse.set(a.response_id, bucket);
+    }
+    bucket.set(qCode, a.answer_text ?? "");
+  }
+
+  // ── 6. Consent timestamps ─────────────────────────────────────────
+  const { data: consentRows, error: cErr } = await supabase
+    .from("consent_records")
+    .select("response_id, signed_at")
+    .in("response_id", responseIds);
+  if (cErr) throw cErr;
+  const consentByResponse = new Map(
+    (consentRows ?? []).map((c) => [c.response_id, c.signed_at] as const)
+  );
+
+  // ── 7. Tags per response — embed tags.name through response_tags ──
+  // Same embed pattern as listTagsForResponse (lib/repos/tags.ts), batched
+  // across the matched response set. Tags table is empty today (D84
+  // pre-flight verification) so this returns no rows; reserved for when
+  // Sura applies tags pre-export.
+  const { data: tagRows, error: tErr } = await supabase
+    .from("response_tags")
+    .select("response_id, applied_at, tags(name)")
+    .in("response_id", responseIds)
+    .order("applied_at", { ascending: false });
+  if (tErr) throw tErr;
+  const tagsByResponse = new Map<string, string[]>();
+  for (const row of tagRows ?? []) {
+    const name = row.tags?.name;
+    if (!name) continue;
+    let bucket = tagsByResponse.get(row.response_id);
+    if (!bucket) {
+      bucket = [];
+      tagsByResponse.set(row.response_id, bucket);
+    }
+    bucket.push(name);
+  }
+
+  // ── 8. Build payload rows ─────────────────────────────────────────
+  const invById = new Map(filteredInvs.map((i) => [i.id, i] as const));
+  const rows: AtlasResponseRow[] = [];
+  for (const resp of responses) {
+    const inv = invById.get(resp.invitation_id);
+    if (!inv) continue; // defensive — filtered out above
+    rows.push({
+      refCode: inv.ref_code ?? "",
+      category: inv.category ?? "",
+      nationality: inv.nationality ?? null,
+      preferredLanguage: inv.preferred_language ?? "",
+      collectionMode: inv.collection_mode ?? "",
+      // submitted_at filter at step 1 narrows to non-null at runtime.
+      submittedAt: resp.submitted_at as string,
+      consentSignedAt: consentByResponse.get(resp.id) ?? null,
+      answers: answersByResponse.get(resp.id) ?? new Map<string, string>(),
+      tags: tagsByResponse.get(resp.id) ?? [],
+    });
+  }
+
+  return { variant, questions, rows };
+}
+
 /**
  * Long-format response export. Returns [] when no submitted+active
  * responses match (the route handler treats single-empty as 404 and
