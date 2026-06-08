@@ -29,7 +29,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-type Shape = "wide" | "long";
+// D86 — added "desktop" (ATLAS.ti Desktop bare-code format). "wide" stays
+// as the Web-fallback target (D84). "long" is D74's per-answer shape.
+type Shape = "wide" | "long" | "desktop";
 type Format = "xlsx" | "csv";
 type Scope = "single" | "bulk";
 
@@ -89,11 +91,13 @@ export default function ExportModal({ options }: Props) {
 
   // ── Submit-button enablement gate ──────────────────────────────────
   // - single: needs a chosen responseId
-  // - bulk wide: needs exactly ONE category (Strategy 3)
+  // - bulk wide / bulk desktop: needs exactly ONE category (Strategy 3
+  //   single-variant invariant inherited by both shapes — see route
+  //   defense in /admin/exports/download)
   // - bulk long: no category constraint (zero = all categories included)
   const canSubmit = useMemo(() => {
     if (scope === "single") return responseId.length > 0;
-    if (shape === "wide") return category.length === 1;
+    if (shape === "wide" || shape === "desktop") return category.length === 1;
     return true; // bulk long
   }, [scope, shape, responseId, category]);
 
@@ -129,20 +133,18 @@ export default function ExportModal({ options }: Props) {
   }
 
   // ── When user flips shape ↔, reset category to satisfy invariants ─
-  // - wide → bulk: enforce ≤1 category. If they had 2 selected,
-  //   collapse to the first.
+  // - wide or desktop → bulk: enforce ≤1 category (Strategy 3 single-
+  //   variant). If they had >1 selected, collapse to the first.
   // - long → bulk: no reset needed (multi-select allowed).
+  // - desktop → format: force xlsx (D86 Q-3 — CSV disabled for desktop;
+  //   ATLAS Desktop reads .xlsx natively, CSV adds zero value).
   function onShapeChange(next: Shape) {
     setShape(next);
-    if (next === "wide" && category.length > 1) {
+    if ((next === "wide" || next === "desktop") && category.length > 1) {
       setCategory(category.slice(0, 1));
     }
-    // Default format swap: wide → xlsx (ATLAS.ti's preferred input);
-    // long → preserve user's prior choice. Lean: don't auto-swap on
-    // long-flip, only enforce sensible default on first wide select.
-    if (next === "wide" && format === "csv") {
-      // Stay on csv if user explicitly picked it; xlsx default applies
-      // only at modal-open. No auto-swap.
+    if (next === "desktop" && format === "csv") {
+      setFormat("xlsx");
     }
   }
 
@@ -202,6 +204,30 @@ export default function ExportModal({ options }: Props) {
                     — one row per respondent, one column per question. Pre-
                     coded for ATLAS.ti Survey Import. One questionnaire
                     variant per file.
+                  </span>
+                </span>
+              </label>
+              <label className="flex items-start gap-2 mb-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="shape"
+                  value="desktop"
+                  checked={shape === "desktop"}
+                  onChange={() => onShapeChange("desktop")}
+                  className="mt-0.5"
+                />
+                <span className="text-[13px]">
+                  <span className="font-semibold text-ink">
+                    ATLAS.ti Desktop
+                  </span>{" "}
+                  <span className="text-muted">
+                    — bare Q/F code column headers (no labels). Downloads
+                    as a ZIP containing two XLSX files: a responses sheet
+                    for <span className="mono">Import &gt; Survey</span>{" "}
+                    and a codebook sheet for{" "}
+                    <span className="mono">Import &gt; Codes</span> that
+                    populates each code&apos;s comment with the full
+                    question text. One questionnaire variant per file.
                   </span>
                 </span>
               </label>
@@ -286,7 +312,7 @@ export default function ExportModal({ options }: Props) {
                 <fieldset>
                   <legend className="block text-[12px] font-semibold text-ink mb-1">
                     Category
-                    {shape === "wide" && (
+                    {(shape === "wide" || shape === "desktop") && (
                       <span className="ms-2 text-[11px] font-normal text-muted">
                         — pick exactly one (ATLAS.ti needs a single variant)
                       </span>
@@ -298,27 +324,31 @@ export default function ExportModal({ options }: Props) {
                     )}
                   </legend>
                   <div className="flex flex-wrap gap-3">
-                    {CATEGORIES.map((c) => (
-                      <label
-                        key={c.value}
-                        className="inline-flex items-center gap-1.5 text-[13px] cursor-pointer"
-                      >
-                        <input
-                          type={shape === "wide" ? "radio" : "checkbox"}
-                          name={shape === "wide" ? "wide-category" : undefined}
-                          value={c.value}
-                          checked={category.includes(c.value)}
-                          onChange={() => {
-                            if (shape === "wide") {
-                              setCategory([c.value]);
-                            } else {
-                              setCategory(toggleIn(category, c.value));
-                            }
-                          }}
-                        />
-                        {c.label}
-                      </label>
-                    ))}
+                    {CATEGORIES.map((c) => {
+                      const singleSelect =
+                        shape === "wide" || shape === "desktop";
+                      return (
+                        <label
+                          key={c.value}
+                          className="inline-flex items-center gap-1.5 text-[13px] cursor-pointer"
+                        >
+                          <input
+                            type={singleSelect ? "radio" : "checkbox"}
+                            name={singleSelect ? "atlas-category" : undefined}
+                            value={c.value}
+                            checked={category.includes(c.value)}
+                            onChange={() => {
+                              if (singleSelect) {
+                                setCategory([c.value]);
+                              } else {
+                                setCategory(toggleIn(category, c.value));
+                              }
+                            }}
+                          />
+                          {c.label}
+                        </label>
+                      );
+                    })}
                   </div>
                 </fieldset>
 
@@ -378,7 +408,10 @@ export default function ExportModal({ options }: Props) {
               </div>
             )}
 
-            {/* Format */}
+            {/* Format. D86 — CSV is disabled when shape=desktop (ATLAS
+                Desktop reads .xlsx natively; CSV adds zero value and
+                onShapeChange already forced format=xlsx on shape flip,
+                so this is a UI-affordance layer on top of state).  */}
             <fieldset className="mb-6">
               <legend className="block text-[12px] font-semibold text-ink mb-1">
                 File type
@@ -392,21 +425,34 @@ export default function ExportModal({ options }: Props) {
                   onChange={() => setFormat("xlsx")}
                 />
                 XLSX
-                {shape === "wide" && (
+                {(shape === "wide" || shape === "desktop") && (
                   <span className="ms-1 text-[11px] text-muted">
                     (recommended for ATLAS.ti)
                   </span>
                 )}
               </label>
-              <label className="inline-flex items-center gap-1.5 text-[13px] cursor-pointer">
+              <label
+                className={
+                  "inline-flex items-center gap-1.5 text-[13px] " +
+                  (shape === "desktop"
+                    ? "opacity-40 cursor-not-allowed"
+                    : "cursor-pointer")
+                }
+              >
                 <input
                   type="radio"
                   name="format"
                   value="csv"
                   checked={format === "csv"}
                   onChange={() => setFormat("csv")}
+                  disabled={shape === "desktop"}
                 />
                 CSV (UTF-8 with BOM)
+                {shape === "desktop" && (
+                  <span className="ms-1 text-[11px] text-muted">
+                    (XLSX only for ATLAS.ti Desktop)
+                  </span>
+                )}
               </label>
             </fieldset>
 

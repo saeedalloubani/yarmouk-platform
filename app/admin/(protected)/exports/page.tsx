@@ -115,11 +115,15 @@ export default async function ExportsPage() {
                 Export Pilot Responses
               </h2>
               <p className="text-[13px] text-muted mb-4">
-                ATLAS.ti Wide-format is the new default — one row per
+                ATLAS.ti Wide-format is the default — one row per
                 respondent, one column per question, ready for
                 <span className="mono"> Import &gt; Survey</span> in
-                ATLAS.ti. Long-format (D74) is preserved for stats
-                software and supervisor review with PII.
+                ATLAS.ti. An ATLAS.ti Desktop variant is also available:
+                bare Q/F code column headers + a codebook companion file
+                that populates code comments with the full question text
+                (downloads as a single ZIP). Long-format (D74) is
+                preserved for stats software and supervisor review with
+                PII.
               </p>
               <ExportModal options={modalOptions} />
               <p className="text-[12px] text-muted mt-4">
