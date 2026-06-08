@@ -197,9 +197,25 @@ export default function AdminShell({
 
         <nav className="py-3 flex-1 overflow-y-auto" aria-label="Admin sections">
           {visibleSections.map((section, idx) => (
-            <div key={section.title} className={idx === 0 ? "" : "mt-4"}>
+            // D92 — first section: no top rule (sits under the brand
+            // header's border-b). Subsequent sections: mt-4 gap, a thin
+            // full-width border-t rule using the existing `line` token,
+            // and pt-3 inside so the header text doesn't sit flush
+            // against the rule. The conditional is keyed on idx in the
+            // POST-FILTER visibleSections array, so a readonly admin
+            // with only RESEARCH visible (idx=0) correctly gets no
+            // separator above it — no orphaned rule possible.
+            <div
+              key={section.title}
+              className={idx === 0 ? "" : "mt-4 pt-3 border-t border-line"}
+            >
               <div
-                className="mx-2 px-3 mb-1 text-[11px] font-semibold text-muted uppercase tracking-wider"
+                // D92 — header treatment: text-[12px] (up from [11px]),
+                // text-muted-strong (gray-600, the next-darker muted
+                // palette token — already used in LandingNoSession,
+                // ConsentForm, InvitationCreateForm; distinct from
+                // brand-700 which owns the active-item pill).
+                className="mx-2 px-3 mb-1 text-[12px] font-semibold text-muted-strong uppercase tracking-wider"
                 aria-hidden="true"
               >
                 {section.title}
