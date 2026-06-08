@@ -23,7 +23,11 @@ import NotificationsBell from "@/components/NotificationsBell";
 import type { NotificationView } from "@/lib/repos/notifications";
 
 type Admin = { name: string; role: "owner" | "readonly" };
-type NavItem = { href: string; label: string };
+// `matchPrefix` (D87) — opt-in subtree highlight. When set, isActive()
+// returns true for any path under that prefix. Used by the Analytics
+// entry so the pill stays lit on both /analytics/questions and
+// /analytics/feedback (its in-page sub-nav, not a sidebar sibling).
+type NavItem = { href: string; label: string; matchPrefix?: string };
 
 export default function AdminShell({
   admin,
@@ -42,9 +46,17 @@ export default function AdminShell({
     { href: "/admin", label: "Overview" },
     { href: "/admin/invitations", label: "Invitations" },
     { href: "/admin/responses", label: "Responses" },
-    // Both-roles analytics. Single flat entry for now — promote to an
-    // "Analytics" group once a 2nd view lands.
-    { href: "/admin/analytics/feedback", label: "Feedback" },
+    // Both-roles analytics. D87 promoted the single "Feedback" entry to
+    // a unified "Analytics" entry that lands on the per-question pivot
+    // (the new default analytics view); the in-page sub-nav from
+    // app/admin/(protected)/analytics/layout.tsx handles switching
+    // between Questions and Feedback siblings. matchPrefix keeps the
+    // sidebar pill lit on Feedback too.
+    {
+      href: "/admin/analytics/questions",
+      label: "Analytics",
+      matchPrefix: "/admin/analytics",
+    },
     // Owner-only: instrument editing (question-editor boundary), self-service
     // settings, and the audit-log viewer.
     ...(admin.role === "owner"
@@ -59,9 +71,18 @@ export default function AdminShell({
       : []),
   ];
 
-  function isActive(href: string): boolean {
-    if (href === "/admin") return pathname === "/admin";
-    return pathname === href || pathname.startsWith(`${href}/`);
+  function isActive(item: NavItem): boolean {
+    if (item.href === "/admin") return pathname === "/admin";
+    // D87 — opt-in subtree highlight (Analytics entry uses this so the
+    // pill stays lit on both /analytics/questions and
+    // /analytics/feedback).
+    if (item.matchPrefix) {
+      return (
+        pathname === item.matchPrefix ||
+        pathname.startsWith(`${item.matchPrefix}/`)
+      );
+    }
+    return pathname === item.href || pathname.startsWith(`${item.href}/`);
   }
 
   const initials =
@@ -87,7 +108,7 @@ export default function AdminShell({
 
         <nav className="py-3 flex-1 overflow-y-auto">
           {nav.map((item) => {
-            const active = isActive(item.href);
+            const active = isActive(item);
             return (
               <Link
                 key={item.href}
