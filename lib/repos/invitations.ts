@@ -170,7 +170,18 @@ export type ListInvitationsFilter = {
   status?: InvitationStatusValue;
   category?: InvitationCategory;
   nationality?: InvitationNationality;
+  /** Single-version filter (legacy; applied as `.eq`). */
   questionnaireVersionId?: string;
+  /**
+   * D94 — pilot/main SCOPE filter: a SET of questionnaire_version_ids,
+   * applied as `.in("questionnaire_version_id", …)`. Additive (composes
+   * with status / category / nationality via AND). The caller resolves
+   * the set from questionnaire_versions.type via lib/repos/scope.ts
+   * (same mechanism as D93's dashboard scope). Omitted / undefined → no
+   * version filter (the "All" scope). An empty array matches zero rows —
+   * the honest empty render for a scope with no versions yet.
+   */
+  questionnaireVersionIds?: string[];
   limit?: number;
   offset?: number;
 };
@@ -199,6 +210,10 @@ export async function listInvitations(
       q = q.eq("nationality", filter.nationality);
     if (filter.questionnaireVersionId)
       q = q.eq("questionnaire_version_id", filter.questionnaireVersionId);
+    // D94 — pilot/main scope set. null/undefined skips; array (incl.
+    // empty) restricts. Non-PII column; present on the base table.
+    if (filter.questionnaireVersionIds !== undefined)
+      q = q.in("questionnaire_version_id", filter.questionnaireVersionIds);
     if (useRange) q = q.range(rangeFrom, rangeTo);
     const { data, error } = await q;
     if (error) throw error;
@@ -215,6 +230,10 @@ export async function listInvitations(
     q = q.eq("nationality", filter.nationality);
   if (filter.questionnaireVersionId)
     q = q.eq("questionnaire_version_id", filter.questionnaireVersionId);
+  // D94 — pilot/main scope set (readonly branch; the redacted view also
+  // carries the non-PII questionnaire_version_id column).
+  if (filter.questionnaireVersionIds !== undefined)
+    q = q.in("questionnaire_version_id", filter.questionnaireVersionIds);
   if (useRange) q = q.range(rangeFrom, rangeTo);
   const { data, error } = await q;
   if (error) throw error;

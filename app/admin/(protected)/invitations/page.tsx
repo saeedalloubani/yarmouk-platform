@@ -32,8 +32,11 @@ import { listInvitations, categoryLabel } from "@/lib/repos/invitations";
 import InvitationResendButton from "@/components/InvitationResendButton";
 import InvitationRevokeButton from "@/components/InvitationRevokeButton";
 import SendReminderButton from "@/components/SendReminderButton";
+import ScopeFilter from "@/components/ScopeFilter";
+import VariantChip from "@/components/VariantChip";
 import { renderReminderPreview, type EmailPreview } from "@/lib/email/preview";
 import { chipClassFor } from "@/lib/funnel-stages";
+import { resolveOverviewScope, SCOPE_LABEL } from "@/lib/repos/scope";
 
 export const dynamic = "force-dynamic";
 
@@ -106,6 +109,7 @@ export default async function InvitationsPage({
     ref?: string;
     reason?: string;
     wait?: string;
+    scope?: string;
   }>;
 }) {
   const supabase = await createSupabaseServerClient();
@@ -114,7 +118,21 @@ export default async function InvitationsPage({
 
   const sp = await searchParams;
   const flash = parseFlash(sp);
-  const invitations = await listInvitations(supabase);
+
+  // D94 — pilot/main scope. Lists DEFAULT TO "all" (a list is for lookup —
+  // seeing every row is the sensible default; cf. the dashboard, which
+  // defaults to the active phase because it's a monitoring summary). We
+  // get that by defaulting the param to "all" before the resolver, so no
+  // resolver change is needed. versionMeta labels the per-row chip from
+  // the same questionnaire_versions read.
+  const { scope, versionIds, versionMeta } = await resolveOverviewScope(
+    supabase,
+    sp.scope ?? "all"
+  );
+
+  const invitations = await listInvitations(supabase, {
+    questionnaireVersionIds: versionIds ?? undefined,
+  });
   const isOwner = admin.role === "owner";
 
   // D79 Feature 4 — owner-only previews. The repo's Invitation type
@@ -181,15 +199,25 @@ export default async function InvitationsPage({
             <h1 className="text-[24px] font-bold text-ink tracking-tight">
               Invitations
             </h1>
+            {/* D94 — counter reflects the SCOPED count (the fetch is
+                scope-filtered), so it never claims a global total while
+                filtered. "All" reads "N total"; a scope reads "N Pilot". */}
             <p className="text-[13px] text-muted mt-1">
-              {invitations.length} total · signed in as {admin.name} ({admin.role})
+              {invitations.length}{" "}
+              {scope === "all" ? "total" : SCOPE_LABEL[scope]} · signed in as{" "}
+              {admin.name} ({admin.role})
             </p>
           </div>
-          {isOwner && (
-            <Link href="/admin/invitations/new" className="btn-primary">
-              + New invitation
-            </Link>
-          )}
+          <div className="flex items-center gap-3">
+            {/* D94 — pilot/main scope filter; composes with future filters
+                (preserves all other query params). */}
+            <ScopeFilter active={scope} />
+            {isOwner && (
+              <Link href="/admin/invitations/new" className="btn-primary">
+                + New invitation
+              </Link>
+            )}
+          </div>
         </div>
 
         {/* D79 Feature 3 — flash banner from POST redirect. */}
@@ -206,8 +234,17 @@ export default async function InvitationsPage({
 
         {invitations.length === 0 ? (
           <div className="card p-8 text-center text-[14px] text-muted">
-            No invitations yet.
-            {isOwner && " Use “+ New invitation” to create the first one."}
+            {/* D94 — scope-aware empty state: under a Pilot/Main filter,
+                "yet" would be misleading (rows may exist in the other
+                study), so say "in this scope" instead. */}
+            {scope === "all" ? (
+              <>
+                No invitations yet.
+                {isOwner && " Use “+ New invitation” to create the first one."}
+              </>
+            ) : (
+              <>No invitations in the {SCOPE_LABEL[scope]} scope.</>
+            )}
           </div>
         ) : (
           <div className="card overflow-hidden">
@@ -215,6 +252,8 @@ export default async function InvitationsPage({
               <thead className="bg-bgAlt text-muted">
                 <tr className="text-start">
                   <th className="text-start font-semibold px-4 py-2.5">Ref</th>
+                  {/* D94 — variant chip column. */}
+                  <th className="text-start font-semibold px-4 py-2.5">Variant</th>
                   <th className="text-start font-semibold px-4 py-2.5">Category</th>
                   <th className="text-start font-semibold px-4 py-2.5">Nationality</th>
                   <th className="text-start font-semibold px-4 py-2.5">Status</th>
@@ -245,6 +284,20 @@ export default async function InvitationsPage({
                           <span className="mono font-semibold text-brand-700">
                             {inv.refCode}
                           </span>
+                        </td>
+                        {/* D94 — variant chip; meta resolved from the
+                            scope read's versionMeta map. */}
+                        <td className="px-4 py-2.5">
+                          <VariantChip
+                            variant={
+                              versionMeta.get(inv.questionnaireVersionId)
+                                ?.variant ?? null
+                            }
+                            type={
+                              versionMeta.get(inv.questionnaireVersionId)?.type ??
+                              null
+                            }
+                          />
                         </td>
                         <td className="px-4 py-2.5">{categoryLabel(inv.category)}</td>
                         <td className="px-4 py-2.5 capitalize">
@@ -294,7 +347,8 @@ export default async function InvitationsPage({
                       {preview && (
                         <tr className="border-t border-line bg-bgSubtle">
                           <td
-                            colSpan={isOwner ? 8 : 7}
+                            // D94 — +1 column (Variant) → 9 owner / 8 readonly.
+                            colSpan={isOwner ? 9 : 8}
                             className="px-4 py-3"
                           >
                             <details>
