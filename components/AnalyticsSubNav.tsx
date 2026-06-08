@@ -14,6 +14,7 @@ type Tab = { href: string; label: string };
 
 const TABS: readonly Tab[] = [
   { href: "/admin/analytics/questions", label: "Questions" },
+  { href: "/admin/analytics/demographics", label: "Demographics" },
   { href: "/admin/analytics/feedback", label: "Feedback" },
 ];
 
