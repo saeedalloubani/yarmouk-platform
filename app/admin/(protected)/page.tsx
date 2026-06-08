@@ -35,6 +35,12 @@ import {
   getPilotFunnel,
   type StalledInvitation,
 } from "@/lib/repos/pilot";
+import {
+  resolveOverviewScope,
+  SCOPE_LABEL,
+  SCOPE_SUBTITLE,
+  type OverviewScope,
+} from "@/lib/repos/scope";
 import { STAGE_PALETTE } from "@/lib/funnel-stages";
 import SendReminderButton from "@/components/SendReminderButton";
 
@@ -152,39 +158,58 @@ export default async function AdminOverviewPage({
     ref?: string;
     reason?: string;
     wait?: string;
+    scope?: string;
   }>;
 }) {
   const supabase = await createSupabaseServerClient();
   const admin = await getCurrentAdmin(supabase);
   if (!admin) redirect("/admin/login"); // defensive; layout already guards
 
-  // Parallel — three independent repos. Dashboard is the largest read
-  // (multi-table aggregate); the two pilot reads add ~2 round-trips. All
-  // fan out at once.
   const sp = await searchParams;
   const flash = parseFlash(sp);
   const isOwner = admin.role === "owner";
 
+  // D93 — resolve pilot/main scope BEFORE the aggregate fan-out (the
+  // version-id set feeds all three repos). One questionnaire_versions
+  // read serves both the default rule and the per-scope id sets. Invalid
+  // / absent ?scope= falls through to the default (main-if-any-main-
+  // active, else pilot). versionIds=null means "All" → repos apply no
+  // filter (pre-D93 global behavior).
+  const { scope, versionIds } = await resolveOverviewScope(
+    supabase,
+    sp.scope
+  );
+
+  // Parallel — three independent repos. Dashboard is the largest read
+  // (multi-table aggregate); the two pilot reads add ~2 round-trips. All
+  // fan out at once. D93 — every repo now receives the scope filter so
+  // no figure conflates pilot + main.
   const [d, stalled, funnel] = await Promise.all([
-    getDashboardData(supabase),
+    getDashboardData(supabase, { versionIds }),
     // Stalled-invitations table is owner-action surface. Readonly
     // supervisors don't get the table at all (the data is benign — no
     // PII — but the Send Reminder button only makes sense for the
     // actor who can pull the trigger). Skip the query for non-owner.
-    isOwner ? getStalledInvitations(supabase) : Promise.resolve([]),
-    getPilotFunnel(supabase),
+    isOwner
+      ? getStalledInvitations(supabase, { versionIds })
+      : Promise.resolve([]),
+    getPilotFunnel(supabase, { versionIds }),
   ]);
 
   return (
     <div className="p-10 max-w-6xl">
       <div className="mb-6">
-        <div className="eyebrow mb-2">Pilot · Version 1</div>
+        {/* D93 — eyebrow + subtitle are now DYNAMIC to the selected scope
+            (was hardcoded "Pilot · Version 1" / pilot subtitle). The
+            scope selector sits beside the eyebrow. */}
+        <div className="flex items-center justify-between gap-4 mb-2">
+          <div className="eyebrow">{SCOPE_LABEL[scope]}</div>
+          <ScopeSelector active={scope} />
+        </div>
         <h1 className="text-[28px] font-bold text-ink tracking-tight mb-1">
           Overview
         </h1>
-        <p className="text-[14px] text-muted">
-          Real-time status of the pilot questionnaire round.
-        </p>
+        <p className="text-[14px] text-muted">{SCOPE_SUBTITLE[scope]}</p>
       </div>
 
       {/* D79 Feature 3 — flash banner from POST redirect. Dismisses on
@@ -422,7 +447,8 @@ export default async function AdminOverviewPage({
               <h2 className="text-[16px] font-bold text-ink mb-1">
                 Completion by Category
               </h2>
-              <p className="text-[12px] text-muted">Pilot · V1</p>
+              {/* D93 — was hardcoded "Pilot · V1"; now reflects scope. */}
+              <p className="text-[12px] text-muted">{SCOPE_LABEL[scope]}</p>
             </div>
             <Link href="/admin/responses" className="btn-ghost text-[12px]">
               View responses →
@@ -511,6 +537,40 @@ export default async function AdminOverviewPage({
         </div>
       </div>
     </div>
+  );
+}
+
+// D93 — pilot/main/all scope control. Server-rendered segmented control
+// (3 <Link>s, no client JS — same idiom as the Responses ?withdrawn=
+// toggle). Each link sets ?scope= and drops the transient reminder-flash
+// params (one-shot; nothing to preserve). The active scope reads as a
+// filled brand pill; the others are muted + hover. Both roles see it.
+const SCOPE_ORDER: readonly OverviewScope[] = ["pilot", "main", "all"];
+
+function ScopeSelector({ active }: { active: OverviewScope }) {
+  return (
+    <nav
+      className="inline-flex items-center gap-1 rounded-md bg-bgAlt p-0.5"
+      aria-label="Study scope"
+    >
+      {SCOPE_ORDER.map((s) => {
+        const isActive = s === active;
+        return (
+          <Link
+            key={s}
+            href={`/admin?scope=${s}`}
+            aria-current={isActive ? "page" : undefined}
+            className={`px-2.5 py-1 rounded text-[12px] font-medium transition-colors ${
+              isActive
+                ? "bg-brand-700 text-white"
+                : "text-muted hover:text-ink"
+            }`}
+          >
+            {SCOPE_LABEL[s]}
+          </Link>
+        );
+      })}
+    </nav>
   );
 }
 

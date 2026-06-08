@@ -87,20 +87,31 @@ function daysBetween(fromIso: string, toIso: string): number {
  * fits in tens, main study in low hundreds).
  */
 export async function getStalledInvitations(
-  supabase: SupabaseClient<Database>
+  supabase: SupabaseClient<Database>,
+  opts?: { versionIds?: string[] | null }
 ): Promise<StalledInvitation[]> {
   const nowIso = new Date().toISOString();
+  const versionIds = opts?.versionIds ?? null;
 
   // ── 1. candidate invitations (non-terminal, not expired) ──────────
   // D81 — also pull questionnaire_version_id so the progress denominator
   // computation below has the variant key without an additional round-trip.
-  const { data: invRows, error: invErr } = await supabase
+  // D93 — scope filter (pilot/main) applied here on the first query; the
+  // responses + answers + questions reads below all derive from this
+  // candidate set, so scoping it cascades to the whole function. Null =
+  // no filter (All scope; pre-D93 behavior). Non-PII column already in
+  // the redacted view.
+  let invQuery = supabase
     .from("invitations_redacted")
     .select(
       "id, ref_code, category, nationality, status, sent_at, expires_at, reminder1_sent_at, reminder_final_sent_at, questionnaire_version_id"
     )
     .in("status", ["sent", "opened", "started"])
     .gt("expires_at", nowIso);
+  if (versionIds !== null) {
+    invQuery = invQuery.in("questionnaire_version_id", versionIds);
+  }
+  const { data: invRows, error: invErr } = await invQuery;
   if (invErr) throw invErr;
   const candidates = invRows ?? [];
   if (candidates.length === 0) return [];
@@ -376,18 +387,28 @@ export type PilotFunnel = {
 };
 
 export async function getPilotFunnel(
-  supabase: SupabaseClient<Database>
+  supabase: SupabaseClient<Database>,
+  opts?: { versionIds?: string[] | null }
 ): Promise<PilotFunnel> {
+  const versionIds = opts?.versionIds ?? null;
+
   // D80 — `id` added to the SELECT so the responses-side union below
   // can match by invitation_id.
   // D81 — also pull questionnaire_version_id + nationality for the
   // avg-started-progress denominator computation; these are non-PII
   // columns already exposed via invitations_redacted (D69 view recreate).
-  const { data, error } = await supabase
+  // D93 — scope filter (pilot/main) on this first query; every funnel
+  // stage + the consent / avg-progress reads derive from `rows`, so
+  // scoping here cascades to the whole funnel. Null = no filter (All).
+  let invQuery = supabase
     .from("invitations_redacted")
     .select(
       "id, status, sent_at, opened_at, started_at, submitted_at, questionnaire_version_id, nationality"
     );
+  if (versionIds !== null) {
+    invQuery = invQuery.in("questionnaire_version_id", versionIds);
+  }
+  const { data, error } = await invQuery;
   if (error) throw error;
   const rows = data ?? [];
 

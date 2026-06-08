@@ -74,18 +74,41 @@ function median(nums: number[]): number | null {
 /**
  * One aggregate read for the whole dashboard. Each piece is independently
  * null-safe; a totally empty DB returns all zeros / nulls / empty arrays.
+ *
+ * D93 — `opts.versionIds` is the pilot/main scope filter (additive). When
+ * a non-null array is passed, every figure is restricted to invitations
+ * whose questionnaire_version_id is in that set (the caller resolves the
+ * set from questionnaire_versions.type — pilot vs main). When null/omitted,
+ * NO filter is applied (the "All studies" scope; preserves pre-D93 global
+ * behavior). An empty array matches zero rows — the honest empty render
+ * for a scope that has no versions yet. The filter lives on the FIRST
+ * invitations query; responses are then narrowed by the scoped invitation
+ * id set, and the answers + response_tags loops cascade through the
+ * existing activeResponseIds Set, so no further query changes are needed.
  */
 export async function getDashboardData(
-  supabase: SupabaseClient<Database>
+  supabase: SupabaseClient<Database>,
+  opts?: { versionIds?: string[] | null }
 ): Promise<DashboardData> {
+  const versionIds = opts?.versionIds ?? null;
+
   // ---- Invitations (redacted view; non-PII columns only) --------------
   // D82 — `id` added to the SELECT so the responses → invitation join
   // for the active-duration computation below can match by primary key.
-  const { data: invRows, error: invErr } = await supabase
+  // D93 — questionnaire_version_id added so the scope filter below can
+  // narrow responses by the scoped invitation set; also the column the
+  // .in() scope predicate targets. Non-PII; already in the redacted view.
+  let invQuery = supabase
     .from("invitations_redacted")
     .select(
-      "id, ref_code, category, status, sent_at, opened_at, started_at, submitted_at"
+      "id, ref_code, category, status, sent_at, opened_at, started_at, submitted_at, questionnaire_version_id"
     );
+  // D93 — scope filter. Null = no filter (All). Array (incl. empty) =
+  // restrict to that version set.
+  if (versionIds !== null) {
+    invQuery = invQuery.in("questionnaire_version_id", versionIds);
+  }
+  const { data: invRows, error: invErr } = await invQuery;
   if (invErr) throw invErr;
   const invitations = invRows ?? [];
 
@@ -132,10 +155,24 @@ export async function getDashboardData(
   // moment) as the active-engagement start milestone, replacing the
   // broken responses.started_at (consent moment). The cascade-bridge
   // Set + word-count + tag-frequency loops below are unaffected.
-  const { data: respRows, error: respErr } = await supabase
+  // D93 — when scoped, restrict responses to the scoped invitation set.
+  // `invitations` is already narrowed to the scope above, so its ids are
+  // the scoped set. Skip the predicate entirely when unscoped (All) to
+  // preserve the pre-D93 global read. responses has no version_id column,
+  // so invitation_id is the join key. The answers + response_tags loops
+  // below cascade through activeResponseIds (built from this query), so
+  // they inherit the scope automatically.
+  let respQuery = supabase
     .from("responses")
     .select("id, invitation_id, started_at, submitted_at, language")
     .eq("status", "active");
+  if (versionIds !== null) {
+    const scopedInvIds = invitations
+      .map((i) => i.id)
+      .filter((id): id is string => id != null);
+    respQuery = respQuery.in("invitation_id", scopedInvIds);
+  }
+  const { data: respRows, error: respErr } = await respQuery;
   if (respErr) throw respErr;
   const responses = respRows ?? [];
   const activeResponseIds = new Set(responses.map((r) => r.id));
