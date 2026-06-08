@@ -13,6 +13,18 @@
 // silently in a demographics overview would corrupt sample-composition
 // reads.
 //
+// D90 — Revoked invitations are EXCLUDED from the cohort entirely
+// (status filter at the SQL layer, see step 2 below). Revoke is an
+// owner-driven terminal kill (off-funnel per lib/funnel-stages.ts),
+// and the revoke action structurally blocks any active+submitted
+// response on the invitation before terminating — so excluding
+// revoked invitations cannot hide counted data, only stops them from
+// seeding categoriesPresent with a phantom row. 'expired' is NOT
+// excluded — expiration is time-driven and does not block submission,
+// so an expired invitation can still carry a valid pre-expiration
+// active submission; filtering it would hide real data. The
+// asymmetry is intentional — full reasoning at the SELECT site.
+//
 // ─── PII / ROLE DISCIPLINE ───────────────────────────────────────────
 //
 // Same shape as lib/repos/analytics.ts (D87) — copied here, not
@@ -230,10 +242,37 @@ export async function getDemographicsForVersion(
   //    `started_at` is the active-duration START milestone (set
   //    guard-once on first answer save; see D82 / responses.ts).
   //    PostgREST types view columns as nullable; narrow `id` defensively.
+  //
+  //    D90 — `.neq("status", "revoked")` excludes revoked invitations
+  //    from the cohort entirely. Revoked is off-funnel (see
+  //    lib/funnel-stages.ts:OffFunnelStatus) — a revoked invitation
+  //    is owner-killed and no longer part of the active sample, so it
+  //    must not seed categoriesPresent (the D88 bug DON-01 surfaced:
+  //    a misassigned Donors invite on the Officials version injected
+  //    a phantom Donors row). Safe at the SQL layer because:
+  //
+  //    (a) "revoke-after-submit" is structurally impossible —
+  //        lib/actions/invitations.ts:revokeInvitationAction step 4
+  //        unconditionally blocks revoke when any active+submitted
+  //        response exists for the invitation (returns
+  //        'already_submitted'). The only path to a revoked
+  //        invitation that ever had a submission requires the response
+  //        to be WITHDRAWN first (responses.status='withdrawn'), which
+  //        is already excluded from this repo's `responses` query
+  //        below via `.eq("status","active")`. Excluding the revoked
+  //        invitation here cannot hide a counted submission.
+  //
+  //    (b) 'expired' is intentionally NOT excluded — expiration is
+  //        time-driven and does NOT block submission, so an expired
+  //        invitation can still carry a valid pre-expiration active
+  //        submission. Filtering it here would hide real data. Revoke
+  //        is the only off-funnel status with the action-layer
+  //        submission block that makes this exclusion safe.
   const { data: iRows, error: iErr } = await supabase
     .from("invitations_redacted")
     .select("id, category, nationality, started_at")
-    .eq("questionnaire_version_id", versionId);
+    .eq("questionnaire_version_id", versionId)
+    .neq("status", "revoked");
   if (iErr) throw iErr;
   const invitations = (iRows ?? []).filter(
     (i): i is typeof i & { id: string } => i.id !== null
