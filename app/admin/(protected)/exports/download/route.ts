@@ -3,14 +3,27 @@
 // D74 — file-delivery endpoint for the Pilot Response Export.
 // D84 — Extended with a `shape` axis (long | wide) + filter params for
 //       the ATLAS.ti-friendly wide-format pipeline.
+// D86 — Third shape value added (`desktop`) for the ATLAS.ti Desktop-
+//       targeted bare-code XLSX serializer. SHARES the wide-format repo
+//       (`getResponsesForAtlasExport`) — only the serializer differs.
+//       XLSX-only: shape=desktop + format=csv returns 400.
+//
+//       DESKTOP DELIVERY IS A ZIP: shape=desktop returns a .zip
+//       containing TWO .xlsx files — `{variant}-responses.xlsx` (bare-code
+//       wide-format) and `{variant}-codebook.xlsx` (Code|Comment|
+//       Code Group 1 rows over the full variant question set). Sura
+//       imports the responses via Import > Survey, then runs Import >
+//       Codes on the codebook to populate code comments with the full
+//       question text. Empirically validated round-trip 2026-06-08.
 //
 // GET /admin/exports/download
 //   ?scope=single|bulk
-//   &format=csv|xlsx
-//   &shape=long|wide                        (D84; default=long for
+//   &format=csv|xlsx                        (D86: shape=desktop forces xlsx)
+//   &shape=long|wide|desktop                (D86; default=long for
 //                                            backward-compat with prior URLs)
 //   &responseId=<uuid>                      (when scope=single)
-//   &category=officials                     (D84; for shape=wide, EXACTLY one;
+//   &category=officials                     (D84/D86; for shape=wide or
+//                                            shape=desktop, EXACTLY one;
 //                                            for shape=long, comma-list)
 //   &nationality=jordanian,syrian           (D84; comma-list; optional)
 //   &language=en,ar                         (D84; comma-list; optional)
@@ -27,11 +40,13 @@
 // (errorClass='config'), and return a safe banner — error.message is
 // NEVER echoed (PII risk in unusual Vault states).
 //
-// D84 — wide-format pipeline DOES NOT DECRYPT (Q-J exclusion of PII
-// columns). ExportDecryptFailedError can only arise on the long-format
-// branch. A new AtlasMultiVariantError on the wide branch surfaces
-// the Strategy 3 invariant violation (UI single-category enforcement
-// is the primary protection; route-level error is defense-in-depth).
+// D84 / D86 — wide-format AND desktop-format pipelines DO NOT DECRYPT
+// (Q-J exclusion of PII columns). ExportDecryptFailedError can only
+// arise on the long-format branch. AtlasMultiVariantError on the wide
+// or desktop branch surfaces the Strategy 3 invariant violation (UI
+// single-category enforcement is the primary protection; route-level
+// error is defense-in-depth). The two ATLAS shapes SHARE the repo
+// function getResponsesForAtlasExport — only their serializers differ.
 //
 // PII PAYLOADS: Cache-Control: no-store, max-age=0 on every response —
 // intermediary caches must not retain decrypted name/email/answer
@@ -54,6 +69,11 @@ import { serializeCsv } from "@/lib/exports/csv";
 import { serializeXlsx } from "@/lib/exports/xlsx";
 import { serializeAtlasCsv } from "@/lib/exports/atlasti-csv";
 import { serializeAtlasXlsx } from "@/lib/exports/atlasti-xlsx";
+import { serializeAtlasDesktopXlsx } from "@/lib/exports/atlasti-desktop-xlsx";
+import { serializeAtlasDesktopCodebookXlsx } from "@/lib/exports/atlasti-desktop-codebook-xlsx";
+// jszip is a transitive dep of exceljs, promoted to direct in package.json
+// for D86 so the codebook bundling import is explicit.
+import JSZip from "jszip";
 
 // Allowed enum values for filter params — keep in sync with the DB
 // enums (category_type, nationality_type, preferred_language CHECK).
@@ -139,6 +159,29 @@ function bulkAtlasFilename(variant: string, format: "csv" | "xlsx"): string {
   return `yarmouk-atlasti-${variant}-${ts()}.${format}`;
 }
 
+// D86 — desktop delivery is a ZIP bundle. The OUTER filename ends in
+// .zip; INNER archive entries are responses.xlsx + codebook.xlsx with
+// variant-prefixed names so Sura can extract them and the names are
+// still self-describing. Both single-scope and bulk-scope use the same
+// ZIP shape — codebook contents are identical (full variant question
+// set, not response-scoped), so single-scope still gets the full
+// codebook (cheap and useful).
+function singleDesktopAtlasZipFilename(
+  refCode: string,
+  variant: string
+): string {
+  return `yarmouk-atlasti-desktop-${variant}-${refCode}-${ts()}.zip`;
+}
+function bulkDesktopAtlasZipFilename(variant: string): string {
+  return `yarmouk-atlasti-desktop-${variant}-${ts()}.zip`;
+}
+function desktopInnerResponsesName(variant: string): string {
+  return `${variant}-responses.xlsx`;
+}
+function desktopInnerCodebookName(variant: string): string {
+  return `${variant}-codebook.xlsx`;
+}
+
 export async function GET(request: NextRequest) {
   const supabase = await createSupabaseServerClient();
   const admin = await getCurrentAdmin(supabase);
@@ -173,8 +216,13 @@ export async function GET(request: NextRequest) {
   if (format !== "csv" && format !== "xlsx") {
     return badRequest("invalid format");
   }
-  if (shape !== "long" && shape !== "wide") {
+  if (shape !== "long" && shape !== "wide" && shape !== "desktop") {
     return badRequest("invalid shape");
+  }
+  // D86 — desktop is XLSX-only (ATLAS Desktop reads .xlsx natively; the
+  // modal hides CSV on shape=desktop, this is the route-level defense).
+  if (shape === "desktop" && format !== "xlsx") {
+    return badRequest("ATLAS.ti Desktop export is XLSX-only");
   }
   if (scope === "single") {
     if (!responseId || !UUID_RE.test(responseId)) {
@@ -197,12 +245,14 @@ export async function GET(request: NextRequest) {
   const languageList = parseList(languageRaw, LANGUAGES);
   if (languageList === null) return badRequest("invalid language");
 
-  // D84 Strategy 3 — wide bulk requires EXACTLY one category. The
-  // modal enforces single-select for wide; the route defends.
-  if (shape === "wide" && scope === "bulk") {
+  // D84 / D86 Strategy 3 — wide AND desktop bulk both require EXACTLY
+  // one category (single-variant invariant). The modal enforces single-
+  // select for both shapes; the route defends. The error message names
+  // the shape so the operator can recover quickly.
+  if ((shape === "wide" || shape === "desktop") && scope === "bulk") {
     if (!categoryList || categoryList.length !== 1) {
       return badRequest(
-        "wide-format bulk export requires exactly one category"
+        `${shape}-format bulk export requires exactly one category`
       );
     }
   }
@@ -222,10 +272,11 @@ export async function GET(request: NextRequest) {
     filtersForAudit.language = languageList;
 
   // ── Fetch ─────────────────────────────────────────────────────────
-  // Long shape uses D74 + D75 path (with PII decrypt). Wide shape uses
-  // D84 new path (NO PII decrypt — recipient_name + email excluded
-  // per Q-J). Same try/catch shape across branches; distinct error
-  // classes per branch.
+  // Long shape uses D74 + D75 path (with PII decrypt). Wide AND desktop
+  // shapes share the D84 path (NO PII decrypt — recipient_name + email
+  // excluded per Q-J). Same try/catch shape across branches; distinct
+  // error classes per branch. D86: desktop reuses the repo function
+  // verbatim — the only difference is in the serializer chosen below.
   let longRows: ExportRow[] | null = null;
   let atlasPayload: AtlasExportPayload | null = null;
   try {
@@ -253,7 +304,7 @@ export async function GET(request: NextRequest) {
               },
             });
     } else {
-      // shape === "wide"
+      // shape === "wide" OR shape === "desktop" — both share the repo.
       atlasPayload =
         scope === "single"
           ? await getResponsesForAtlasExport(supabase, {
@@ -354,11 +405,13 @@ export async function GET(request: NextRequest) {
 
   // Single-scope: response not found / not submitted / withdrawn → 404.
   // Bulk-scope: empty result → emit a header-only file (Q3 design call,
-  // preserved for both shapes).
+  // preserved for all shapes). D86: desktop uses the same atlasPayload
+  // populated by getResponsesForAtlasExport — same empty-check applies.
   if (
     scope === "single" &&
     ((shape === "long" && (longRows ?? []).length === 0) ||
-      (shape === "wide" && (atlasPayload?.rows ?? []).length === 0))
+      ((shape === "wide" || shape === "desktop") &&
+        (atlasPayload?.rows ?? []).length === 0))
   ) {
     return new NextResponse(
       "Response not found, not submitted, or withdrawn.",
@@ -385,8 +438,7 @@ export async function GET(request: NextRequest) {
       contentType =
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
     }
-  } else {
-    // shape === "wide"
+  } else if (shape === "wide") {
     const payload = atlasPayload!;
     if (format === "csv") {
       body = serializeAtlasCsv(payload);
@@ -396,12 +448,32 @@ export async function GET(request: NextRequest) {
       contentType =
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
     }
+  } else {
+    // shape === "desktop" — XLSX-only (validated at the format-check
+    // gate above; format === "csv" is unreachable here) AND delivered
+    // as a ZIP carrying TWO xlsx files: responses + codebook. The
+    // codebook reuses the same payload.questions (no repo refetch) so
+    // it's cheap to always generate alongside.
+    const payload = atlasPayload!;
+    const [responsesBuf, codebookBuf] = await Promise.all([
+      serializeAtlasDesktopXlsx(payload),
+      serializeAtlasDesktopCodebookXlsx(payload),
+    ]);
+    const zip = new JSZip();
+    zip.file(desktopInnerResponsesName(payload.variant), responsesBuf);
+    zip.file(desktopInnerCodebookName(payload.variant), codebookBuf);
+    // generateAsync returns a Node Buffer when type is "nodebuffer";
+    // wrap as Uint8Array for the NextResponse BodyInit union.
+    const zipBuf = await zip.generateAsync({ type: "uint8array" });
+    body = zipBuf;
+    contentType = "application/zip";
   }
 
   // Filename + ref_code aggregation. Long uses D74's per-row refCode
   // list; wide uses the per-row refCode list from the AtlasResponseRow
-  // sequence. Single-scope is guaranteed non-empty (404 above), so the
-  // first ref is safe.
+  // sequence; desktop reuses the same atlasPayload as wide but with a
+  // distinct filename helper. Single-scope is guaranteed non-empty (404
+  // above), so the first ref is safe.
   let filename: string;
   let refCodes: string[];
   if (shape === "long") {
@@ -411,21 +483,36 @@ export async function GET(request: NextRequest) {
       scope === "single"
         ? singleFilename(rows[0].refCode, format)
         : bulkFilename(format);
-  } else {
-    // shape === "wide"
+  } else if (shape === "wide") {
     const payload = atlasPayload!;
     refCodes = Array.from(new Set(payload.rows.map((r) => r.refCode)));
     filename =
       scope === "single"
         ? singleAtlasFilename(payload.rows[0].refCode, payload.variant, format)
         : bulkAtlasFilename(payload.variant, format);
+  } else {
+    // shape === "desktop" — outer .zip carrying responses + codebook.
+    const payload = atlasPayload!;
+    refCodes = Array.from(new Set(payload.rows.map((r) => r.refCode)));
+    filename =
+      scope === "single"
+        ? singleDesktopAtlasZipFilename(
+            payload.rows[0].refCode,
+            payload.variant
+          )
+        : bulkDesktopAtlasZipFilename(payload.variant);
   }
 
   // Audit the SUCCESSFUL export. Ref codes are PUBLIC identifiers
   // (already on invitations_redacted + chips); they're the right
-  // forensic grain. NO decrypted PII goes into metadata. D84 extends
+  // forensic grain. NO decrypted PII goes into metadata. D84/D86 extend
   // the existing payload with `shape` + `filters` (filter values are
-  // enum members, non-PII) + (for wide) `variant`.
+  // enum members, non-PII) + (for wide AND desktop) `variant` — both
+  // ATLAS shapes are single-variant by Strategy 3, so the label is
+  // meaningful + non-PII. D86 also flags includesCodebook=true so the
+  // audit row distinguishes responses-only desktop exports (none today;
+  // reserved if a future format adds it) from the responses+codebook
+  // ZIP shipped here.
   try {
     await logAudit(supabase, {
       action: "export.responses",
@@ -436,9 +523,10 @@ export async function GET(request: NextRequest) {
         format,
         shape,
         filters: filtersForAudit,
-        ...(shape === "wide" && atlasPayload
+        ...((shape === "wide" || shape === "desktop") && atlasPayload
           ? { variant: atlasPayload.variant }
           : {}),
+        ...(shape === "desktop" ? { includesCodebook: true } : {}),
         responseCount: refCodes.length,
         refCodes,
       },
