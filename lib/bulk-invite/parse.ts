@@ -14,16 +14,10 @@ import {
   BULK_COLUMNS,
   BULK_ROW_CAP,
   BULK_EXAMPLE_EMAIL,
-  BULK_VARIANTS,
-  BULK_NATIONALITIES,
-  BULK_LANGUAGES,
-  BULK_COLLECTION_MODES,
+  validateBulkRowValues,
   type ParsedBulkRow,
   type BulkParseResult,
 } from "./fields";
-
-// Mirrors the invitation-create email check (lib/actions/invitations.ts).
-const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 export type BulkParseOutcome =
   | { kind: "ok"; result: BulkParseResult }
@@ -99,33 +93,15 @@ export async function parseBulkInviteWorkbook(
       language,
       collectionMode,
     ] = values;
-    const errors: string[] = [];
-    if (!recipientName) errors.push("recipient_name is required");
-    if (!EMAIL_RE.test(recipientEmail)) {
-      errors.push(`recipient_email "${recipientEmail}" is not a valid email`);
-    }
-    if (!BULK_VARIANTS.includes(variant)) {
-      errors.push(`invalid variant "${variant}"`);
-    }
-    if (!BULK_NATIONALITIES.includes(nationality)) {
-      errors.push(`invalid nationality "${nationality}"`);
-    }
-    if (!BULK_LANGUAGES.includes(language)) {
-      errors.push(`invalid language "${language}"`);
-    }
-    if (!BULK_COLLECTION_MODES.includes(collectionMode)) {
-      errors.push(`invalid collection_mode "${collectionMode}"`);
-    }
-    return {
-      rowNumber,
+    const row = {
       recipientName,
       recipientEmail,
       variant,
       nationality,
       language,
       collectionMode,
-      errors,
     };
+    return { rowNumber, ...row, errors: validateBulkRowValues(row) };
   });
 
   const validCount = rows.filter((r) => r.errors.length === 0).length;

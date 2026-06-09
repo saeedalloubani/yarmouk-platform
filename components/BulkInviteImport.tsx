@@ -14,16 +14,22 @@
 import { useRef, useState, useTransition } from "react";
 import {
   parseBulkUploadAction,
+  bulkCreateInvitationsAction,
   type BulkUploadResult,
+  type BulkCreateResult,
 } from "@/lib/actions/bulk-invite";
 import type { BulkParseResult } from "@/lib/bulk-invite/fields";
 import { variantLabel } from "@/lib/repos/questionnaires";
 
 export default function BulkInviteImport() {
   const [pending, startTransition] = useTransition();
+  const [creating, startCreate] = useTransition();
   const [result, setResult] = useState<BulkParseResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [confirmed, setConfirmed] = useState(false);
+  const [created, setCreated] = useState<
+    Extract<BulkCreateResult, { ok: true }> | null
+  >(null);
+  const [createError, setCreateError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   function onSubmit(e: React.FormEvent) {
@@ -31,7 +37,8 @@ export default function BulkInviteImport() {
     if (pending) return;
     setError(null);
     setResult(null);
-    setConfirmed(false);
+    setCreated(null);
+    setCreateError(null);
     const file = fileRef.current?.files?.[0];
     if (!file) {
       setError("Choose a filled .xlsx template first.");
@@ -47,15 +54,26 @@ export default function BulkInviteImport() {
   }
 
   function onConfirm() {
-    // ───────────────────────────────────────────────────────────────────
-    // D97 → D98 HANDOFF SEAM.
-    // D97 creates and sends NOTHING. This is the structural placeholder where
-    // D98 will take result.rows.filter(r => r.errors.length === 0), stamp a
-    // batch_id, create the invitations (sendEmail:false), and hand the batch
-    // to the paced cron drain — then redirect to a per-batch progress view.
-    // For now it only acknowledges so the gate + flow can be smoke-tested.
-    // ───────────────────────────────────────────────────────────────────
-    setConfirmed(true);
+    // D98 — create the valid rows as 'pending' invitations under one batch_id.
+    // NOTHING is sent here (sendEmail OFF in the action); D99's paced cron
+    // drain emails them and flips pending -> sent.
+    if (creating || !result) return;
+    const rows = result.rows
+      .filter((r) => r.errors.length === 0)
+      .map((r) => ({
+        recipientName: r.recipientName,
+        recipientEmail: r.recipientEmail,
+        variant: r.variant,
+        nationality: r.nationality,
+        language: r.language,
+        collectionMode: r.collectionMode,
+      }));
+    setCreateError(null);
+    startCreate(async () => {
+      const res = await bulkCreateInvitationsAction(rows);
+      if (res.ok) setCreated(res);
+      else setCreateError(createMessageFor(res));
+    });
   }
 
   const allValid = !!result && result.errorCount === 0 && result.validCount > 0;
@@ -197,31 +215,65 @@ export default function BulkInviteImport() {
             </table>
           </div>
 
-          {/* Confirm gate — D97→D98 seam */}
+          {/* Confirm gate — creates 'pending' rows (D98); sending is D99 */}
           <div className="mt-5 pt-4 border-t border-line">
-            {result.errorCount > 0 ? (
+            {created ? (
+              <div className="text-[13px] space-y-2 max-w-prose">
+                <p className="text-accent-700">
+                  ✓ {created.createdCount} invitation
+                  {created.createdCount === 1 ? "" : "s"} created and queued
+                  {created.batchId ? (
+                    <>
+                      {" "}
+                      in batch{" "}
+                      <span className="mono text-[11px]">
+                        {created.batchId.slice(0, 8)}
+                      </span>
+                    </>
+                  ) : null}
+                  . <strong>Sending begins shortly</strong> — nothing has been
+                  emailed yet.
+                </p>
+                {created.refused.length > 0 && (
+                  <div className="notice-warn">
+                    <strong>
+                      {created.refused.length} row
+                      {created.refused.length === 1 ? "" : "s"} not created:
+                    </strong>
+                    <ul className="mt-1 list-disc ms-5">
+                      {created.refused.map((r, i) => (
+                        <li key={i}>{r.reason}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            ) : result.errorCount > 0 ? (
               <p className="text-[13px] text-danger">
                 Fix the {result.errorCount} flagged row
                 {result.errorCount === 1 ? "" : "s"} in your file, then upload
                 again. All rows must be valid before sending.
               </p>
-            ) : confirmed ? (
-              <p className="text-[13px] text-accent-700 max-w-prose">
-                ✓ Confirmed {result.validCount} invitation
-                {result.validCount === 1 ? "" : "s"}. Creating &amp; sending is
-                added in D98 — this is the D97→D98 handoff, so{" "}
-                <strong>nothing has been created or sent yet</strong>.
-              </p>
             ) : (
-              <button
-                type="button"
-                onClick={onConfirm}
-                disabled={!allValid}
-                className="btn-primary text-[13px] disabled:opacity-40"
-              >
-                Send all ({result.validCount} invitation
-                {result.validCount === 1 ? "" : "s"})
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={onConfirm}
+                  disabled={!allValid || creating}
+                  className="btn-primary text-[13px] disabled:opacity-40"
+                >
+                  {creating
+                    ? "Creating…"
+                    : `Send all (${result.validCount} invitation${
+                        result.validCount === 1 ? "" : "s"
+                      })`}
+                </button>
+                {createError && (
+                  <p className="text-[13px] text-danger mt-2 max-w-prose">
+                    {createError}
+                  </p>
+                )}
+              </>
             )}
           </div>
         </section>
@@ -246,5 +298,22 @@ function messageFor(res: Extract<BulkUploadResult, { ok: false }>): string {
       return `Too many rows: ${res.rowCount ?? "the file"} exceeds the limit of ${res.rowCap ?? 100} per upload. Split it into smaller files.`;
     default:
       return "Something went wrong. Try again.";
+  }
+}
+
+function createMessageFor(
+  res: Extract<BulkCreateResult, { ok: false }>
+): string {
+  switch (res.error) {
+    case "forbidden":
+      return "Owner-only action.";
+    case "empty":
+      return "No rows to create. Upload a filled template first.";
+    case "too_many_rows":
+      return `Too many rows for one batch (limit ${res.rowCap ?? 100}). Split the file.`;
+    case "invalid_rows":
+      return "Some rows failed re-validation on the server. Re-download the template, re-fill, and upload again.";
+    default:
+      return "Something went wrong creating the invitations. Try again.";
   }
 }

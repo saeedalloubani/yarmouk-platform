@@ -306,6 +306,7 @@ export type Database = {
         Row: {
           access_code_encrypted: string | null
           access_code_used_at: string | null
+          batch_id: string | null
           category: Database["public"]["Enums"]["category_type"]
           collection_mode: Database["public"]["Enums"]["collection_mode"]
           created_at: string
@@ -334,6 +335,7 @@ export type Database = {
         Insert: {
           access_code_encrypted?: string | null
           access_code_used_at?: string | null
+          batch_id?: string | null
           category: Database["public"]["Enums"]["category_type"]
           collection_mode?: Database["public"]["Enums"]["collection_mode"]
           created_at?: string
@@ -362,6 +364,7 @@ export type Database = {
         Update: {
           access_code_encrypted?: string | null
           access_code_used_at?: string | null
+          batch_id?: string | null
           category?: Database["public"]["Enums"]["category_type"]
           collection_mode?: Database["public"]["Enums"]["collection_mode"]
           created_at?: string
@@ -1115,6 +1118,7 @@ export type Database = {
         | "submitted"
         | "expired"
         | "revoked"
+        | "pending"
       nationality_type: "jordanian" | "syrian" | "not_applicable"
       notification_type: "submission" | "invitation" | "system"
       questionnaire_type: "pilot" | "main"
@@ -1277,6 +1281,7 @@ export const Constants = {
         "submitted",
         "expired",
         "revoked",
+        "pending",
       ],
       nationality_type: ["jordanian", "syrian", "not_applicable"],
       notification_type: ["submission", "invitation", "system"],

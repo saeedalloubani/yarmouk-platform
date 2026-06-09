@@ -112,15 +112,21 @@ export async function getDashboardData(
   if (invErr) throw invErr;
   const invitations = invRows ?? [];
 
-  const invited = invitations.length;
-  const submitted = invitations.filter((i) => i.status === "submitted").length;
-  const inProgress = invitations.filter(
+  // D98 — exclude 'pending' (bulk-created, not yet emailed) from the
+  // "invited" cohort: a never-contacted row isn't invited. submitted /
+  // inProgress already match only post-send statuses, so pending is
+  // excluded there implicitly; this filter aligns the headline + the
+  // completion denominator (and byCategory below).
+  const contacted = invitations.filter((i) => i.status !== "pending");
+  const invited = contacted.length;
+  const submitted = contacted.filter((i) => i.status === "submitted").length;
+  const inProgress = contacted.filter(
     (i) => i.status === "opened" || i.status === "started"
   ).length;
   const completionPct = invited > 0 ? Math.round((submitted / invited) * 100) : 0;
 
   const byCategory: CategoryStat[] = CATEGORIES.map((category) => {
-    const inCat = invitations.filter((i) => i.category === category);
+    const inCat = contacted.filter((i) => i.category === category);
     return {
       category,
       invited: inCat.length,
