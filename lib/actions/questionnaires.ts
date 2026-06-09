@@ -30,6 +30,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentAdmin } from "@/lib/auth";
 import {
   getVersion,
+  countQuestionsForVersion,
   updateVersionStatus,
   variantLabel,
 } from "@/lib/repos/questionnaires";
@@ -43,6 +44,7 @@ export type ActivateResult =
         | "forbidden"
         | "not_found"
         | "not_draft"
+        | "no_questions"
         | "variant_already_active"
         | "server";
     };
@@ -79,6 +81,16 @@ export async function activateVersionAction(
   const version = await getVersion(supabase, versionId);
   if (!version) return { ok: false, error: "not_found" };
   if (version.status !== "draft") return { ok: false, error: "not_draft" };
+
+  // 2b. D96 — refuse to activate an empty questionnaire. A 0-question draft
+  //     sits one click from going live in front of a real respondent. This
+  //     is a UX safety rail, not a data-integrity invariant, so there's no
+  //     DB guard — the check lives here (the only activation path). No
+  //     legitimate caller activates empty: every pilot was activated WITH
+  //     seeded questions; the only zero-question drafts are the unactivated
+  //     main_* drafts.
+  const questionCount = await countQuestionsForVersion(supabase, versionId);
+  if (questionCount === 0) return { ok: false, error: "no_questions" };
 
   // 3. Flip. The one_active_version_per_variant partial unique index
   //    rejects a second active per variant — surface as a typed error.
