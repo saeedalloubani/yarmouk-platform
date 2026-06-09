@@ -42,6 +42,15 @@
 
 export type Lang = "en" | "ar";
 
+// D97 — canonical runtime list of the supported languages. `preferred_language`
+// is a plain TEXT column (no DB enum), so unlike nationality/collection_mode/
+// variant — which derive from the generated `Constants` — language has no
+// generated runtime array. This is its single source: `satisfies readonly
+// Lang[]` ties it to the `Lang` union above so the two cannot drift. Consumers
+// that need to iterate the languages at runtime (e.g. the bulk-invite template
+// dropdown, D97) import THIS rather than re-listing ["en","ar"].
+export const LANGUAGES = ["en", "ar"] as const satisfies readonly Lang[];
+
 export const translations = {
   // ---- common chrome ----
   studyLabel: { en: "Yarmouk Study", ar: "دراسة اليرموك" },
