@@ -265,6 +265,21 @@ export async function updateVersionStatus(
   if (error) throw error;
 }
 
+/** Cheap count of questions on ONE version. Uses a head/exact count so no
+ *  rows are transferred — just the count. Used by the D96 empty-activation
+ *  guard (activateVersionAction), which only has a versionId in hand. */
+export async function countQuestionsForVersion(
+  supabase: SupabaseClient<Database>,
+  versionId: string
+): Promise<number> {
+  const { count, error } = await supabase
+    .from("questions")
+    .select("id", { count: "exact", head: true })
+    .eq("version_id", versionId);
+  if (error) throw error;
+  return count ?? 0;
+}
+
 /** Per-version question counts (for the drafts list). Map keyed by version id. */
 export async function getQuestionCounts(
   supabase: SupabaseClient<Database>

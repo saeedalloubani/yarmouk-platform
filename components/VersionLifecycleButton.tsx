@@ -111,6 +111,8 @@ function messageFor(mode: Mode, err: string): string {
     return "Version not found. Refresh and try again.";
   if (mode === "activate" && err === "not_draft")
     return "This version is no longer a draft. Refresh.";
+  if (mode === "activate" && err === "no_questions")
+    return "Cannot activate an empty questionnaire — add at least one question first.";
   if (mode === "activate" && err === "variant_already_active")
     return "This variant already has an active version. Close it first.";
   if (mode === "close" && err === "not_active")
