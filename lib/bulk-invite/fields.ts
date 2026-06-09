@@ -45,6 +45,7 @@ export const BULK_ROW_CAP = 100;
 export const BULK_EXAMPLE_EMAIL = "example.delete-this-row@example.org";
 
 export type BulkColumnKey =
+  | "ref_code"
   | "recipient_name"
   | "recipient_email"
   | "variant"
@@ -67,9 +68,21 @@ export type BulkColumn = {
 };
 
 // Column order is fixed and positional — template writes in this order, the
-// parser reads by this order. (name=0, email=1, variant=2, nationality=3,
-// language=4, collection_mode=5.)
+// parser reads by this order. (D100 — ref_code=0 (the identifier, first),
+// name=1, email=2, variant=3, nationality=4, language=5, collection_mode=6.)
 export const BULK_COLUMNS: readonly BulkColumn[] = [
+  {
+    // D100 — Sura's own tracking code per row (e.g. NGO-JOR-01). Free-text,
+    // REQUIRED, must be unique (in-file + vs the DB). Replaces D98's
+    // auto-generated BLK-XXXXXXXX for the bulk path.
+    key: "ref_code",
+    header: "ref_code",
+    required: true,
+    width: 16,
+    options: null,
+    example: "NGO-JOR-01",
+    note: "Required & unique. Your tracking code — letters, digits, hyphens only (e.g. NGO-JOR-01).",
+  },
   {
     key: "recipient_name",
     header: "recipient_name",
@@ -133,11 +146,22 @@ export const BULK_COLUMNS: readonly BulkColumn[] = [
 // (Known to be permissive — see backlog task_76dd2a4f to tighten platform-wide.)
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
-/** Validate one row's six field values against the canonical sets + email +
- *  non-empty name. Returns the list of error messages ([] = valid). Used by
- *  the upload parser (parse.ts) AND the bulk-create action's no-trust
- *  re-validation (lib/actions/bulk-invite.ts), so the two cannot diverge. */
+// D100 — ref_code format. EXACTLY matches the single-invite Zod rule
+// (lib/actions/invitations.ts: /^[A-Za-z0-9-]+$/, "letters, digits, and
+// dashes only") so bulk + single agree, plus a sane length cap (the DB column
+// is unbounded TEXT). Pilot codes like RES-JOR-01 / Sura's NGO-JOR-01 pass.
+const REF_CODE_RE = /^[A-Za-z0-9-]+$/;
+const REF_CODE_MAX = 64;
+
+/** Validate one row's field values against the canonical sets + email +
+ *  non-empty name + ref_code present/format (D100). Returns the list of error
+ *  messages ([] = valid). Used by the upload parser (parse.ts) AND the
+ *  bulk-create action's no-trust re-validation (lib/actions/bulk-invite.ts),
+ *  so the two cannot diverge. PER-ROW only — the cross-row (unique-in-file)
+ *  and external (unique-vs-DB) ref_code checks live in parse.ts / the action
+ *  respectively, since they need all rows / a DB read. */
 export function validateBulkRowValues(values: {
+  refCode: string;
   recipientName: string;
   recipientEmail: string;
   variant: string;
@@ -146,6 +170,13 @@ export function validateBulkRowValues(values: {
   collectionMode: string;
 }): string[] {
   const errors: string[] = [];
+  if (!values.refCode) {
+    errors.push("ref_code is required");
+  } else if (!REF_CODE_RE.test(values.refCode) || values.refCode.length > REF_CODE_MAX) {
+    errors.push(
+      `ref_code "${values.refCode}" is invalid (letters, digits, hyphens only; max ${REF_CODE_MAX})`
+    );
+  }
   if (!values.recipientName) errors.push("recipient_name is required");
   if (!EMAIL_RE.test(values.recipientEmail)) {
     errors.push(`recipient_email "${values.recipientEmail}" is not a valid email`);
@@ -183,6 +214,7 @@ export function deriveCategoryFromVariant(variant: string): string | null {
 export type ParsedBulkRow = {
   /** 1-based row number in the uploaded sheet (header is row 1; data ≥ 2). */
   rowNumber: number;
+  refCode: string;
   recipientName: string;
   recipientEmail: string;
   variant: string;

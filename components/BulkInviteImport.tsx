@@ -90,6 +90,7 @@ export default function BulkInviteImport() {
     const rows = result.rows
       .filter((r) => r.errors.length === 0)
       .map((r) => ({
+        refCode: r.refCode,
         recipientName: r.recipientName,
         recipientEmail: r.recipientEmail,
         variant: r.variant,
@@ -115,9 +116,11 @@ export default function BulkInviteImport() {
           1. Download the template
         </h2>
         <p className="text-[13px] text-muted mb-3">
-          The variant, nationality, language, and collection-mode columns are
-          locked to dropdowns — Excel won&apos;t accept an invalid value. Delete
-          the grey example row before filling it in.
+          Give each row your own <strong>ref_code</strong> (e.g. NGO-JOR-01) —
+          required and unique. The variant, nationality, language, and
+          collection-mode columns are locked to dropdowns — Excel won&apos;t
+          accept an invalid value. Delete the grey example row before filling it
+          in.
         </p>
         <a
           href="/admin/invitations/import/template"
@@ -188,6 +191,7 @@ export default function BulkInviteImport() {
               <thead>
                 <tr className="text-start text-muted border-b border-line">
                   <th className="py-1.5 pe-3 text-start font-medium">Row</th>
+                  <th className="py-1.5 pe-3 text-start font-medium">Ref</th>
                   <th className="py-1.5 pe-3 text-start font-medium">Name</th>
                   <th className="py-1.5 pe-3 text-start font-medium">Email</th>
                   <th className="py-1.5 pe-3 text-start font-medium">Variant</th>
@@ -213,6 +217,7 @@ export default function BulkInviteImport() {
                       <td className="py-1.5 pe-3 mono text-muted">
                         {r.rowNumber}
                       </td>
+                      <td className="py-1.5 pe-3 mono text-ink">{r.refCode}</td>
                       <td className="py-1.5 pe-3 text-ink">{r.recipientName}</td>
                       <td className="py-1.5 pe-3 text-ink">
                         {r.recipientEmail}
