@@ -126,6 +126,58 @@ export const BULK_COLUMNS: readonly BulkColumn[] = [
   },
 ];
 
+// ---- Shared validation (one source of truth for parse.ts + the D98
+//      bulk-create action's server-side re-validation) ----
+
+// Mirrors the invitation-create email check (lib/actions/invitations.ts).
+// (Known to be permissive — see backlog task_76dd2a4f to tighten platform-wide.)
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+/** Validate one row's six field values against the canonical sets + email +
+ *  non-empty name. Returns the list of error messages ([] = valid). Used by
+ *  the upload parser (parse.ts) AND the bulk-create action's no-trust
+ *  re-validation (lib/actions/bulk-invite.ts), so the two cannot diverge. */
+export function validateBulkRowValues(values: {
+  recipientName: string;
+  recipientEmail: string;
+  variant: string;
+  nationality: string;
+  language: string;
+  collectionMode: string;
+}): string[] {
+  const errors: string[] = [];
+  if (!values.recipientName) errors.push("recipient_name is required");
+  if (!EMAIL_RE.test(values.recipientEmail)) {
+    errors.push(`recipient_email "${values.recipientEmail}" is not a valid email`);
+  }
+  if (!BULK_VARIANTS.includes(values.variant)) {
+    errors.push(`invalid variant "${values.variant}"`);
+  }
+  if (!BULK_NATIONALITIES.includes(values.nationality)) {
+    errors.push(`invalid nationality "${values.nationality}"`);
+  }
+  if (!BULK_LANGUAGES.includes(values.language)) {
+    errors.push(`invalid language "${values.language}"`);
+  }
+  if (!BULK_COLLECTION_MODES.includes(values.collectionMode)) {
+    errors.push(`invalid collection_mode "${values.collectionMode}"`);
+  }
+  return errors;
+}
+
+// Category enum (category_type) — used to validate the variant→category
+// derivation defensively.
+const CATEGORIES: readonly string[] = ["officials", "researchers", "donors", "ngos"];
+
+/** Derive the invitation category from a main variant slug. The slug shape is
+ *  `main_<category>[_<nationality>]` (e.g. main_officials_jordanian → officials,
+ *  main_researchers → researchers). Returns null if the derived segment isn't a
+ *  known category (defensive — should never happen for a BULK_VARIANTS value). */
+export function deriveCategoryFromVariant(variant: string): string | null {
+  const seg = variant.replace(/^main_/, "").split("_")[0];
+  return CATEGORIES.includes(seg) ? seg : null;
+}
+
 // ---- Shared parse / preview types (no exceljs import — client-safe) ----
 
 export type ParsedBulkRow = {

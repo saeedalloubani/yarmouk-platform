@@ -50,6 +50,12 @@ export type InvitationNationality =
   | "syrian"
   | "not_applicable";
 export type InvitationStatusValue =
+  // D98 — bulk-created, token minted, email NOT yet dispatched. Off-funnel /
+  // PRE-send: never counted as sent, never reminded, never reaches the
+  // validate RPCs as a live row (D99's drain flips pending→sent when it
+  // emails). See migration 20260609120000_invitations_pending_status_and_
+  // batch_id.sql and lib/actions/bulk-invite.ts bulkCreateInvitationsAction.
+  | "pending"
   | "sent"
   | "opened"
   | "started"
@@ -282,6 +288,17 @@ export type CreateInvitationInput = {
   expiresAt: string;
   maxUses?: number;
   createdBy?: string | null;
+  /**
+   * D98 — initial lifecycle status. OMITTED by the single-create path (the DB
+   * default 'sent' applies, preserving prior behavior). Bulk-create passes
+   * 'pending' so rows land pre-send until D99's drain emails + flips them.
+   */
+  status?: InvitationStatusValue;
+  /**
+   * D98 — bulk-upload batch grouping (one shared UUID per upload). NULL/omitted
+   * for single-form + legacy rows. Lets D99's progress view report per-batch.
+   */
+  batchId?: string | null;
 };
 
 /** Create an invitation. Writes always target the base table. */
@@ -304,7 +321,12 @@ export async function createInvitation(
     expires_at: input.expiresAt,
     max_uses: input.maxUses ?? 1,
     created_by: input.createdBy ?? null,
+    // D98 — batch grouping (NULL for single-form/legacy rows).
+    batch_id: input.batchId ?? null,
   };
+  // D98 — only set status when the caller provides one; omitting it lets the
+  // column DEFAULT 'sent' apply (single-create path is unchanged).
+  if (input.status) insert.status = input.status;
   const { data, error } = await supabase
     .from("invitations")
     .insert(insert)

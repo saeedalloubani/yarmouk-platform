@@ -152,7 +152,10 @@ export default async function InvitationsPage({
       (inv) =>
         inv.status !== "submitted" &&
         inv.status !== "revoked" &&
-        inv.status !== "expired"
+        inv.status !== "expired" &&
+        // D98 — a 'pending' row has no live link to preview (not yet sent;
+        // D99's drain mints/sends). Exclude it from the email-preview batch.
+        inv.status !== "pending"
     );
     const previewableIds = previewable.map((i) => i.id);
     if (previewableIds.length > 0) {

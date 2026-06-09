@@ -422,7 +422,14 @@ export async function getPilotFunnel(
   // the in-flight avg-progress denominator.
   const submittedIds = new Set<string>();
   for (const r of rows) {
-    if (r.status === "revoked" || r.status === "expired") continue;
+    // D98 — 'pending' (bulk-created, not yet emailed) is pre-send: exclude it
+    // from every funnel count, alongside the revoked/expired terminals.
+    if (
+      r.status === "revoked" ||
+      r.status === "expired" ||
+      r.status === "pending"
+    )
+      continue;
     if (r.sent_at) sent += 1;
     if (r.opened_at) opened += 1;
     if (r.submitted_at) {
@@ -447,7 +454,10 @@ export async function getPilotFunnel(
   // that may not yet be "started" (e.g. consent granted but no answers
   // yet). We classify started in-memory below.
   const candidates = rows.filter(
-    (r) => r.status !== "revoked" && r.status !== "expired"
+    (r) =>
+      r.status !== "revoked" &&
+      r.status !== "expired" &&
+      r.status !== "pending" // D98 — pre-send, not part of the funnel
   );
   const candidateIds = candidates
     .map((r) => r.id)

@@ -44,11 +44,16 @@ export type FunnelStage =
   | "started"
   | "submitted";
 
-/** Off-funnel terminal states. Show up on the invitations list status chip
- *  but never count toward funnel numerators (the repo excludes revoked +
- *  expired before counting). Kept separate so importers can't accidentally
- *  feed them into stage math. */
-export type OffFunnelStatus = "revoked" | "expired";
+/** Off-funnel statuses. Show up on the invitations list status chip but
+ *  never count toward funnel numerators (the repo excludes them before
+ *  counting). Kept separate so importers can't accidentally feed them into
+ *  stage math.
+ *
+ *  D98 — 'pending' (bulk-created, not yet emailed) is off-funnel and PRE-send:
+ *  it sits BEFORE 'sent', so it must never count as sent/opened/etc. (revoked
+ *  + expired are POST/terminal off-funnel; pending is pre-funnel — all three
+ *  share the "excluded from stage math" treatment). */
+export type OffFunnelStatus = "pending" | "revoked" | "expired";
 
 /** Display label per funnel stage. Title-cased for chip rendering. */
 export const STAGE_LABEL: Record<FunnelStage, string> = {
@@ -73,6 +78,9 @@ export const STAGE_PALETTE: Record<FunnelStage, string> = {
 /** Off-funnel chip styling. Revoked = destructive (red); expired = neutral
  *  (gray). Both are terminal labels, not progression signals. */
 export const OFF_FUNNEL_PALETTE: Record<OffFunnelStatus, string> = {
+  // D98 — pending = queued for sending (amber: waiting, distinct from
+  // revoked-danger and the muted sent/expired greys, and not brand-blue).
+  pending: "bg-amber-50 text-amber-700",
   revoked: "bg-dangerLight text-danger",
   expired: "bg-bgAlt text-muted",
 };
@@ -99,6 +107,8 @@ export function stageFor(
       return { kind: "stage", stage: "started" };
     case "submitted":
       return { kind: "stage", stage: "submitted" };
+    case "pending":
+      return { kind: "off", status: "pending" };
     case "revoked":
       return { kind: "off", status: "revoked" };
     case "expired":

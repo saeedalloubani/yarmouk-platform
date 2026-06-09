@@ -272,7 +272,10 @@ export async function getDemographicsForVersion(
     .from("invitations_redacted")
     .select("id, category, nationality, started_at")
     .eq("questionnaire_version_id", versionId)
-    .neq("status", "revoked");
+    .neq("status", "revoked")
+    // D98 — a 'pending' (bulk-created, never-emailed) invitee isn't part of
+    // sample composition: exclude it from the demographics cohort too.
+    .neq("status", "pending");
   if (iErr) throw iErr;
   const invitations = (iRows ?? []).filter(
     (i): i is typeof i & { id: string } => i.id !== null
