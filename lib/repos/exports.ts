@@ -36,9 +36,20 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../supabase/database.types";
+// D95 — canonical variant→label for the long-format `variant` column.
+// Pure function; one source of truth with the D94 chips + analytics.
+import { variantLabel } from "./questionnaires";
 
 export type ExportRow = {
   refCode: string;
+  // D95 — study/variant provenance so a bulk export can never silently
+  // blend variants without a trace. `variant` is the canonical
+  // variantLabel() form (e.g. "Pilot · Officials", "Main · Officials
+  // (Jordanian)") — one source of truth with the D94 chips + analytics.
+  // `questionnaireVersion` is the version_number. Both are NON-PII
+  // operational metadata (no PII column added — see file header).
+  variant: string;
+  questionnaireVersion: number;
   recipientName: string;
   recipientEmail: string;
   category: string;
@@ -72,6 +83,17 @@ export type ExportFilters = {
   category?: string[];
   nationality?: string[];
   language?: string[];
+  /**
+   * D95 — pilot/main SCOPE filter: a SET of questionnaire_version_ids
+   * (resolved by the caller from questionnaire_versions.type via
+   * lib/repos/scope.ts, same mechanism as D93/D94). Applied in the
+   * in-memory bulk filter pass alongside category/nationality/language
+   * (AND-composition). Undefined → no version filter (the "All studies"
+   * scope). An empty array matches zero rows — honest empty for a scope
+   * with no versions yet. Single-scope ignores this (responseId is
+   * authoritative).
+   */
+  versionIds?: string[];
 };
 
 export type ExportScope =
@@ -463,10 +485,14 @@ export async function getResponsesForExport(
   //    PII ciphertexts plus the operational columns we need for the
   //    export grid + the filter axes (category, nationality,
   //    preferred_language).
+  // D95 — `questionnaire_version_id` added: it's both the scope-filter
+  // axis (versionIds) AND the join key for the variant/version columns
+  // resolved below. Non-PII operational column; the decrypt fan-out is
+  // unchanged (still name + email only).
   const { data: invRows, error: iErr } = await supabase
     .from("invitations")
     .select(
-      "id, ref_code, recipient_name_encrypted, recipient_email_encrypted, category, nationality, preferred_language, collection_mode, sent_at, opened_at"
+      "id, ref_code, recipient_name_encrypted, recipient_email_encrypted, category, nationality, preferred_language, collection_mode, sent_at, opened_at, questionnaire_version_id"
     )
     .in("id", invitationIds);
   if (iErr) throw iErr;
@@ -485,7 +511,11 @@ export async function getResponsesForExport(
     const catSet = f?.category?.length ? new Set(f.category) : null;
     const natSet = f?.nationality?.length ? new Set(f.nationality) : null;
     const langSet = f?.language?.length ? new Set(f.language) : null;
-    if (catSet || natSet || langSet) {
+    // D95 — pilot/main scope set. `undefined` (All) → no filter; an array
+    // (incl. empty) restricts. Empty array → empty Set → predicate always
+    // false → zero rows (honest empty for a scope with no versions).
+    const versionSet = f?.versionIds !== undefined ? new Set(f.versionIds) : null;
+    if (catSet || natSet || langSet || versionSet) {
       const survivingInvIds = new Set(
         invitations
           .filter((i) => (catSet ? catSet.has(i.category) : true))
@@ -494,6 +524,10 @@ export async function getResponsesForExport(
           )
           .filter((i) =>
             langSet ? langSet.has(i.preferred_language) : true
+          )
+          // D95 — version-scope predicate.
+          .filter((i) =>
+            versionSet ? versionSet.has(i.questionnaire_version_id) : true
           )
           .map((i) => i.id)
       );
@@ -507,6 +541,37 @@ export async function getResponsesForExport(
 
   const responseIds = responses.map((r) => r.id);
 
+  // D95 — resolve the variant + version_number for the surviving
+  // invitations' versions, for the new provenance columns. One read of
+  // questionnaire_versions (NON-PII: id / variant / version_number) over
+  // the distinct version ids in the result. Decrypts nothing — the PII
+  // posture (name + email only, below) is untouched. variantLabel()
+  // formats the slug at emit time for one-source-of-truth labels.
+  const versionIdSet = Array.from(
+    new Set(
+      invitations
+        .map((i) => i.questionnaire_version_id)
+        .filter((v): v is string => v != null)
+    )
+  );
+  const versionMetaById = new Map<
+    string,
+    { variant: string; versionNumber: number }
+  >();
+  if (versionIdSet.length > 0) {
+    const { data: verRows, error: verErr } = await supabase
+      .from("questionnaire_versions")
+      .select("id, variant, version_number")
+      .in("id", versionIdSet);
+    if (verErr) throw verErr;
+    for (const v of verRows ?? []) {
+      versionMetaById.set(v.id, {
+        variant: v.variant,
+        versionNumber: v.version_number,
+      });
+    }
+  }
+
   // 3. Decrypt PII per invitation — ALL OR NOTHING. The first failure
   //    aborts the entire export. We log only the ref_code + errorClass
   //    bucket; the underlying RPC error.message is never persisted or
@@ -519,6 +584,9 @@ export async function getResponsesForExport(
   // unchanged: first observed rejection aborts the whole export.
   type InvDecrypted = {
     refCode: string;
+    // D95 — non-PII provenance, resolved from versionMetaById above.
+    variant: string; // variantLabel() form
+    questionnaireVersion: number; // version_number
     name: string;
     email: string;
     category: string;
@@ -555,10 +623,17 @@ export async function getResponsesForExport(
         );
         throw new ExportDecryptFailedError(inv.ref_code);
       }
+      // D95 — variant/version provenance (non-PII). variantLabel() maps
+      // the slug to the canonical label; a version row that's somehow
+      // missing degrades to a raw/empty label rather than throwing (the
+      // FK guarantees it exists, but we stay defensive).
+      const vm = versionMetaById.get(inv.questionnaire_version_id);
       return {
         id: inv.id,
         decrypted: {
           refCode: inv.ref_code,
+          variant: vm ? variantLabel(vm.variant) : "",
+          questionnaireVersion: vm ? vm.versionNumber : 0,
           name,
           email,
           category: inv.category,
@@ -625,6 +700,8 @@ export async function getResponsesForExport(
     for (const { a, q } of respAnswers) {
       out.push({
         refCode: inv.refCode,
+        variant: inv.variant, // D95
+        questionnaireVersion: inv.questionnaireVersion, // D95
         recipientName: inv.name,
         recipientEmail: inv.email,
         category: inv.category,

@@ -15,6 +15,11 @@ import type { ExportRow } from "../repos/exports";
 
 const HEADERS = [
   "ref_code",
+  // D95 — study/variant provenance, placed right after ref_code (the
+  // row-identity block) so "which study" reads first. variant is the
+  // canonical variantLabel form; questionnaire_version is the version_number.
+  "variant",
+  "questionnaire_version",
   "recipient_name",
   "recipient_email",
   "category",
@@ -46,6 +51,8 @@ function quote(v: string | number | boolean | null): string {
 function rowFields(r: ExportRow): string[] {
   return [
     r.refCode,
+    r.variant, // D95
+    String(r.questionnaireVersion), // D95
     r.recipientName,
     r.recipientEmail,
     r.category,

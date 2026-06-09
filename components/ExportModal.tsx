@@ -34,6 +34,10 @@ import { useEffect, useMemo, useState } from "react";
 type Shape = "wide" | "long" | "desktop";
 type Format = "xlsx" | "csv";
 type Scope = "single" | "bulk";
+// D95 — pilot/main study scope for LONG bulk export (the route's `study`
+// param; distinct from Scope=single|bulk). Default All (an export is a
+// data-extraction tool — All is the sensible default, like the lists).
+type Study = "all" | "pilot" | "main";
 
 type ResponseOption = {
   responseId: string;
@@ -73,6 +77,7 @@ export default function ExportModal({ options }: Props) {
   const [category, setCategory] = useState<string[]>([]);
   const [nationality, setNationality] = useState<string[]>([]);
   const [language, setLanguage] = useState<string[]>([]);
+  const [study, setStudy] = useState<Study>("all"); // D95 — long bulk only
 
   // ── Body scroll lock + Escape-to-close while modal is open ─────────
   useEffect(() => {
@@ -119,6 +124,10 @@ export default function ExportModal({ options }: Props) {
       if (nationality.length > 0)
         params.set("nationality", nationality.join(","));
       if (language.length > 0) params.set("language", language.join(","));
+      // D95 — study scope is a LONG-shape concern only (wide/desktop are
+      // single-variant via category). Set it for long bulk; the route
+      // defaults absent → "all".
+      if (shape === "long" && study !== "all") params.set("study", study);
     }
     return `/admin/exports/download?${params.toString()}`;
   }
@@ -309,6 +318,46 @@ export default function ExportModal({ options }: Props) {
             {/* Bulk-scope filters */}
             {scope === "bulk" && (
               <div className="space-y-4 mb-5">
+                {/* D95 — Study scope (pilot/main/all). LONG shape only:
+                    wide/desktop are already single-variant via the single-
+                    category pick. Default All; narrowing to one study
+                    produces a clean single-study file, and the variant
+                    column labels every row either way (no silent blend). */}
+                {shape === "long" && (
+                  <fieldset>
+                    <legend className="block text-[12px] font-semibold text-ink mb-1">
+                      Study
+                      <span className="ms-2 text-[11px] font-normal text-muted">
+                        — pilot vs main; All includes both (every row is
+                        labeled with its variant)
+                      </span>
+                    </legend>
+                    <div className="flex flex-wrap gap-3">
+                      {(
+                        [
+                          { value: "all", label: "All studies" },
+                          { value: "pilot", label: "Pilot" },
+                          { value: "main", label: "Main" },
+                        ] as const
+                      ).map((s) => (
+                        <label
+                          key={s.value}
+                          className="inline-flex items-center gap-1.5 text-[13px] cursor-pointer"
+                        >
+                          <input
+                            type="radio"
+                            name="study"
+                            value={s.value}
+                            checked={study === s.value}
+                            onChange={() => setStudy(s.value)}
+                          />
+                          {s.label}
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                )}
+
                 <fieldset>
                   <legend className="block text-[12px] font-semibold text-ink mb-1">
                     Category

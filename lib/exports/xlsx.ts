@@ -20,6 +20,9 @@ type ColumnSpec = {
 
 const COLUMNS: ColumnSpec[] = [
   { header: "ref_code",             width: 14 },
+  // D95 — variant/version provenance after ref_code (row-identity block).
+  { header: "variant",              width: 26 },
+  { header: "questionnaire_version", width: 8 },
   { header: "recipient_name",       width: 22 },
   { header: "recipient_email",      width: 28 },
   { header: "category",             width: 12 },
@@ -48,6 +51,8 @@ const WRAP_TEXT_COLUMNS = [
 function rowValues(r: ExportRow): Record<string, string | number | boolean> {
   return {
     ref_code:             r.refCode,
+    variant:              r.variant, // D95
+    questionnaire_version: r.questionnaireVersion, // D95
     recipient_name:       r.recipientName,
     recipient_email:      r.recipientEmail,
     category:             r.category,
