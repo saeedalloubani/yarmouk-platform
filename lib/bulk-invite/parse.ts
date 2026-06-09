@@ -83,9 +83,11 @@ export async function parseBulkInviteWorkbook(
     return { kind: "too_many_rows", count: raws.length, cap: BULK_ROW_CAP };
   }
 
-  // 3. Validate each row against the canonical sets.
+  // 3. Validate each row against the canonical sets (incl. D100 ref_code
+  //    present/format — per-row).
   const rows: ParsedBulkRow[] = raws.map(({ rowNumber, values }) => {
     const [
+      refCode,
       recipientName,
       recipientEmail,
       variant,
@@ -94,6 +96,7 @@ export async function parseBulkInviteWorkbook(
       collectionMode,
     ] = values;
     const row = {
+      refCode,
       recipientName,
       recipientEmail,
       variant,
@@ -103,6 +106,20 @@ export async function parseBulkInviteWorkbook(
     };
     return { rowNumber, ...row, errors: validateBulkRowValues(row) };
   });
+
+  // 3b. D100 — unique-within-file ref_code check (cross-row; can't live in the
+  //     per-row validator). Flag EVERY row that shares a ref_code with another.
+  //     Case-sensitive to match the DB's UNIQUE constraint. (unique-vs-DB is
+  //     checked in parseBulkUploadAction, which has a DB client.)
+  const refCodeCounts = new Map<string, number>();
+  for (const r of rows) {
+    if (r.refCode) refCodeCounts.set(r.refCode, (refCodeCounts.get(r.refCode) ?? 0) + 1);
+  }
+  for (const r of rows) {
+    if (r.refCode && (refCodeCounts.get(r.refCode) ?? 0) > 1) {
+      r.errors.push(`duplicate ref_code "${r.refCode}" in file`);
+    }
+  }
 
   const validCount = rows.filter((r) => r.errors.length === 0).length;
   return {

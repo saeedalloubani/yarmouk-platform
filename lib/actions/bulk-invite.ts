@@ -133,19 +133,51 @@ export async function parseBulkUploadAction(
     return { ok: false, error: "empty" };
   }
 
-  // 4. Success. Audit NON-PII counts only — never filename or cell contents.
+  const result = outcome.result;
+
+  // 4. D100 — unique-vs-DB ref_code check AT PREVIEW, so Sura fixes the sheet
+  //    before confirming (not just a create-time surprise). Non-PII read:
+  //    ref_codes only, via the existing UNIQUE btree index on ref_code. A row
+  //    whose code already exists on ANY invitation (pilot or main) is flagged.
+  //    If the read itself errors, we proceed WITHOUT this layer — the
+  //    create-time UNIQUE-constraint refusal (bulkCreateInvitationsAction) is
+  //    the final guard, so a missed preview check can't create a duplicate.
+  const refCodes = [
+    ...new Set(result.rows.map((r) => r.refCode).filter(Boolean)),
+  ];
+  if (refCodes.length > 0) {
+    const { data: existing, error: refErr } = await supabase
+      .from("invitations")
+      .select("ref_code")
+      .in("ref_code", refCodes);
+    if (refErr) {
+      console.error("[bulk-invite] ref_code uniqueness read failed", refErr);
+    } else {
+      const taken = new Set((existing ?? []).map((e) => e.ref_code));
+      for (const r of result.rows) {
+        if (r.refCode && taken.has(r.refCode)) {
+          r.errors.push(`ref_code "${r.refCode}" is already in use`);
+        }
+      }
+      // Recompute counts after appending the unique-vs-DB errors.
+      result.validCount = result.rows.filter((r) => r.errors.length === 0).length;
+      result.errorCount = result.rows.length - result.validCount;
+    }
+  }
+
+  // 5. Audit NON-PII counts only — never filename or cell contents.
   await logAudit(supabase, {
     action: "bulk_invite.upload.parsed",
     resource: "bulk-invite",
     severity: "info",
     metadata: {
-      totalRows: outcome.result.totalDataRows,
-      validCount: outcome.result.validCount,
-      errorCount: outcome.result.errorCount,
+      totalRows: result.totalDataRows,
+      validCount: result.validCount,
+      errorCount: result.errorCount,
     },
   });
 
-  return { ok: true, result: outcome.result };
+  return { ok: true, result };
 }
 
 // ---------------------------------------------------------------------------
@@ -161,7 +193,10 @@ export async function parseBulkUploadAction(
 // DERIVATION (the 6 template columns -> a full invitation):
 //   category              <- derived from the variant slug (main_<cat>_…)
 //   questionnaireVersionId<- the ACTIVE main version for that variant
-//   refCode               <- auto-generated (BLK-XXXXXXXX, retried on collision)
+//   refCode               <- D100: the SHEET-SUPPLIED code (Sura's own
+//                            tracking scheme). On a UNIQUE-constraint collision
+//                            (23505) the row is REFUSED — never regenerated
+//                            (regenerating a user-chosen code would be wrong).
 //   expiresAt             <- now + 30 days
 //   maxUses               <- 1
 //
@@ -179,6 +214,7 @@ export async function parseBulkUploadAction(
 // NON-PII: batch_id + counts + variant breakdown only.
 
 export type BulkCreateRowInput = {
+  refCode: string;
   recipientName: string;
   recipientEmail: string;
   variant: string;
@@ -210,12 +246,6 @@ export type BulkCreateResult =
     };
 
 const EXPIRY_DAYS = 30;
-
-function genRefCode(): string {
-  // BLK- prefix marks bulk origin; 8 hex from a v4 UUID (~4.3B space). The
-  // ref_code UNIQUE constraint + the per-row retry below cover collisions.
-  return "BLK-" + crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase();
-}
 
 export async function bulkCreateInvitationsAction(
   rows: BulkCreateRowInput[]
@@ -350,34 +380,42 @@ export async function bulkCreateInvitationsAction(
       continue;
     }
 
-    // Insert with ref_code-collision retry (UNIQUE on ref_code → 23505).
+    // D100 — insert with the SHEET-SUPPLIED ref_code. The UNIQUE constraint
+    // on invitations.ref_code is the final guard: a collision (23505) — a code
+    // taken between preview's DB check and now (TOCTOU), or a within-file dup
+    // that slipped past — REFUSES this row (no retry; we must not invent a
+    // different code for a user-chosen value). Same create-the-creatable +
+    // report-refused pattern as the active-version refusal above.
     let inserted = false;
-    for (let attempt = 0; attempt < 3 && !inserted; attempt++) {
-      try {
-        await createInvitation(supabase, {
-          tokenHash: hash,
-          tokenPlaintextEncrypted: tokenEnc,
-          accessCodeEncrypted: accessCodeEnc,
-          refCode: genRefCode(),
-          recipientNameEncrypted: nameEnc,
-          recipientEmailEncrypted: emailEnc,
-          category: category as InvitationCategory,
-          nationality: row.nationality as InvitationNationality,
-          preferredLanguage: row.language as "en" | "ar",
-          collectionMode: row.collectionMode as "self_completed" | "interview",
-          questionnaireVersionId: versionId,
-          expiresAt,
-          maxUses: 1,
-          createdBy: admin.id,
-          status: "pending", // D98 — pre-send; D99's drain flips to 'sent'
-          batchId,
-        });
-        inserted = true;
-      } catch (err) {
-        const code = (err as { code?: string }).code;
-        if (code === "23505") continue; // ref_code collision — retry fresh code
+    let refusalReason = "could not be created (server error)";
+    try {
+      await createInvitation(supabase, {
+        tokenHash: hash,
+        tokenPlaintextEncrypted: tokenEnc,
+        accessCodeEncrypted: accessCodeEnc,
+        refCode: row.refCode,
+        recipientNameEncrypted: nameEnc,
+        recipientEmailEncrypted: emailEnc,
+        category: category as InvitationCategory,
+        nationality: row.nationality as InvitationNationality,
+        preferredLanguage: row.language as "en" | "ar",
+        collectionMode: row.collectionMode as "self_completed" | "interview",
+        questionnaireVersionId: versionId,
+        expiresAt,
+        maxUses: 1,
+        createdBy: admin.id,
+        status: "pending", // D98 — pre-send; D99's drain flips to 'sent'
+        batchId,
+      });
+      inserted = true;
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if (code === "23505") {
+        // ref_code already in use (the only UNIQUE on the insert path that a
+        // real input can hit; token_hash collision is cryptographically ~nil).
+        refusalReason = `ref code "${row.refCode}" is already in use`;
+      } else {
         console.error("[bulk-invite] createInvitation failed for a row", code);
-        break;
       }
     }
     if (inserted) {
@@ -388,7 +426,7 @@ export async function bulkCreateInvitationsAction(
         recipientEmail: row.recipientEmail,
         variant: row.variant,
         variantLabel: variantLabel(row.variant),
-        reason: "could not be created (server error)",
+        reason: refusalReason,
       });
     }
   }
