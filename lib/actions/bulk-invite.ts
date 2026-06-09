@@ -419,3 +419,80 @@ export async function bulkCreateInvitationsAction(
     variantBreakdown,
   };
 }
+
+// ---------------------------------------------------------------------------
+// getBatchProgressAction — D99 per-batch send progress (poll target)
+// ---------------------------------------------------------------------------
+//
+// Reads PERSISTED state for one batch so the post-confirm screen can poll
+// "X of N sent, Y pending" while the drain cron works. Reload-proof: the cron
+// is the only writer, this only reads — close the tab, reopen an hour later,
+// it still reflects true state.
+//
+// PII-CLEAN: selects ONLY status + sent_at + last_send_failed_at (no names /
+// emails / ref_codes). Counts in memory (a batch is <=100 rows). Owner-gated to
+// match the bulk-invite surface; no audit (a read, polled frequently).
+//
+// Status semantics for the count:
+//   - dispatched  = sent_at IS NOT NULL  (emailed; may have progressed to
+//                   opened/started/submitted — still "sent")
+//   - pending     = status='pending'     (not yet emailed; sent_at NULL)
+//   - failedSoFar = pending rows that carry a last_send_failed_at (a prior
+//                   attempt failed and reverted; will retry next tick)
+// The poller stops when pending === 0.
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export type BatchProgress = {
+  total: number;
+  dispatched: number;
+  pending: number;
+  failedSoFar: number;
+};
+
+export type BatchProgressResult =
+  | { ok: true; progress: BatchProgress }
+  | { ok: false; error: "forbidden" | "bad_id" | "server" };
+
+export async function getBatchProgressAction(
+  batchId: string
+): Promise<BatchProgressResult> {
+  const supabase = await createSupabaseServerClient();
+
+  const admin = await getCurrentAdmin(supabase);
+  if (!admin || admin.role !== "owner") {
+    return { ok: false, error: "forbidden" };
+  }
+  if (typeof batchId !== "string" || !UUID_RE.test(batchId)) {
+    return { ok: false, error: "bad_id" };
+  }
+
+  // Uses the D98 partial index invitations_batch_id_status_idx (batch_id,
+  // status). NON-PII columns only.
+  const { data, error } = await supabase
+    .from("invitations")
+    .select("status, sent_at, last_send_failed_at")
+    .eq("batch_id", batchId);
+  if (error) {
+    console.error("[bulk-invite] batch progress query failed", error);
+    return { ok: false, error: "server" };
+  }
+
+  const rows = data ?? [];
+  let dispatched = 0;
+  let pending = 0;
+  let failedSoFar = 0;
+  for (const r of rows) {
+    if (r.sent_at) dispatched += 1;
+    if (r.status === "pending") {
+      pending += 1;
+      if (r.last_send_failed_at) failedSoFar += 1;
+    }
+  }
+
+  return {
+    ok: true,
+    progress: { total: rows.length, dispatched, pending, failedSoFar },
+  };
+}

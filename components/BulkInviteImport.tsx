@@ -11,12 +11,14 @@
 // preview; the dropdown stored the canonical slug, which we still show in a
 // monospace sub-label so Sura sees exactly what will be created.
 
-import { useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import {
   parseBulkUploadAction,
   bulkCreateInvitationsAction,
+  getBatchProgressAction,
   type BulkUploadResult,
   type BulkCreateResult,
+  type BatchProgress,
 } from "@/lib/actions/bulk-invite";
 import type { BulkParseResult } from "@/lib/bulk-invite/fields";
 import { variantLabel } from "@/lib/repos/questionnaires";
@@ -30,7 +32,33 @@ export default function BulkInviteImport() {
     Extract<BulkCreateResult, { ok: true }> | null
   >(null);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<BatchProgress | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // D99 — poll per-batch send progress while the drain cron works. Reads
+  // PERSISTED state (the cron is the writer), so it's reload-proof. Polls
+  // every 5s, stops when pending hits 0. A `cancelled` guard + clearTimeout
+  // prevents a late poll from setting state after unmount / new batch.
+  const batchId = created?.batchId ?? null;
+  useEffect(() => {
+    if (!batchId) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    async function tick() {
+      const res = await getBatchProgressAction(batchId as string);
+      if (cancelled) return;
+      if (res.ok) {
+        setProgress(res.progress);
+        if (res.progress.pending === 0) return; // fully drained — stop polling
+      }
+      timer = setTimeout(tick, 5000);
+    }
+    void tick();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [batchId]);
 
   function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -39,6 +67,7 @@ export default function BulkInviteImport() {
     setResult(null);
     setCreated(null);
     setCreateError(null);
+    setProgress(null);
     const file = fileRef.current?.files?.[0];
     if (!file) {
       setError("Choose a filled .xlsx template first.");
@@ -231,9 +260,28 @@ export default function BulkInviteImport() {
                       </span>
                     </>
                   ) : null}
-                  . <strong>Sending begins shortly</strong> — nothing has been
-                  emailed yet.
+                  . <strong>Sending begins shortly</strong> — about one email
+                  per minute.
                 </p>
+                {created.batchId && progress && (
+                  <p className="text-ink">
+                    Sending progress:{" "}
+                    <strong>
+                      {progress.dispatched} of {progress.total} sent
+                    </strong>
+                    {progress.pending > 0 ? (
+                      <> · {progress.pending} pending</>
+                    ) : (
+                      <> · ✓ all sent</>
+                    )}
+                    {progress.failedSoFar > 0 && (
+                      <span className="text-danger">
+                        {" "}
+                        · {progress.failedSoFar} retrying
+                      </span>
+                    )}
+                  </p>
+                )}
                 {created.refused.length > 0 && (
                   <div className="notice-warn">
                     <strong>
