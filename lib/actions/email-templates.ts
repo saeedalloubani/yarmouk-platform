@@ -62,9 +62,9 @@ import type {
   SectionKey,
   TemplateId,
 } from "@/lib/email/templates/types";
+import { EMAIL_RE } from "@/lib/email-validation";
 import { logAudit } from "@/lib/audit";
 
-const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const FROM = "Yarmouk Study <noreply@karasneh-research.org>";
 const REPLY_TO = "sjkarasneh24@eng.just.edu.jo";
 const TEST_COOLDOWN_MS = 30_000;

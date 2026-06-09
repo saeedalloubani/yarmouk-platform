@@ -17,6 +17,7 @@
 
 import { Constants } from "@/lib/supabase/database.types";
 import { LANGUAGES } from "@/lib/i18n";
+import { EMAIL_RE } from "@/lib/email-validation";
 
 // The 5 MAIN variants, derived from the canonical enum (NOT hardcoded). Bulk
 // invite is a MAIN-phase tool (the D93/D94/D95 separation work): only main_*
@@ -142,9 +143,9 @@ export const BULK_COLUMNS: readonly BulkColumn[] = [
 // ---- Shared validation (one source of truth for parse.ts + the D98
 //      bulk-create action's server-side re-validation) ----
 
-// Mirrors the invitation-create email check (lib/actions/invitations.ts).
-// (Known to be permissive — see backlog task_76dd2a4f to tighten platform-wide.)
-const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+// Email check is the shared, tightened EMAIL_RE (lib/email-validation.ts,
+// task_76dd2a4f) — one source of truth across single-invite + bulk + admin +
+// test-send, so they can't drift (and comma-in-domain is now rejected).
 
 // D100 — ref_code format. EXACTLY matches the single-invite Zod rule
 // (lib/actions/invitations.ts: /^[A-Za-z0-9-]+$/, "letters, digits, and
