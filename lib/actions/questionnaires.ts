@@ -32,9 +32,21 @@ import {
   getVersion,
   countQuestionsForVersion,
   updateVersionStatus,
+  nextVersionNumber,
+  createVersion,
   variantLabel,
 } from "@/lib/repos/questionnaires";
+import { Constants } from "@/lib/supabase/database.types";
 import { logAudit } from "@/lib/audit";
+
+// D101 — main-only create scope. The 5 main_* variants, derived from the
+// canonical enum (never a hand-copied list); same source as the bulk-invite
+// BULK_VARIANTS. Creating pilot versions is out of scope (pilots are
+// historical; main is the live phase).
+const MAIN_VARIANTS: readonly string[] =
+  Constants.public.Enums.questionnaire_variant.filter((v) =>
+    v.startsWith("main_")
+  );
 
 export type ActivateResult =
   | { ok: true }
@@ -168,4 +180,95 @@ export async function closeVersionAction(
   });
 
   return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// createVersionAction (D101) — create a new MAIN draft version from the UI
+// ---------------------------------------------------------------------------
+//
+// Closes the gap where a deleted seed draft was recoverable only via manual
+// SQL: there was no app-level create path (only activate/close above). Mirrors
+// activateVersionAction's shape — owner gate via the authenticated client
+// (RLS qv_owner_insert: owner-only INSERT, no service-role, no migration).
+//
+// The new row is ALWAYS a draft: type='main' (main-only scope),
+// version_number = max(existing for variant)+1 (or 1 if none),
+// includes_feedback_block=FALSE (D9 CHECK forbids it on main — no UI toggle),
+// status='draft' (never born active; activation is the separate, D96-guarded
+// step). The UNIQUE(variant, version_number) constraint is the race guard:
+// a concurrent create computing the same number gets 23505 → version_exists
+// (clean retry), same posture as D100's ref_code collision handling.
+
+export type CreateVersionResult =
+  | { ok: true; versionId: string; versionNumber: number }
+  | {
+      ok: false;
+      error: "forbidden" | "invalid_variant" | "version_exists" | "server";
+    };
+
+export async function createVersionAction(
+  variant: string
+): Promise<CreateVersionResult> {
+  const supabase = await createSupabaseServerClient();
+
+  // 1. Owner gate (+ forbidden audit for an authenticated non-owner).
+  const admin = await getCurrentAdmin(supabase);
+  if (!admin || admin.role !== "owner") {
+    if (admin) {
+      await logAudit(supabase, {
+        action: "version.create.forbidden",
+        resource: typeof variant === "string" ? variant : "",
+        severity: "warn",
+        metadata: { attemptedBy: admin.id, role: admin.role },
+      });
+    }
+    return { ok: false, error: "forbidden" };
+  }
+
+  // 2. Main-only scope — reject anything that isn't one of the 5 main_*
+  //    variants (also rejects junk/tampered input).
+  if (!MAIN_VARIANTS.includes(variant)) {
+    return { ok: false, error: "invalid_variant" };
+  }
+
+  // 3. Compute the next version number for this variant (max+1, or 1 if the
+  //    variant has no versions — the deleted-seed-draft recovery case).
+  let versionNumber: number;
+  try {
+    versionNumber = await nextVersionNumber(supabase, variant);
+  } catch (err) {
+    console.error("[questionnaires] nextVersionNumber failed", err);
+    return { ok: false, error: "server" };
+  }
+
+  // 4. Insert the draft. type='main', includes_feedback_block=false (D9).
+  let created;
+  try {
+    created = await createVersion(supabase, {
+      type: "main",
+      variant,
+      versionNumber,
+      includesFeedbackBlock: false,
+    });
+  } catch (err) {
+    const code = (err as { code?: string }).code;
+    if (code === "23505") {
+      // Lost a race on UNIQUE(variant, version_number) — another create took
+      // this number. Clean typed error; the caller re-submits (next attempt
+      // computes a fresh max+1).
+      return { ok: false, error: "version_exists" };
+    }
+    console.error("[questionnaires] createVersion failed", err);
+    return { ok: false, error: "server" };
+  }
+
+  // 5. Audit AFTER the write succeeds (non-PII: variant + version number).
+  await logAudit(supabase, {
+    action: "version.create",
+    resource: `${variantLabel(variant)} v${versionNumber}`,
+    severity: "info",
+    metadata: { versionId: created.id, variant, versionNumber },
+  });
+
+  return { ok: true, versionId: created.id, versionNumber };
 }
