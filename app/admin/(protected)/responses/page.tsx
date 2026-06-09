@@ -31,6 +31,9 @@ import {
   getAnswerCounts,
   computeActiveDurationMinutes,
 } from "@/lib/repos/responses";
+import ScopeFilter from "@/components/ScopeFilter";
+import VariantChip from "@/components/VariantChip";
+import { resolveOverviewScope, SCOPE_LABEL } from "@/lib/repos/scope";
 
 export const dynamic = "force-dynamic";
 
@@ -46,7 +49,7 @@ function fmtDate(iso: string | null): string {
 export default async function ResponsesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ withdrawn?: string }>;
+  searchParams: Promise<{ withdrawn?: string; scope?: string }>;
 }) {
   const supabase = await createSupabaseServerClient();
   const admin = await getCurrentAdmin(supabase);
@@ -58,8 +61,16 @@ export default async function ResponsesPage({
   // when filtering, do it at the read so we never load rows we won't
   // render. The MUST-RETAIN classification only means the REPO doesn't
   // bake the filter in; the PAGE can opt in.
-  const { withdrawn } = await searchParams;
-  const showWithdrawn = withdrawn === "show";
+  const sp = await searchParams;
+  const showWithdrawn = sp.withdrawn === "show";
+
+  // D94 — pilot/main scope. Lists DEFAULT TO "all" (lookup view; cf. the
+  // dashboard's active-phase default). versionMeta labels the per-row
+  // variant chip from the same questionnaire_versions read.
+  const { scope, versionIds, versionMeta } = await resolveOverviewScope(
+    supabase,
+    sp.scope ?? "all"
+  );
 
   const responses = await listResponses(supabase, {
     hideWithdrawn: !showWithdrawn,
@@ -68,16 +79,35 @@ export default async function ResponsesPage({
   // Invitation context via the role-branching repo (NOT an embed). ref_code,
   // category, nationality, status are non-PII — present and identical on both
   // the base table and invitations_redacted.
-  const invitations = await listInvitations(supabase);
+  //
+  // D94 — the invitation fetch is SCOPE-FILTERED (versionIds). This is also
+  // how responses get scoped: responses has no questionnaire_version_id
+  // column, and embedding invitations here would breach the PII boundary
+  // (readonly would get ciphertext, bypassing invitations_redacted). So we
+  // scope the invitation set, then drop response rows whose invitation
+  // isn't in it (below) — reusing the existing in-memory join, zero extra
+  // queries, PII boundary intact. null (All) → unscoped → no rows dropped.
+  const invitations = await listInvitations(supabase, {
+    questionnaireVersionIds: versionIds ?? undefined,
+  });
   const invMap = new Map(invitations.map((i) => [i.id, i]));
 
-  // Non-empty answer counts, one query, joined in memory.
+  // D94 — apply the pilot/main scope. A response is in-scope iff its
+  // invitation is in the scoped invMap. When unscoped (All), versionIds
+  // is null → keep everything (invMap holds all invitations anyway).
+  const scopedResponses =
+    versionIds === null
+      ? responses
+      : responses.filter((r) => invMap.has(r.invitationId));
+
+  // Non-empty answer counts, one query, joined in memory. Computed over
+  // the SCOPED set only (no point counting rows we won't render).
   const counts = await getAnswerCounts(
     supabase,
-    responses.map((r) => r.id)
+    scopedResponses.map((r) => r.id)
   );
 
-  const rows = responses.map((r) => {
+  const rows = scopedResponses.map((r) => {
     const inv = invMap.get(r.invitationId);
     return {
       id: r.id,
@@ -86,6 +116,9 @@ export default async function ResponsesPage({
       nationality: inv?.nationality ?? null,
       status: inv?.status ?? null,
       collectionMode: inv?.collectionMode ?? null,
+      // D94 — version id for the variant chip (resolved via versionMeta
+      // at render). Null when the invitation join is missing (defensive).
+      questionnaireVersionId: inv?.questionnaireVersionId ?? null,
       language: r.language,
       startedAt: r.startedAt,
       submittedAt: r.submittedAt,
@@ -115,6 +148,17 @@ export default async function ResponsesPage({
     return b.startedAt.localeCompare(a.startedAt);
   });
 
+  // D94 — withdrawn-toggle href that PRESERVES the active scope (so the
+  // scope filter and the withdrawn toggle compose both directions). The
+  // ScopeFilter component handles the reverse (preserving ?withdrawn).
+  const withdrawnToggleHref = (() => {
+    const params = new URLSearchParams();
+    if (scope !== "all") params.set("scope", scope);
+    if (!showWithdrawn) params.set("withdrawn", "show"); // toggling ON
+    const qs = params.toString();
+    return qs ? `/admin/responses?${qs}` : "/admin/responses";
+  })();
+
   return (
     <main className="min-h-screen bg-white">
       <div className="max-w-5xl mx-auto px-6 py-10">
@@ -124,27 +168,34 @@ export default async function ResponsesPage({
             <h1 className="text-[24px] font-bold text-ink tracking-tight">
               Responses
             </h1>
+            {/* D94 — count reflects the scoped + withdrawn-filtered set; a
+                non-All scope is named so it never reads as a global total. */}
             <p className="text-[13px] text-muted mt-1">
-              {rows.length} {showWithdrawn ? "total" : "active"} · signed in as{" "}
+              {rows.length} {showWithdrawn ? "total" : "active"}
+              {scope !== "all" && <> · {SCOPE_LABEL[scope]}</>} · signed in as{" "}
               {admin.name} ({admin.role})
             </p>
           </div>
-          {/* Default-OFF withdrawn-hide toggle. Query-string driven so
-              the chosen view survives a refresh / can be bookmarked.
-              Same chip-link idiom as other admin filters. */}
-          <Link
-            href={
-              showWithdrawn ? "/admin/responses" : "/admin/responses?withdrawn=show"
-            }
-            className="btn-ghost text-[12px]"
-          >
-            {showWithdrawn ? "Hide withdrawn" : "Show withdrawn"}
-          </Link>
+          <div className="flex items-center gap-3">
+            {/* D94 — pilot/main scope filter. Composes (AND) with the
+                withdrawn toggle: ScopeFilter preserves ?withdrawn, and the
+                toggle below preserves ?scope. */}
+            <ScopeFilter active={scope} />
+            {/* Default-OFF withdrawn-hide toggle. Query-string driven so
+                the chosen view survives a refresh / can be bookmarked.
+                D94 — preserves the active scope across the toggle. */}
+            <Link href={withdrawnToggleHref} className="btn-ghost text-[12px]">
+              {showWithdrawn ? "Hide withdrawn" : "Show withdrawn"}
+            </Link>
+          </div>
         </div>
 
         {rows.length === 0 ? (
           <div className="card p-8 text-center text-[14px] text-muted">
-            No responses yet. They appear once an invitee opens their link.
+            {/* D94 — scope-aware empty state. */}
+            {scope === "all"
+              ? "No responses yet. They appear once an invitee opens their link."
+              : `No responses in the ${SCOPE_LABEL[scope]} scope.`}
           </div>
         ) : (
           <div className="card overflow-hidden">
@@ -152,6 +203,8 @@ export default async function ResponsesPage({
               <thead className="bg-bgAlt text-muted">
                 <tr className="text-start">
                   <th className="text-start font-semibold px-4 py-2.5">Ref</th>
+                  {/* D94 — variant chip column. */}
+                  <th className="text-start font-semibold px-4 py-2.5">Variant</th>
                   <th className="text-start font-semibold px-4 py-2.5">Category</th>
                   <th className="text-start font-semibold px-4 py-2.5">Nationality</th>
                   <th className="text-start font-semibold px-4 py-2.5">Status</th>
@@ -177,6 +230,23 @@ export default async function ResponsesPage({
                           Interview
                         </span>
                       )}
+                    </td>
+                    {/* D94 — variant chip; meta from the scope read. */}
+                    <td className="px-4 py-2.5">
+                      <VariantChip
+                        variant={
+                          row.questionnaireVersionId
+                            ? versionMeta.get(row.questionnaireVersionId)
+                                ?.variant ?? null
+                            : null
+                        }
+                        type={
+                          row.questionnaireVersionId
+                            ? versionMeta.get(row.questionnaireVersionId)
+                                ?.type ?? null
+                            : null
+                        }
+                      />
                     </td>
                     <td className="px-4 py-2.5">{row.category ? categoryLabel(row.category) : "—"}</td>
                     <td className="px-4 py-2.5 capitalize">

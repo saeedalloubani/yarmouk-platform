@@ -32,6 +32,12 @@ import type { Database } from "../supabase/database.types";
 
 export type OverviewScope = "pilot" | "main" | "all";
 
+/** D94 — per-version metadata for the variant chip on the list pages.
+ *  variant is the raw enum slug (e.g. "main_officials_jordanian"); the
+ *  caller passes it through variantLabel() for display. type is the
+ *  'pilot' | 'main' tier, used to color the chip. */
+export type VersionMeta = { variant: string; type: string };
+
 export type ResolvedScope = {
   /** The effective scope after applying the default rule. */
   scope: OverviewScope;
@@ -45,6 +51,11 @@ export type ResolvedScope = {
    *  at all (pre-main there's only pilot data, but we still show it so the
    *  control is discoverable). */
   anyMainActive: boolean;
+  /** D94 — version-id → {variant, type} for the list pages' per-row
+   *  variant chip. Built from the SAME questionnaire_versions read that
+   *  resolves the scope, so the lists get chip labels without a second
+   *  query. The dashboard (D93) ignores this field. */
+  versionMeta: Map<string, VersionMeta>;
 };
 
 /** Human label for each scope — used for the dynamic eyebrow / subtitle. */
@@ -79,9 +90,11 @@ export async function resolveOverviewScope(
   supabase: SupabaseClient<Database>,
   requested: string | undefined
 ): Promise<ResolvedScope> {
+  // D94 — `variant` added to the SELECT so versionMeta can label the
+  // per-row variant chip on the list pages from this same read.
   const { data, error } = await supabase
     .from("questionnaire_versions")
-    .select("id, type, status");
+    .select("id, type, status, variant");
   if (error) throw error;
   const rows = data ?? [];
 
@@ -94,6 +107,11 @@ export async function resolveOverviewScope(
   const mainVersionIds = rows
     .filter((r) => r.type === "main")
     .map((r) => r.id);
+
+  // D94 — version-id → {variant, type} for the list-page chip.
+  const versionMeta = new Map<string, VersionMeta>(
+    rows.map((r) => [r.id, { variant: r.variant, type: r.type }] as const)
+  );
 
   // Default rule (b1): main-if-any-main-active, else pilot. Never "all".
   const scope: OverviewScope = isOverviewScope(requested)
@@ -109,5 +127,5 @@ export async function resolveOverviewScope(
         ? mainVersionIds
         : pilotVersionIds;
 
-  return { scope, versionIds, anyMainActive };
+  return { scope, versionIds, anyMainActive, versionMeta };
 }
