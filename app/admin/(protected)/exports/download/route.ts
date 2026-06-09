@@ -27,6 +27,14 @@
 //                                            for shape=long, comma-list)
 //   &nationality=jordanian,syrian           (D84; comma-list; optional)
 //   &language=en,ar                         (D84; comma-list; optional)
+//   &study=pilot|main|all                   (D95; LONG bulk only — pilot/
+//                                            main scope. Resolves to a
+//                                            version-id set via the D93/D94
+//                                            resolver. Absent/invalid → all.
+//                                            NOTE: distinct from `scope`
+//                                            (single|bulk) — `study` is the
+//                                            pilot/main axis, named so to
+//                                            avoid colliding with `scope`.)
 //
 // OWNER-ONLY — gate mirrors /admin/security (the page); 401 if no admin,
 // 403 if a non-owner reaches the endpoint. Page-level gate is the primary
@@ -57,6 +65,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentAdmin } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
+import { resolveOverviewScope } from "@/lib/repos/scope";
 import {
   getResponsesForExport,
   getResponsesForAtlasExport,
@@ -141,8 +150,13 @@ function ts(): string {
 function singleFilename(refCode: string, format: "csv" | "xlsx"): string {
   return `yarmouk-response-${refCode}-${ts()}.${format}`;
 }
-function bulkFilename(format: "csv" | "xlsx"): string {
-  return `yarmouk-pilot-responses-long-${ts()}.${format}`;
+// D95 — long bulk filename carries the study scope so a main/all export
+// isn't mislabeled "pilot" (the pre-D95 hardcode). "all" → blended file.
+function bulkFilename(
+  format: "csv" | "xlsx",
+  study: "pilot" | "main" | "all"
+): string {
+  return `yarmouk-${study}-responses-long-${ts()}.${format}`;
 }
 
 // D84 — wide-format filenames carry the shape + variant so Sura can
@@ -271,6 +285,24 @@ export async function GET(request: NextRequest) {
   if (languageList && languageList.length > 0)
     filtersForAudit.language = languageList;
 
+  // D95 — pilot/main STUDY scope (LONG shape only). Resolve `study` to a
+  // version-id set via the D93/D94 resolver. Default "all" (an export is
+  // a data-extraction tool — All-default like the lists, not the
+  // dashboard's active-phase default). Single scope ignores it
+  // (responseId authoritative); wide/desktop are out of D95 scope and
+  // keep their AtlasMultiVariantError single-variant invariant. We only
+  // resolve for shape=long so wide/desktop pay no extra query.
+  let studyScope: "pilot" | "main" | "all" = "all";
+  let studyVersionIds: string[] | null = null;
+  if (shape === "long") {
+    const resolved = await resolveOverviewScope(
+      supabase,
+      url.searchParams.get("study") ?? "all"
+    );
+    studyScope = resolved.scope;
+    studyVersionIds = resolved.versionIds;
+  }
+
   // ── Fetch ─────────────────────────────────────────────────────────
   // Long shape uses D74 + D75 path (with PII decrypt). Wide AND desktop
   // shapes share the D84 path (NO PII decrypt — recipient_name + email
@@ -301,6 +333,9 @@ export async function GET(request: NextRequest) {
                 category: categoryList ?? [],
                 nationality: nationalityList ?? [],
                 language: languageList ?? [],
+                // D95 — pilot/main scope. null (All) → undefined → no
+                // version filter; array → restrict to that version set.
+                versionIds: studyVersionIds ?? undefined,
               },
             });
     } else {
@@ -482,7 +517,7 @@ export async function GET(request: NextRequest) {
     filename =
       scope === "single"
         ? singleFilename(rows[0].refCode, format)
-        : bulkFilename(format);
+        : bulkFilename(format, studyScope);
   } else if (shape === "wide") {
     const payload = atlasPayload!;
     refCodes = Array.from(new Set(payload.rows.map((r) => r.refCode)));
@@ -523,6 +558,11 @@ export async function GET(request: NextRequest) {
         format,
         shape,
         filters: filtersForAudit,
+        // D95 — honest study-scope signal on long exports (pilot|main|all),
+        // so an export's pilot/main scope is auditable (mirrors the
+        // filters:{} honesty). Only long applies the study filter; wide/
+        // desktop omit it (single-variant by Strategy 3).
+        ...(shape === "long" ? { study: studyScope } : {}),
         ...((shape === "wide" || shape === "desktop") && atlasPayload
           ? { variant: atlasPayload.variant }
           : {}),
