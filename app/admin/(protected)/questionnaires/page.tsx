@@ -31,16 +31,25 @@ export default async function QuestionnairesPage() {
   return (
     <main className="min-h-screen bg-white">
       <div className="max-w-4xl mx-auto px-6 py-10">
-        <div className="mb-6">
-          <div className="eyebrow mb-1">Admin</div>
-          <h1 className="text-[24px] font-bold text-ink tracking-tight">
-            Questionnaires
-          </h1>
-          <p className="text-[13px] text-muted mt-1">
-            Edit draft questionnaire content. Active and closed versions are
-            frozen (D10) — to change a live questionnaire, publish a new
-            version (a later feature).
-          </p>
+        <div className="flex items-start justify-between gap-4 mb-6">
+          <div>
+            <div className="eyebrow mb-1">Admin</div>
+            <h1 className="text-[24px] font-bold text-ink tracking-tight">
+              Questionnaires
+            </h1>
+            <p className="text-[13px] text-muted mt-1 max-w-prose">
+              Edit draft questionnaire content. Active and closed versions are
+              frozen (D10) — to revise a live questionnaire or restore a deleted
+              one, create a new draft version.
+            </p>
+          </div>
+          {/* D101 — create a new main draft version (owner-only page). */}
+          <Link
+            href="/admin/questionnaires/new"
+            className="btn-primary text-[13px] whitespace-nowrap"
+          >
+            New main version
+          </Link>
         </div>
 
         <div className="card overflow-hidden">

@@ -265,6 +265,60 @@ export async function updateVersionStatus(
   if (error) throw error;
 }
 
+/** D101 — the next version_number for a variant: max(existing) + 1, or 1 when
+ *  the variant has NO versions (e.g. a deleted seed draft being recreated).
+ *  Respects the UNIQUE(variant, version_number) constraint; a concurrent
+ *  create that computes the same number is caught by that constraint (23505)
+ *  in createVersionAction. */
+export async function nextVersionNumber(
+  supabase: SupabaseClient<Database>,
+  variant: string
+): Promise<number> {
+  const { data, error } = await supabase
+    .from("questionnaire_versions")
+    .select("version_number")
+    .eq(
+      "variant",
+      variant as Database["public"]["Enums"]["questionnaire_variant"]
+    )
+    .order("version_number", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? data.version_number + 1 : 1;
+}
+
+/** D101 — create a new questionnaire version row. Writes target the base table
+ *  via the owner's authenticated client (RLS qv_owner_insert: owner-only
+ *  INSERT). The caller (createVersionAction) computes versionNumber and gates
+ *  type/feedback per the D9 CHECK (NOT(type='main' AND includes_feedback_block)).
+ *  status is always 'draft' — a new version is never born active (one_active_
+ *  version_per_variant is for actives only; activation is a separate, D96-
+ *  guarded step). Returns the created row (with its id). */
+export async function createVersion(
+  supabase: SupabaseClient<Database>,
+  input: {
+    type: "pilot" | "main";
+    variant: string;
+    versionNumber: number;
+    includesFeedbackBlock: boolean;
+  }
+): Promise<EditorVersion> {
+  const { data, error } = await supabase
+    .from("questionnaire_versions")
+    .insert({
+      type: input.type,
+      variant: input.variant as Database["public"]["Enums"]["questionnaire_variant"],
+      version_number: input.versionNumber,
+      status: "draft",
+      includes_feedback_block: input.includesFeedbackBlock,
+    })
+    .select(VERSION_COLS)
+    .single();
+  if (error) throw error;
+  return rowToVersion(data);
+}
+
 /** Cheap count of questions on ONE version. Uses a head/exact count so no
  *  rows are transferred — just the count. Used by the D96 empty-activation
  *  guard (activateVersionAction), which only has a versionId in hand. */
