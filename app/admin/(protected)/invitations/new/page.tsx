@@ -9,6 +9,7 @@
 //
 // Loads the active questionnaire versions for the form's version select.
 
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentAdmin } from "@/lib/auth";
@@ -44,10 +45,22 @@ export default async function NewInvitationPage() {
   return (
     <main className="min-h-screen bg-white">
       <div className="max-w-2xl mx-auto px-6 py-10">
-        <div className="eyebrow mb-1">Admin</div>
-        <h1 className="text-[24px] font-bold text-ink tracking-tight mb-6">
-          New invitation
-        </h1>
+        <div className="flex items-center justify-between gap-4 mb-6">
+          <div>
+            <div className="eyebrow mb-1">Admin</div>
+            <h1 className="text-[24px] font-bold text-ink tracking-tight">
+              New invitation
+            </h1>
+          </div>
+          {/* D97 — entry point to the bulk-invite flow (additive; the single
+              form below is unchanged). */}
+          <Link
+            href="/admin/invitations/import"
+            className="btn-ghost text-[13px] whitespace-nowrap"
+          >
+            Bulk import →
+          </Link>
+        </div>
         <InvitationCreateForm versions={versionOptions} />
       </div>
     </main>
