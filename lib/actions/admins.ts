@@ -51,9 +51,8 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getCurrentAdmin } from "@/lib/auth";
 import { getAdminByEmail, insertAdmin } from "@/lib/repos/admins";
 import { sendAdminInviteEmail } from "@/lib/email/admin-invite";
+import { EMAIL_RE } from "@/lib/email-validation";
 import { logAudit } from "@/lib/audit";
-
-const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 const schema = z.object({
   name: z.string().trim().min(1, "Name is required"),

@@ -34,6 +34,7 @@ import {
 } from "@/lib/tokens";
 import { sendInvitationEmail } from "@/lib/email/invitation";
 import type { EmailErrorClass } from "@/lib/email/types";
+import { EMAIL_RE } from "@/lib/email-validation";
 import { logAudit } from "@/lib/audit";
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
@@ -96,7 +97,6 @@ async function recordInvitationSendFailure(
   }
 }
 
-const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
