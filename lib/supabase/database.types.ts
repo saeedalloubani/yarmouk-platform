@@ -501,6 +501,41 @@ export type Database = {
           },
         ]
       }
+      question_options: {
+        Row: {
+          id: string
+          label_ar: string
+          label_en: string
+          option_code: string
+          order_index: number
+          question_id: string
+        }
+        Insert: {
+          id?: string
+          label_ar: string
+          label_en: string
+          option_code: string
+          order_index: number
+          question_id: string
+        }
+        Update: {
+          id?: string
+          label_ar?: string
+          label_en?: string
+          option_code?: string
+          order_index?: number
+          question_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "question_options_question_id_fkey"
+            columns: ["question_id"]
+            isOneToOne: false
+            referencedRelation: "questions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       questionnaire_versions: {
         Row: {
           closed_at: string | null
@@ -536,6 +571,9 @@ export type Database = {
       }
       questions: {
         Row: {
+          allow_comment: boolean
+          allow_skip: boolean
+          answer_type: Database["public"]["Enums"]["answer_type"]
           id: string
           is_feedback: boolean
           is_required: boolean
@@ -549,6 +587,9 @@ export type Database = {
             | null
         }
         Insert: {
+          allow_comment?: boolean
+          allow_skip?: boolean
+          answer_type?: Database["public"]["Enums"]["answer_type"]
           id?: string
           is_feedback?: boolean
           is_required?: boolean
@@ -562,6 +603,9 @@ export type Database = {
             | null
         }
         Update: {
+          allow_comment?: boolean
+          allow_skip?: boolean
+          answer_type?: Database["public"]["Enums"]["answer_type"]
           id?: string
           is_feedback?: boolean
           is_required?: boolean
@@ -1108,6 +1152,7 @@ export type Database = {
     }
     Enums: {
       admin_role: "owner" | "readonly"
+      answer_type: "free_text" | "single_choice" | "multi_choice"
       category_type: "officials" | "researchers" | "donors" | "ngos"
       collection_mode: "self_completed" | "interview"
       event_severity: "info" | "warn" | "alert"
@@ -1271,6 +1316,7 @@ export const Constants = {
   public: {
     Enums: {
       admin_role: ["owner", "readonly"],
+      answer_type: ["free_text", "single_choice", "multi_choice"],
       category_type: ["officials", "researchers", "donors", "ngos"],
       collection_mode: ["self_completed", "interview"],
       event_severity: ["info", "warn", "alert"],

@@ -18,6 +18,7 @@ import type { Database } from "../supabase/database.types";
 
 type Nationality = Database["public"]["Enums"]["nationality_type"];
 type VersionStatus = Database["public"]["Enums"]["version_status"];
+type AnswerType = Database["public"]["Enums"]["answer_type"];
 
 export type EditorVersion = {
   id: string;
@@ -103,6 +104,12 @@ export type EditorQuestion = {
   isFeedback: boolean;
   isRequired: boolean;
   visibleNationalities: Nationality[] | null;
+  // D102 — choice-question schema. free_text questions keep answerType
+  // 'free_text' with no options (today's behavior); single/multi_choice carry
+  // authored question_options (loaded separately via getOptionsForQuestions).
+  answerType: AnswerType;
+  allowComment: boolean;
+  allowSkip: boolean;
 };
 
 export type QuestionFields = {
@@ -112,6 +119,30 @@ export type QuestionFields = {
   isFeedback: boolean;
   isRequired: boolean;
   visibleNationalities: Nationality[] | null;
+  answerType: AnswerType;
+  allowComment: boolean;
+  allowSkip: boolean;
+};
+
+// D102 — one authored option of a single/multi_choice question. label_* are
+// the bilingual display text; optionCode is the stable handle D103 answers
+// reference (never the label). orderIndex is the display order.
+export type EditorOption = {
+  id: string;
+  labelEn: string;
+  labelAr: string;
+  optionCode: string;
+  orderIndex: number;
+};
+
+// Write shape for an option (no id — assigned by the DB; no questionId — the
+// caller passes it). optionCode + orderIndex are derived server-side in the
+// action from the validated, ordered option array.
+export type OptionInput = {
+  labelEn: string;
+  labelAr: string;
+  optionCode: string;
+  orderIndex: number;
 };
 
 function rowToVersion(r: {
@@ -142,6 +173,9 @@ function rowToQuestion(r: {
   is_feedback: boolean;
   is_required: boolean;
   visible_nationalities: string[] | null;
+  answer_type: AnswerType;
+  allow_comment: boolean;
+  allow_skip: boolean;
 }): EditorQuestion {
   return {
     id: r.id,
@@ -153,13 +187,33 @@ function rowToQuestion(r: {
     isFeedback: r.is_feedback,
     isRequired: r.is_required,
     visibleNationalities: (r.visible_nationalities as Nationality[] | null) ?? null,
+    answerType: r.answer_type,
+    allowComment: r.allow_comment,
+    allowSkip: r.allow_skip,
+  };
+}
+
+function rowToOption(r: {
+  id: string;
+  label_en: string;
+  label_ar: string;
+  option_code: string;
+  order_index: number;
+}): EditorOption {
+  return {
+    id: r.id,
+    labelEn: r.label_en,
+    labelAr: r.label_ar,
+    optionCode: r.option_code,
+    orderIndex: r.order_index,
   };
 }
 
 const VERSION_COLS =
   "id, variant, type, version_number, status, includes_feedback_block";
 const QUESTION_COLS =
-  "id, version_id, question_code, order_index, text_en, text_ar, is_feedback, is_required, visible_nationalities";
+  "id, version_id, question_code, order_index, text_en, text_ar, is_feedback, is_required, visible_nationalities, answer_type, allow_comment, allow_skip";
+const OPTION_COLS = "id, label_en, label_ar, option_code, order_index";
 
 /** All versions (drafts + active + closed), ordered for the editor list:
  *  pilots-then-mains (category order), version_number as tiebreaker. The DB
@@ -363,6 +417,9 @@ export async function createQuestion(
       is_feedback: input.isFeedback,
       is_required: input.isRequired,
       visible_nationalities: input.visibleNationalities,
+      answer_type: input.answerType,
+      allow_comment: input.allowComment,
+      allow_skip: input.allowSkip,
     })
     .select(QUESTION_COLS)
     .single();
@@ -385,6 +442,9 @@ export async function updateQuestion(
       is_feedback: fields.isFeedback,
       is_required: fields.isRequired,
       visible_nationalities: fields.visibleNationalities,
+      answer_type: fields.answerType,
+      allow_comment: fields.allowComment,
+      allow_skip: fields.allowSkip,
     })
     .eq("id", questionId);
   if (error) throw error;
@@ -415,4 +475,67 @@ export async function setOrderIndices(
       .eq("id", it.id);
     if (error) throw error;
   }
+}
+
+// ---------------------------------------------------------------------------
+// question_options (D102) — bilingual choices for single/multi_choice questions
+// ---------------------------------------------------------------------------
+//
+// The tg_question_options_draft_only trigger (D102 migration) is the DB
+// backstop: any option write on a non-draft version's question raises
+// check_violation, exactly like questions_draft_only. The calling action
+// draft-gates first; these helpers stay thin.
+
+/** Options for a set of questions, ordered by order_index, keyed by questionId.
+ *  Batch (single query) for the editor page; empty input → empty map. */
+export async function getOptionsForQuestions(
+  supabase: SupabaseClient<Database>,
+  questionIds: string[]
+): Promise<Map<string, EditorOption[]>> {
+  const byQuestion = new Map<string, EditorOption[]>();
+  if (questionIds.length === 0) return byQuestion;
+  const { data, error } = await supabase
+    .from("question_options")
+    .select(`question_id, ${OPTION_COLS}`)
+    .in("question_id", questionIds)
+    .order("order_index", { ascending: true });
+  if (error) throw error;
+  for (const row of data ?? []) {
+    const list = byQuestion.get(row.question_id) ?? [];
+    list.push(rowToOption(row));
+    byQuestion.set(row.question_id, list);
+  }
+  return byQuestion;
+}
+
+/** Bulk-insert options for a question. No-op when the list is empty (a
+ *  free_text question has none). */
+export async function insertQuestionOptions(
+  supabase: SupabaseClient<Database>,
+  questionId: string,
+  options: OptionInput[]
+): Promise<void> {
+  if (options.length === 0) return;
+  const { error } = await supabase.from("question_options").insert(
+    options.map((o) => ({
+      question_id: questionId,
+      label_en: o.labelEn,
+      label_ar: o.labelAr,
+      option_code: o.optionCode,
+      order_index: o.orderIndex,
+    }))
+  );
+  if (error) throw error;
+}
+
+/** Delete all options for a question. */
+export async function deleteQuestionOptions(
+  supabase: SupabaseClient<Database>,
+  questionId: string
+): Promise<void> {
+  const { error } = await supabase
+    .from("question_options")
+    .delete()
+    .eq("question_id", questionId);
+  if (error) throw error;
 }

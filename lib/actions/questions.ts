@@ -27,8 +27,11 @@ import {
   updateQuestion,
   deleteQuestion,
   setOrderIndices,
+  insertQuestionOptions,
+  deleteQuestionOptions,
   type EditorQuestion,
   type EditorVersion,
+  type OptionInput,
 } from "@/lib/repos/questionnaires";
 import { logAudit } from "@/lib/audit";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -39,26 +42,90 @@ const UUID_RE =
 
 const TEXT_MAX = 4000;
 
+// D102 — a choice question may carry up to MAX_OPTIONS authored options. The
+// cap is a sane upper bound (a survey choice list far past this is a smell),
+// not a product limit Sura asked for.
+const MAX_OPTIONS = 50;
+
+// One authored option as it arrives from the editor: bilingual labels only.
+// option_code + order_index are NOT client-supplied — they're derived
+// server-side from the validated, ordered array (see optionInputsFrom), so
+// uniqueness-within-question is guaranteed by construction (the DB
+// UNIQUE(question_id, option_code/order_index) keys are the backstop).
+const optionSchema = z.object({
+  labelEn: z.string(),
+  labelAr: z.string(),
+});
+
 // visible_nationalities is NULL = everyone; an array narrows. The UI never
 // sends an empty array, but we coalesce []→null defensively (an empty array
 // would hide the question from EVERYONE — the renderer footgun).
-const fieldsSchema = z.object({
-  code: z
-    .string()
-    .trim()
-    .min(1, "Question code is required")
-    .max(40, "Code too long")
-    .regex(/^[A-Za-z0-9_-]+$/, "Use letters, digits, dashes, underscores"),
-  textEn: z.string().trim().min(1, "English text is required").max(TEXT_MAX),
-  textAr: z.string().trim().min(1, "Arabic text is required").max(TEXT_MAX),
-  isRequired: z.boolean(),
-  isFeedback: z.boolean(),
-  visibleNationalities: z
-    .array(z.enum(["jordanian", "syrian"]))
-    .nullable(),
-});
+const fieldsSchema = z
+  .object({
+    code: z
+      .string()
+      .trim()
+      .min(1, "Question code is required")
+      .max(40, "Code too long")
+      .regex(/^[A-Za-z0-9_-]+$/, "Use letters, digits, dashes, underscores"),
+    textEn: z.string().trim().min(1, "English text is required").max(TEXT_MAX),
+    textAr: z.string().trim().min(1, "Arabic text is required").max(TEXT_MAX),
+    isRequired: z.boolean(),
+    isFeedback: z.boolean(),
+    visibleNationalities: z
+      .array(z.enum(["jordanian", "syrian"]))
+      .nullable(),
+    // D102 — answer type + the two per-question flags + authored options.
+    answerType: z.enum(["free_text", "single_choice", "multi_choice"]),
+    allowComment: z.boolean(),
+    allowSkip: z.boolean(),
+    options: z.array(optionSchema).max(MAX_OPTIONS),
+  })
+  // Choice-question author-time rules: free_text ignores options entirely;
+  // single/multi_choice need >=2 options, each with BOTH labels non-empty.
+  .superRefine((val, ctx) => {
+    if (val.answerType === "free_text") return; // options irrelevant
+    if (val.options.length < 2) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "A choice question needs at least 2 options.",
+        path: ["options"],
+      });
+    }
+    val.options.forEach((o, i) => {
+      if (o.labelEn.trim().length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Option ${i + 1} needs English text.`,
+          path: ["options", i, "labelEn"],
+        });
+      }
+      if (o.labelAr.trim().length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Option ${i + 1} needs Arabic text.`,
+          path: ["options", i, "labelAr"],
+        });
+      }
+    });
+  });
 
 type FieldsInput = z.infer<typeof fieldsSchema>;
+
+// Derive the DB write-shape from the validated fields. Empty for free_text
+// (no options written/kept). For a choice type, option_code + order_index are
+// assigned by final array position — stable for the life of the draft, and
+// frozen the moment the version leaves draft (tg_question_options_draft_only),
+// which is the only point at which D103 answers can reference them.
+function optionInputsFrom(v: FieldsInput): OptionInput[] {
+  if (v.answerType === "free_text") return [];
+  return v.options.map((o, i) => ({
+    labelEn: o.labelEn.trim(),
+    labelAr: o.labelAr.trim(),
+    optionCode: `opt_${i + 1}`,
+    orderIndex: i + 1,
+  }));
+}
 
 export type QuestionActionError =
   | "forbidden"
@@ -116,6 +183,8 @@ function feedbackAllowed(version: EditorVersion, isFeedback: boolean): boolean {
 // createQuestionAction
 // ---------------------------------------------------------------------------
 
+export type QuestionOptionInput = { labelEn: string; labelAr: string };
+
 export type CreateQuestionInput = {
   versionId: string;
   code: string;
@@ -124,6 +193,10 @@ export type CreateQuestionInput = {
   isRequired: boolean;
   isFeedback: boolean;
   visibleNationalities: ("jordanian" | "syrian")[] | null;
+  answerType: "free_text" | "single_choice" | "multi_choice";
+  allowComment: boolean;
+  allowSkip: boolean;
+  options: QuestionOptionInput[];
 };
 
 export async function createQuestionAction(
@@ -151,12 +224,17 @@ export async function createQuestionAction(
     return { ok: false, error: "validation", issues: ["This version has no feedback block"] };
   }
 
+  const optionInputs = optionInputsFrom(v);
+
+  // 1. Insert the question row. A unique-code clash (23505) is the only
+  //    expected failure here → code_taken.
+  let question: EditorQuestion;
   try {
     const existing = await getQuestionsForVersion(supabase, versionId);
     const nextOrder =
       existing.reduce((max, q) => Math.max(max, q.orderIndex), 0) + 1;
 
-    const question = await createQuestion(supabase, {
+    question = await createQuestion(supabase, {
       versionId,
       orderIndex: nextOrder,
       code: v.code,
@@ -165,21 +243,44 @@ export async function createQuestionAction(
       isRequired: v.isRequired,
       isFeedback: v.isFeedback,
       visibleNationalities: normVis(v.visibleNationalities),
+      answerType: v.answerType,
+      allowComment: v.allowComment,
+      allowSkip: v.allowSkip,
     });
-
-    await logAudit(supabase, {
-      action: "question.create",
-      resource: versionId,
-      severity: "info",
-      metadata: { questionId: question.id, code: question.code, isFeedback: question.isFeedback },
-    });
-    return { ok: true, question };
   } catch (err) {
     const code = (err as { code?: string }).code;
     if (code === "23505") return { ok: false, error: "code_taken" };
     console.error("[questions] create failed", err);
     return { ok: false, error: "server" };
   }
+
+  // 2. Insert options (choice types only; no-op for free_text). Atomicity is
+  //    a COMPENSATING DELETE: if option insertion fails, remove the question
+  //    we just created so we never leave a choice question with no/partial
+  //    options. Safe because it's a fresh draft row with zero answers.
+  try {
+    await insertQuestionOptions(supabase, question.id, optionInputs);
+  } catch (optErr) {
+    await deleteQuestion(supabase, question.id).catch((e) =>
+      console.error("[questions] compensating delete failed", e)
+    );
+    console.error("[questions] option insert failed; question rolled back", optErr);
+    return { ok: false, error: "server" };
+  }
+
+  await logAudit(supabase, {
+    action: "question.create",
+    resource: versionId,
+    severity: "info",
+    metadata: {
+      questionId: question.id,
+      code: question.code,
+      isFeedback: question.isFeedback,
+      answerType: v.answerType,
+      optionCount: optionInputs.length,
+    },
+  });
+  return { ok: true, question };
 }
 
 // ---------------------------------------------------------------------------
@@ -194,6 +295,10 @@ export type UpdateQuestionInput = {
   isRequired: boolean;
   isFeedback: boolean;
   visibleNationalities: ("jordanian" | "syrian")[] | null;
+  answerType: "free_text" | "single_choice" | "multi_choice";
+  allowComment: boolean;
+  allowSkip: boolean;
+  options: QuestionOptionInput[];
 };
 
 export async function updateQuestionAction(
@@ -223,6 +328,9 @@ export async function updateQuestionAction(
     return { ok: false, error: "validation", issues: ["This version has no feedback block"] };
   }
 
+  const optionInputs = optionInputsFrom(v);
+
+  // 1. Update the question fields. Unique-code clash (23505) → code_taken.
   try {
     await updateQuestion(supabase, questionId, {
       code: v.code,
@@ -231,20 +339,42 @@ export async function updateQuestionAction(
       isRequired: v.isRequired,
       isFeedback: v.isFeedback,
       visibleNationalities: normVis(v.visibleNationalities),
+      answerType: v.answerType,
+      allowComment: v.allowComment,
+      allowSkip: v.allowSkip,
     });
-    await logAudit(supabase, {
-      action: "question.update",
-      resource: question.versionId,
-      severity: "info",
-      metadata: { questionId, code: v.code },
-    });
-    return { ok: true };
   } catch (err) {
     const code = (err as { code?: string }).code;
     if (code === "23505") return { ok: false, error: "code_taken" };
     console.error("[questions] update failed", err);
     return { ok: false, error: "server" };
   }
+
+  // 2. Replace options: delete-all then re-insert the validated set. For a
+  //    free_text question optionInputs is empty, so this clears any options
+  //    left over from a prior choice type. The two UNIQUE keys forbid old+new
+  //    coexisting, so a wholesale replace (not a diff) is the clean path; safe
+  //    on a draft, which has no answers referencing options.
+  try {
+    await deleteQuestionOptions(supabase, questionId);
+    await insertQuestionOptions(supabase, questionId, optionInputs);
+  } catch (optErr) {
+    console.error("[questions] option replace failed", optErr);
+    return { ok: false, error: "server" };
+  }
+
+  await logAudit(supabase, {
+    action: "question.update",
+    resource: question.versionId,
+    severity: "info",
+    metadata: {
+      questionId,
+      code: v.code,
+      answerType: v.answerType,
+      optionCount: optionInputs.length,
+    },
+  });
+  return { ok: true };
 }
 
 // ---------------------------------------------------------------------------
