@@ -30,6 +30,10 @@ import Link from "next/link";
 // header badge. The parent preview page no longer passes `pilotCategory`.
 import { getTranslations, type Lang } from "@/lib/i18n";
 
+type AnswerType = "free_text" | "single_choice" | "multi_choice";
+
+export type PreviewOption = { id: string; labelEn: string; labelAr: string };
+
 export type PreviewQuestion = {
   id: string;
   code: string;
@@ -39,6 +43,12 @@ export type PreviewQuestion = {
   isRequired: boolean;
   isFeedback: boolean;
   visibleNationalities: string[] | null;
+  // D103a — choice questions render their (disabled) options here, mirroring
+  // the live QuestionnaireWizard. free_text keeps the disabled textarea.
+  answerType: AnswerType;
+  allowComment: boolean;
+  allowSkip: boolean;
+  options: PreviewOption[];
 };
 
 type Nat = "jordanian" | "syrian";
@@ -225,17 +235,77 @@ export default function QuestionnairePreview({
                   )}
                 </div>
 
-                <h2 className="text-[20px] font-semibold leading-[1.4] text-ink mb-5">
+                <h2
+                  id="current-question-text"
+                  className="text-[20px] font-semibold leading-[1.4] text-ink mb-5"
+                >
                   {isAr ? current.textAr : current.textEn}
                 </h2>
 
-                <textarea
-                  className="field opacity-60 cursor-not-allowed"
-                  placeholder={t.writeAnswer}
-                  rows={9}
-                  disabled
-                  readOnly
-                />
+                {current.answerType === "free_text" ? (
+                  <textarea
+                    className="field opacity-60 cursor-not-allowed"
+                    placeholder={t.writeAnswer}
+                    rows={9}
+                    disabled
+                    readOnly
+                  />
+                ) : (
+                  // D103a — disabled mirror of the wizard's choice widgets:
+                  // single → radio, multi → checkbox, allow_comment → textarea.
+                  // Same layout/order/label-switch as QuestionnaireWizard, just
+                  // non-interactive (the preview's job is fidelity).
+                  <>
+                    <div className="text-[13px] text-muted mb-3">
+                      {current.answerType === "single_choice"
+                        ? t.chooseOne
+                        : t.chooseMultiple}
+                    </div>
+                    <div
+                      className="space-y-2"
+                      role={
+                        current.answerType === "single_choice"
+                          ? "radiogroup"
+                          : "group"
+                      }
+                      aria-labelledby="current-question-text"
+                    >
+                      {current.options.map((o) => {
+                        const isRadio = current.answerType === "single_choice";
+                        return (
+                          <label
+                            key={o.id}
+                            className="flex items-center gap-3 card p-3.5 opacity-60 cursor-not-allowed"
+                          >
+                            <input
+                              type={isRadio ? "radio" : "checkbox"}
+                              name={isRadio ? `q-${current.id}` : undefined}
+                              checked={false}
+                              disabled
+                              readOnly
+                              className="accent-brand-600 shrink-0"
+                            />
+                            <span className="text-[15px] text-ink">
+                              {isAr ? o.labelAr : o.labelEn}
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                    {current.allowComment && (
+                      <div className="mt-4">
+                        <label className="label">{t.optionalComment}</label>
+                        <textarea
+                          className="field opacity-60 cursor-not-allowed"
+                          placeholder={t.commentPlaceholder}
+                          rows={3}
+                          disabled
+                          readOnly
+                        />
+                      </div>
+                    )}
+                  </>
+                )}
                 <div className="text-[12px] text-muted mt-2">
                   {isAr
                     ? "معاينة فقط — حقل الإجابة معطّل"

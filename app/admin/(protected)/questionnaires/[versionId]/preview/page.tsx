@@ -17,6 +17,7 @@ import { getCurrentAdmin } from "@/lib/auth";
 import {
   getVersion,
   getQuestionsForVersion,
+  getOptionsForQuestions,
   variantLabel,
 } from "@/lib/repos/questionnaires";
 import QuestionnairePreview, {
@@ -40,6 +41,11 @@ export default async function PreviewVersionPage({
   if (!version) notFound();
 
   const questions = await getQuestionsForVersion(supabase, versionId);
+  // D103a — choice questions need their options for a faithful preview.
+  const optionsByQuestion = await getOptionsForQuestions(
+    supabase,
+    questions.map((q) => q.id)
+  );
 
   const previewQuestions: PreviewQuestion[] = questions.map((q) => ({
     id: q.id,
@@ -50,6 +56,14 @@ export default async function PreviewVersionPage({
     isRequired: q.isRequired,
     isFeedback: q.isFeedback,
     visibleNationalities: q.visibleNationalities,
+    answerType: q.answerType,
+    allowComment: q.allowComment,
+    allowSkip: q.allowSkip,
+    options: (optionsByQuestion.get(q.id) ?? []).map((o) => ({
+      id: o.id,
+      labelEn: o.labelEn,
+      labelAr: o.labelAr,
+    })),
   }));
 
   // Gated = any question restricted by nationality (only officials). Drives
