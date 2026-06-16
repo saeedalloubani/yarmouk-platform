@@ -25,19 +25,108 @@ export async function getAnswersMap(
   return map;
 }
 
-/** Question_ids with a non-empty answer for a response (submit gate). */
-export async function getAnsweredQuestionIds(
+// D103 — a returning respondent's prior choice answers, for resume-rehydrate
+// (the wizard re-checks the right radios/boxes and refills the comment box).
+export type ChoiceAnswer = { optionIds: string[]; comment: string | null };
+
+/** Choice selections + comment for a response, keyed by question id. Only
+ *  questions that actually have a selection or a comment appear (free_text
+ *  answers, which never write either, are absent). */
+export async function getChoiceAnswers(
   admin: SupabaseClient<Database>,
   responseId: string
-): Promise<Set<string>> {
-  const { data, error } = await admin
+): Promise<Record<string, ChoiceAnswer>> {
+  const { data: aRows, error: aErr } = await admin
     .from("answers")
-    .select("question_id, answer_text")
+    .select("id, question_id, answer_comment")
     .eq("response_id", responseId);
-  if (error) throw error;
+  if (aErr) throw aErr;
+  const rows = aRows ?? [];
+  if (rows.length === 0) return {};
+
+  const questionByAnswerId = new Map<string, string>();
+  for (const r of rows) questionByAnswerId.set(r.id, r.question_id);
+
+  const { data: selRows, error: sErr } = await admin
+    .from("answer_options")
+    .select("answer_id, option_id")
+    .in(
+      "answer_id",
+      rows.map((r) => r.id)
+    );
+  if (sErr) throw sErr;
+
+  const optionIdsByQuestion: Record<string, string[]> = {};
+  for (const s of selRows ?? []) {
+    const qid = questionByAnswerId.get(s.answer_id);
+    if (!qid) continue;
+    (optionIdsByQuestion[qid] ??= []).push(s.option_id);
+  }
+
+  const out: Record<string, ChoiceAnswer> = {};
+  for (const r of rows) {
+    const optionIds = optionIdsByQuestion[r.question_id] ?? [];
+    const comment = r.answer_comment ?? null;
+    if (optionIds.length > 0 || comment !== null) {
+      out[r.question_id] = { optionIds, comment };
+    }
+  }
+  return out;
+}
+
+/** Question_ids SATISFIED for the submit gate — TYPE-AWARE (D103):
+ *    free_text → answer_text non-empty (unchanged from the pre-D103 rule);
+ *    single/multi_choice → at least one selected option (answer_options row);
+ *    allow_skip → always satisfied (a no-answer is permitted even when
+ *                 is_required), so a skippable question never blocks submit.
+ *  Takes the question metadata (the caller already has the visible set) so the
+ *  rule can branch per type. For a free_text-only questionnaire this reduces
+ *  to exactly the old "answer_text non-empty" behavior. */
+export async function getAnsweredQuestionIds(
+  admin: SupabaseClient<Database>,
+  responseId: string,
+  questions: { id: string; answerType: Database["public"]["Enums"]["answer_type"]; allowSkip: boolean }[]
+): Promise<Set<string>> {
+  // 1. free_text answeredness: answer_text non-empty, keyed by question id.
+  const { data: aRows, error: aErr } = await admin
+    .from("answers")
+    .select("id, question_id, answer_text")
+    .eq("response_id", responseId);
+  if (aErr) throw aErr;
+  const rows = aRows ?? [];
+
+  const textNonEmpty = new Set<string>();
+  const answerIds: string[] = [];
+  const questionByAnswerId = new Map<string, string>();
+  for (const r of rows) {
+    answerIds.push(r.id);
+    questionByAnswerId.set(r.id, r.question_id);
+    if ((r.answer_text ?? "").trim().length > 0) textNonEmpty.add(r.question_id);
+  }
+
+  // 2. choice answeredness: question ids with >=1 selected option.
+  const hasSelection = new Set<string>();
+  if (answerIds.length > 0) {
+    const { data: selRows, error: sErr } = await admin
+      .from("answer_options")
+      .select("answer_id")
+      .in("answer_id", answerIds);
+    if (sErr) throw sErr;
+    for (const s of selRows ?? []) {
+      const qid = questionByAnswerId.get(s.answer_id);
+      if (qid) hasSelection.add(qid);
+    }
+  }
+
+  // 3. Apply the per-type satisfaction rule.
   const set = new Set<string>();
-  for (const row of data ?? []) {
-    if ((row.answer_text ?? "").trim().length > 0) set.add(row.question_id);
+  for (const q of questions) {
+    const satisfied = q.allowSkip
+      ? true
+      : q.answerType === "free_text"
+      ? textNonEmpty.has(q.id)
+      : hasSelection.has(q.id);
+    if (satisfied) set.add(q.id);
   }
   return set;
 }

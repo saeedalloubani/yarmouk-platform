@@ -276,6 +276,20 @@ export const translations = {
     en: "Could not save your consent. Please try again.",
     ar: "تعذّر حفظ موافقتك. يُرجى المحاولة مرة أخرى.",
   },
+
+  // ---- D103 choice questions (single/multi-select) ----
+  // New AR strings — flagged for Sura's review (consistent with the
+  // English-fallback-never-sentinel principle for in-flow strings).
+  chooseOne: { en: "Choose one", ar: "اختر واحداً" },
+  chooseMultiple: { en: "Choose all that apply", ar: "اختر كل ما ينطبق" },
+  optionalComment: { en: "Add a comment (optional)", ar: "أضف تعليقاً (اختياري)" },
+  commentPlaceholder: { en: "Share your reasoning…", ar: "شارك توضيحك…" },
+  selectBeforeContinuing: {
+    en: "Select an answer before continuing",
+    ar: "اختر إجابة قبل المتابعة",
+  },
+  maySkip: { en: "You may skip this question", ar: "يمكنك تخطّي هذا السؤال" },
+  selectedCountLabel: { en: "selected", ar: "محدد" },
 } as const;
 
 export type TranslationKey = keyof typeof translations;
