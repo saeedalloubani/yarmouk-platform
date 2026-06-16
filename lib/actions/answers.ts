@@ -75,6 +75,63 @@ export async function saveAnswer(
   return { ok: true };
 }
 
+// ---- saveChoiceAnswer (autosave for single/multi_choice) ----
+// The choice-question analogue of saveAnswer. Session-derived IDs (never
+// client args); the save_choice_answer RPC is the trust boundary (re-validates
+// writable + question-on-version + every option-belongs + single<=1, and
+// writes the answer row + replaces its answer_options atomically). We add the
+// nationality visible-set guard here because the RPC checks version membership
+// but not nationality (a Jordanian must not answer a Syrian-only question).
+// The free_text saveAnswer path above is untouched.
+export async function saveChoiceAnswer(
+  questionId: string,
+  optionIds: string[],
+  comment: string | null
+): Promise<{ ok: boolean }> {
+  const session = await getSession();
+  if (!session) return { ok: false };
+
+  const admin = createSupabaseAdminClient();
+
+  // Defense: question must be in this respondent's visible set (nationality)
+  // and must be a choice type. The RPC enforces the rest server-side.
+  const visible = await getVisibleQuestions(
+    admin,
+    session.questionnaireVersionId,
+    session.nationality
+  );
+  const q = visible.find((v) => v.id === questionId);
+  if (!q || q.answerType === "free_text") return { ok: false };
+
+  // Normalize an empty/whitespace comment to "no comment" (DB NULL via the
+  // RPC's DEFAULT — omitting the param). A real comment is stored verbatim.
+  const commentArg =
+    comment && comment.trim().length > 0 ? comment : undefined;
+
+  const { error: rpcErr } = await admin.rpc("save_choice_answer", {
+    p_response_id: session.responseId,
+    p_question_id: questionId,
+    p_option_ids: optionIds,
+    p_comment: commentArg,
+  });
+  if (rpcErr) {
+    console.error("[answers] save_choice_answer failed", rpcErr);
+    return { ok: false };
+  }
+
+  // opened→started flip — same idempotent, non-fatal flip as saveAnswer.
+  const { error: statusErr } = await admin
+    .from("invitations")
+    .update({ status: "started", started_at: new Date().toISOString() })
+    .eq("id", session.invitationId)
+    .eq("status", "opened");
+  if (statusErr) {
+    console.error("[answers] opened→started flip failed", statusErr);
+  }
+
+  return { ok: true };
+}
+
 // ---- submitQuestionnaire (gate + finalize) ----
 // Success redirects to /submitted; only gate failures return.
 export type SubmitResult = { ok: false; missing: string[] };
@@ -93,7 +150,15 @@ export async function submitQuestionnaire(): Promise<SubmitResult> {
   );
   const visibleRequired = visible.filter((q) => q.isRequired);
 
-  const answered = await getAnsweredQuestionIds(admin, session.responseId);
+  // Type-aware satisfaction (D103): free_text → text non-empty; choice → >=1
+  // selection; allow_skip → satisfied. Pass the visible metadata so the gate
+  // branches per type (a choice answer's answer_text is '' and would never
+  // count under the old text-only rule).
+  const answered = await getAnsweredQuestionIds(
+    admin,
+    session.responseId,
+    visible
+  );
 
   const missing = visibleRequired
     .filter((q) => !answered.has(q.id))

@@ -18,7 +18,7 @@ import { getSession, getLang } from "@/lib/cookies";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { consentExistsForResponse } from "@/lib/repos/consent";
 import { getVisibleQuestions } from "@/lib/repos/questions";
-import { getAnswersMap } from "@/lib/repos/answers";
+import { getAnswersMap, getChoiceAnswers } from "@/lib/repos/answers";
 import QuestionnaireWizard, {
   type WizardQuestion,
 } from "@/components/QuestionnaireWizard";
@@ -44,11 +44,20 @@ export default async function QuestionnairePage() {
   if (visible.length === 0) redirect("/"); // defensive — nothing to answer
 
   const answersMap = await getAnswersMap(admin, session.responseId);
+  // D103 — prior choice selections + comments, for resume-rehydrate.
+  const choiceAnswers = await getChoiceAnswers(admin, session.responseId);
 
-  // Edge 2: first unanswered visible question; if all answered, the last.
-  let initialIdx = visible.findIndex(
-    (q) => (answersMap[q.id] ?? "").trim().length === 0
-  );
+  // Edge 2: first UNSATISFIED visible question; if all satisfied, the last.
+  // Type-aware (mirrors the wizard + submit gate): free_text → text non-empty;
+  // choice → >=1 selection; allow_skip → satisfied (never forces the cursor).
+  const satisfied = (q: (typeof visible)[number]): boolean => {
+    if (q.allowSkip) return true;
+    if (q.answerType === "free_text") {
+      return (answersMap[q.id] ?? "").trim().length > 0;
+    }
+    return (choiceAnswers[q.id]?.optionIds.length ?? 0) > 0;
+  };
+  let initialIdx = visible.findIndex((q) => !satisfied(q));
   if (initialIdx === -1) initialIdx = visible.length - 1;
 
   const lang = await getLang();
@@ -60,7 +69,19 @@ export default async function QuestionnairePage() {
     textAr: q.textAr,
     isFeedback: q.isFeedback,
     isRequired: q.isRequired,
+    answerType: q.answerType,
+    allowComment: q.allowComment,
+    allowSkip: q.allowSkip,
+    options: q.options,
   }));
+
+  // initialSelections / initialComments — the choice analogue of initialAnswers.
+  const initialSelections: Record<string, string[]> = {};
+  const initialComments: Record<string, string> = {};
+  for (const [qid, ca] of Object.entries(choiceAnswers)) {
+    initialSelections[qid] = ca.optionIds;
+    if (ca.comment !== null) initialComments[qid] = ca.comment;
+  }
 
   // D68 — `category` prop dropped along with the wizard's header badge.
   // session.category is still available for any future per-category render
@@ -69,6 +90,8 @@ export default async function QuestionnairePage() {
     <QuestionnaireWizard
       questions={questions}
       initialAnswers={answersMap}
+      initialSelections={initialSelections}
+      initialComments={initialComments}
       initialIdx={initialIdx}
       lang={lang}
     />

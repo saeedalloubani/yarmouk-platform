@@ -28,8 +28,16 @@ import { useRouter } from "next/navigation";
 // D68 — `pilotBadgeLabel` + `PilotCategory` import dropped along with the
 // header badge. The parent page no longer passes `category` either.
 import { getTranslations, type Lang } from "@/lib/i18n";
-import { saveAnswer, submitQuestionnaire } from "@/lib/actions/answers";
+import {
+  saveAnswer,
+  saveChoiceAnswer,
+  submitQuestionnaire,
+} from "@/lib/actions/answers";
 import { setLangAction } from "@/lib/actions/setLang";
+
+type AnswerType = "free_text" | "single_choice" | "multi_choice";
+
+export type WizardOption = { id: string; labelEn: string; labelAr: string };
 
 export type WizardQuestion = {
   id: string;
@@ -38,16 +46,33 @@ export type WizardQuestion = {
   textAr: string;
   isFeedback: boolean;
   isRequired: boolean;
+  // D103 — choice questions carry their type, flags, and options. free_text
+  // questions keep answerType 'free_text' with no options; their path below
+  // is unchanged.
+  answerType: AnswerType;
+  allowComment: boolean;
+  allowSkip: boolean;
+  options: WizardOption[];
 };
+
+// Stable string form of a choice answer (sorted ids + comment) for the
+// save-dedup ref — the choice analogue of comparing the free_text string.
+function serializeChoice(ids: string[], comment: string): string {
+  return [...ids].sort().join(",") + "|" + comment;
+}
 
 export default function QuestionnaireWizard({
   questions,
   initialAnswers,
+  initialSelections,
+  initialComments,
   initialIdx,
   lang,
 }: {
   questions: WizardQuestion[];
   initialAnswers: Record<string, string>;
+  initialSelections: Record<string, string[]>;
+  initialComments: Record<string, string>;
   initialIdx: number;
   lang: Lang;
 }) {
@@ -56,6 +81,11 @@ export default function QuestionnaireWizard({
   const router = useRouter();
 
   const [answers, setAnswers] = useState<Record<string, string>>(initialAnswers);
+  // D103 — choice state, parallel to `answers` (the free_text string map).
+  const [selections, setSelections] =
+    useState<Record<string, string[]>>(initialSelections);
+  const [comments, setComments] =
+    useState<Record<string, string>>(initialComments);
   const [currentIdx, setCurrentIdx] = useState(
     Math.min(Math.max(initialIdx, 0), Math.max(questions.length - 1, 0))
   );
@@ -67,7 +97,25 @@ export default function QuestionnaireWizard({
   // Refs avoid stale closures across awaits.
   const answersRef = useRef(answers);
   answersRef.current = answers;
+  const selectionsRef = useRef(selections);
+  selectionsRef.current = selections;
+  const commentsRef = useRef(comments);
+  commentsRef.current = comments;
   const lastSavedRef = useRef<Record<string, string>>({ ...initialAnswers });
+  // Dedup for choice saves: serialized (sorted ids + comment) per question.
+  const lastSavedChoiceRef = useRef<Record<string, string>>(
+    Object.fromEntries(
+      questions
+        .filter((q) => q.answerType !== "free_text")
+        .map((q) => [
+          q.id,
+          serializeChoice(
+            initialSelections[q.id] ?? [],
+            initialComments[q.id] ?? ""
+          ),
+        ])
+    )
+  );
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const idxRef = useRef(currentIdx);
   idxRef.current = currentIdx;
@@ -78,22 +126,50 @@ export default function QuestionnaireWizard({
   const isLast = currentIdx === questions.length - 1;
   const progress = ((currentIdx + 1) / questions.length) * 100;
 
-  const answeredCount = questions.filter(
-    (q) => (answers[q.id] ?? "").trim().length > 0
-  ).length;
-  const currentText = answers[current.id] ?? "";
-  const currentIsAnswered = currentText.trim().length > 0; // non-empty (D47)
+  // D103 — type-aware "has an answer" (actually filled): free_text → text
+  // non-empty (the pre-D103 rule, unchanged); choice → >=1 selection.
+  function qHasAnswer(q: WizardQuestion): boolean {
+    if (q.answerType === "free_text") {
+      return (answers[q.id] ?? "").trim().length > 0;
+    }
+    return (selections[q.id]?.length ?? 0) > 0;
+  }
+  // "Satisfied" for forward-progress/submit: answered OR skippable. A
+  // free_text question (allowSkip always false) reduces this to qHasAnswer —
+  // identical to the old behavior.
+  function qSatisfied(q: WizardQuestion): boolean {
+    return q.allowSkip || qHasAnswer(q);
+  }
+
+  const isChoice = current.answerType !== "free_text";
+  const answeredCount = questions.filter(qHasAnswer).length;
+
+  const currentText = answers[current.id] ?? ""; // free_text only
+  const currentSelection = selections[current.id] ?? []; // choice only
+  const currentComment = comments[current.id] ?? ""; // choice only
+  const currentHasAnswer = qHasAnswer(current);
+  const currentSatisfied = qSatisfied(current);
+  // Alias so the free_text textarea block stays byte-identical to pre-D103
+  // (free_text: hasAnswer === the old "non-empty text" notion).
+  const currentIsAnswered = currentHasAnswer;
   const wordCount = currentText.trim()
     ? currentText.trim().split(/\s+/).length
     : 0;
 
   // furthestReachable over the FILTERED set (Edge 3 / D12 forward-lock).
+  // Type-aware: a skippable question never blocks progress; a choice question
+  // is reachable-past once it has a selection.
   const furthestReachable = useMemo(() => {
     for (let i = 0; i < questions.length; i++) {
-      if ((answers[questions[i].id] ?? "").trim().length === 0) return i;
+      const q = questions[i];
+      const has =
+        q.answerType === "free_text"
+          ? (answers[q.id] ?? "").trim().length > 0
+          : (selections[q.id]?.length ?? 0) > 0;
+      if (!(q.allowSkip || has)) return i;
     }
     return questions.length - 1;
-  }, [answers, questions]);
+  }, [answers, selections, questions]);
 
   const showFeedbackIntro =
     current.isFeedback &&
@@ -127,6 +203,76 @@ export default function QuestionnaireWizard({
     debounceRef.current = setTimeout(() => void flushSave(idxAtType), 600);
   }
 
+  // D103 — choice save (selections + optional comment) via save_choice_answer.
+  // Mirrors flushSave's dedup/save-state shape but over the serialized choice.
+  async function flushChoiceSave(idx = idxRef.current) {
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+      debounceRef.current = null;
+    }
+    const q = questions[idx];
+    if (q.answerType === "free_text") return;
+    const ids = selectionsRef.current[q.id] ?? [];
+    const comment = commentsRef.current[q.id] ?? "";
+    const key = serializeChoice(ids, comment);
+    if (key === (lastSavedChoiceRef.current[q.id] ?? serializeChoice([], ""))) {
+      return; // nothing changed since last save
+    }
+    setSaveState("saving");
+    const res = await saveChoiceAnswer(
+      q.id,
+      ids,
+      comment.trim().length > 0 ? comment : null
+    );
+    if (res.ok) {
+      lastSavedChoiceRef.current[q.id] = key;
+      setSaveState("saved");
+    } else {
+      setSaveState("idle"); // failed → retried at the next boundary
+    }
+  }
+
+  // Boundary flush dispatcher: routes to the free_text or choice saver by
+  // question type. free_text boundary saves go through flushSave unchanged.
+  async function flushBoundary(idx = idxRef.current) {
+    if (questions[idx].answerType === "free_text") return flushSave(idx);
+    return flushChoiceSave(idx);
+  }
+
+  // Radio: replace the selection with exactly one option; save immediately
+  // (no debounce — a click is a deliberate, complete act). Update the ref
+  // synchronously so the save reads the new value.
+  function onSelectSingle(optionId: string) {
+    const next = { ...selectionsRef.current, [current.id]: [optionId] };
+    selectionsRef.current = next;
+    setSelections(next);
+    if (showRequiredHint) setShowRequiredHint(false);
+    void flushChoiceSave(idxRef.current);
+  }
+
+  // Checkbox: toggle the option in/out of the set; save immediately.
+  function onToggleMulti(optionId: string) {
+    const cur = selectionsRef.current[current.id] ?? [];
+    const nextArr = cur.includes(optionId)
+      ? cur.filter((x) => x !== optionId)
+      : [...cur, optionId];
+    const next = { ...selectionsRef.current, [current.id]: nextArr };
+    selectionsRef.current = next;
+    setSelections(next);
+    if (showRequiredHint && nextArr.length > 0) setShowRequiredHint(false);
+    void flushChoiceSave(idxRef.current);
+  }
+
+  // Optional comment: debounced like the free_text textarea (600ms).
+  function onCommentType(text: string) {
+    const next = { ...commentsRef.current, [current.id]: text };
+    commentsRef.current = next;
+    setComments(next);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    const idxAtType = idxRef.current;
+    debounceRef.current = setTimeout(() => void flushChoiceSave(idxAtType), 600);
+  }
+
   function triggerShake() {
     setShowRequiredHint(true);
     const el = cardRef.current;
@@ -137,11 +283,11 @@ export default function QuestionnaireWizard({
   }
 
   async function handleNext() {
-    if (!currentIsAnswered) {
+    if (!currentSatisfied) {
       triggerShake();
       return;
     }
-    await flushSave();
+    await flushBoundary();
     if (isLast) {
       void handleSubmit();
       return;
@@ -152,14 +298,14 @@ export default function QuestionnaireWizard({
 
   async function handlePrev() {
     if (isFirst) return;
-    await flushSave(); // Back flushes too (no required gate)
+    await flushBoundary(); // Back flushes too (no required gate)
     setCurrentIdx((i) => i - 1);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   async function jumpTo(i: number) {
     if (i > furthestReachable || i === currentIdx) return; // forward-lock (D12)
-    await flushSave();
+    await flushBoundary();
     setCurrentIdx(i);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -175,7 +321,7 @@ export default function QuestionnaireWizard({
     // matters. The brief pre-transition window where the toggle isn't
     // `pending`-disabled is a negligible race (flush is fast; the upsert
     // is idempotent).
-    await flushSave();
+    await flushBoundary();
     startTransition(async () => {
       await setLangAction(next);
       router.refresh();
@@ -185,7 +331,7 @@ export default function QuestionnaireWizard({
   function handleSubmit() {
     setMissing([]);
     startTransition(async () => {
-      await flushSave();
+      await flushBoundary();
       const res = await submitQuestionnaire(); // redirects on success
       if (res && !res.ok) {
         setMissing(res.missing); // names the blank questions
@@ -197,7 +343,7 @@ export default function QuestionnaireWizard({
   // Save & Exit explicitly promises a save — flush the pending edit
   // before leaving so no keystrokes in the debounce window are lost.
   async function handleSaveExit() {
-    await flushSave();
+    await flushBoundary();
     router.push("/");
   }
 
@@ -286,39 +432,127 @@ export default function QuestionnaireWizard({
             {isAr ? current.textAr : current.textEn}
           </h2>
 
-          <textarea
-            className={`field ${
-              showRequiredHint && !currentIsAnswered
-                ? "!border-danger !shadow-[0_0_0_3px_rgba(220,38,38,0.15)]"
-                : ""
-            }`}
-            aria-labelledby="current-question-text"
-            placeholder={t.writeAnswer}
-            value={currentText}
-            onChange={(e) => onType(e.target.value)}
-            rows={9}
-            autoFocus
-          />
+          {!isChoice ? (
+            <>
+              <textarea
+                className={`field ${
+                  showRequiredHint && !currentIsAnswered
+                    ? "!border-danger !shadow-[0_0_0_3px_rgba(220,38,38,0.15)]"
+                    : ""
+                }`}
+                aria-labelledby="current-question-text"
+                placeholder={t.writeAnswer}
+                value={currentText}
+                onChange={(e) => onType(e.target.value)}
+                rows={9}
+                autoFocus
+              />
 
-          <div className="flex items-center justify-between mt-2 text-[12px] text-muted">
-            <span>
-              {wordCount} {wordCount === 1 ? t.wordOne : t.wordMany}
-            </span>
-            {currentIsAnswered ? (
-              <span className="flex items-center gap-1 text-accent-700">
-                {t.answeredStatus}
-              </span>
-            ) : (
-              <span>{t.writeBeforeContinuing}</span>
-            )}
-          </div>
-
-          {showRequiredHint && !currentIsAnswered && (
-            <div className="notice-warn mt-4">
-              <div>
-                <strong>{t.requiredHintTitle}</strong> {t.requiredHintBody}
+              <div className="flex items-center justify-between mt-2 text-[12px] text-muted">
+                <span>
+                  {wordCount} {wordCount === 1 ? t.wordOne : t.wordMany}
+                </span>
+                {currentIsAnswered ? (
+                  <span className="flex items-center gap-1 text-accent-700">
+                    {t.answeredStatus}
+                  </span>
+                ) : (
+                  <span>{t.writeBeforeContinuing}</span>
+                )}
               </div>
-            </div>
+
+              {showRequiredHint && !currentIsAnswered && (
+                <div className="notice-warn mt-4">
+                  <div>
+                    <strong>{t.requiredHintTitle}</strong> {t.requiredHintBody}
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <div className="text-[13px] text-muted mb-3">
+                {current.answerType === "single_choice"
+                  ? t.chooseOne
+                  : t.chooseMultiple}
+              </div>
+
+              <div
+                className="space-y-2"
+                role={
+                  current.answerType === "single_choice" ? "radiogroup" : "group"
+                }
+                aria-labelledby="current-question-text"
+              >
+                {current.options.map((o) => {
+                  const checked = currentSelection.includes(o.id);
+                  const isRadio = current.answerType === "single_choice";
+                  return (
+                    <label
+                      key={o.id}
+                      className={`flex items-center gap-3 card p-3.5 cursor-pointer transition-colors ${
+                        checked
+                          ? "ring-2 ring-brand-500 bg-brand-50/40"
+                          : "hover:border-ink"
+                      }`}
+                    >
+                      <input
+                        type={isRadio ? "radio" : "checkbox"}
+                        name={isRadio ? `q-${current.id}` : undefined}
+                        checked={checked}
+                        onChange={() =>
+                          isRadio ? onSelectSingle(o.id) : onToggleMulti(o.id)
+                        }
+                        className="accent-brand-600 shrink-0"
+                      />
+                      <span className="text-[15px] text-ink">
+                        {isAr ? o.labelAr : o.labelEn}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+
+              {current.allowComment && (
+                <div className="mt-4">
+                  <label className="label" htmlFor="choice-comment">
+                    {t.optionalComment}
+                  </label>
+                  <textarea
+                    id="choice-comment"
+                    className="field"
+                    placeholder={t.commentPlaceholder}
+                    value={currentComment}
+                    onChange={(e) => onCommentType(e.target.value)}
+                    rows={3}
+                  />
+                </div>
+              )}
+
+              <div className="flex items-center justify-between mt-3 text-[12px] text-muted">
+                <span>
+                  {currentSelection.length} {t.selectedCountLabel}
+                </span>
+                {currentHasAnswer ? (
+                  <span className="flex items-center gap-1 text-accent-700">
+                    {t.answeredStatus}
+                  </span>
+                ) : current.allowSkip ? (
+                  <span>{t.maySkip}</span>
+                ) : (
+                  <span>{t.selectBeforeContinuing}</span>
+                )}
+              </div>
+
+              {showRequiredHint && !currentSatisfied && (
+                <div className="notice-warn mt-4">
+                  <div>
+                    <strong>{t.requiredHintTitle}</strong>{" "}
+                    {t.selectBeforeContinuing}
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
 
@@ -343,7 +577,7 @@ export default function QuestionnaireWizard({
           <button
             onClick={handleNext}
             className="btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
-            disabled={!currentIsAnswered || pending}
+            disabled={!currentSatisfied || pending}
           >
             {isLast ? t.submit : t.next} <span className="rtl:rotate-180">→</span>
           </button>
@@ -367,7 +601,7 @@ export default function QuestionnaireWizard({
           </div>
           <div className="flex flex-wrap gap-1.5">
             {questions.map((q, i) => {
-              const isAnswered = (answers[q.id] ?? "").trim().length > 0;
+              const isAnswered = qHasAnswer(q);
               const isCurrent = i === currentIdx;
               const isLocked = i > furthestReachable;
               return (

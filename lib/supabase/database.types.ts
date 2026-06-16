@@ -12,31 +12,6 @@ export type Database = {
   __InternalSupabase: {
     PostgrestVersion: "14.5"
   }
-  graphql_public: {
-    Tables: {
-      [_ in never]: never
-    }
-    Views: {
-      [_ in never]: never
-    }
-    Functions: {
-      graphql: {
-        Args: {
-          extensions?: Json
-          operationName?: string
-          query?: string
-          variables?: Json
-        }
-        Returns: Json
-      }
-    }
-    Enums: {
-      [_ in never]: never
-    }
-    CompositeTypes: {
-      [_ in never]: never
-    }
-  }
   public: {
     Tables: {
       admins: {
@@ -72,8 +47,39 @@ export type Database = {
         }
         Relationships: []
       }
+      answer_options: {
+        Row: {
+          answer_id: string
+          option_id: string
+        }
+        Insert: {
+          answer_id: string
+          option_id: string
+        }
+        Update: {
+          answer_id?: string
+          option_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "answer_options_answer_id_fkey"
+            columns: ["answer_id"]
+            isOneToOne: false
+            referencedRelation: "answers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "answer_options_option_id_fkey"
+            columns: ["option_id"]
+            isOneToOne: false
+            referencedRelation: "question_options"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       answers: {
         Row: {
+          answer_comment: string | null
           answer_text: string
           id: string
           question_id: string
@@ -82,6 +88,7 @@ export type Database = {
           word_count: number | null
         }
         Insert: {
+          answer_comment?: string | null
           answer_text?: string
           id?: string
           question_id: string
@@ -90,6 +97,7 @@ export type Database = {
           word_count?: number | null
         }
         Update: {
+          answer_comment?: string | null
           answer_text?: string
           id?: string
           question_id?: string
@@ -1087,13 +1095,13 @@ export type Database = {
     Functions: {
       commit_consent_sign: {
         Args: {
+          p_agreed_to_participate: boolean
+          p_agreed_to_read: boolean
+          p_audio_consent: boolean
+          p_consent_text_version?: string
+          p_language: string
           p_response_id: string
           p_signed_name_encrypted: string
-          p_audio_consent: boolean
-          p_agreed_to_read: boolean
-          p_agreed_to_participate: boolean
-          p_language: string
-          p_consent_text_version?: string
         }
         Returns: string
       }
@@ -1122,6 +1130,15 @@ export type Database = {
           p_user_agent?: string
         }
         Returns: undefined
+      }
+      save_choice_answer: {
+        Args: {
+          p_comment?: string
+          p_option_ids: string[]
+          p_question_id: string
+          p_response_id: string
+        }
+        Returns: string
       }
       validate_invitation_code: {
         Args: { p_code: string }
@@ -1310,9 +1327,6 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
-  graphql_public: {
-    Enums: {},
-  },
   public: {
     Enums: {
       admin_role: ["owner", "readonly"],
