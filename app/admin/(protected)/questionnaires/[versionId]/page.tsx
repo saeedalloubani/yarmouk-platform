@@ -13,6 +13,7 @@ import { getCurrentAdmin } from "@/lib/auth";
 import {
   getVersion,
   getQuestionsForVersion,
+  getOptionsForQuestions,
   variantLabel,
 } from "@/lib/repos/questionnaires";
 import QuestionEditor, {
@@ -27,6 +28,12 @@ const VIS_LABEL: Record<string, string> = {
   jordanian: "Jordanian only",
   syrian: "Syrian only",
   both: "Jordanian + Syrian",
+};
+
+const ANSWER_TYPE_LABEL: Record<string, string> = {
+  free_text: "Free text",
+  single_choice: "Single choice",
+  multi_choice: "Multiple choice",
 };
 
 function visKey(a: ("jordanian" | "syrian")[] | null): string {
@@ -54,6 +61,11 @@ export default async function EditVersionPage({
   if (!version) notFound();
 
   const questions = await getQuestionsForVersion(supabase, versionId);
+  // D102 — choice questions carry authored options (batch-loaded, ordered).
+  const optionsByQuestion = await getOptionsForQuestions(
+    supabase,
+    questions.map((q) => q.id)
+  );
 
   // Narrow visible_nationalities to the two the editor handles (drop the
   // unused 'not_applicable' enum value, which never occurs in practice).
@@ -70,6 +82,13 @@ export default async function EditVersionPage({
           (n): n is "jordanian" | "syrian" => n === "jordanian" || n === "syrian"
         )
       : null,
+    answerType: q.answerType,
+    allowComment: q.allowComment,
+    allowSkip: q.allowSkip,
+    options: (optionsByQuestion.get(q.id) ?? []).map((o) => ({
+      labelEn: o.labelEn,
+      labelAr: o.labelAr,
+    })),
   }));
 
   const isDraft = version.status === "draft";
@@ -141,14 +160,32 @@ export default async function EditVersionPage({
               <ol className="space-y-3">
                 {views.map((q) => (
                   <li key={q.id} className="card p-5">
-                    <div className="flex items-center gap-2 mb-1.5">
+                    <div className="flex items-center gap-2 mb-1.5 flex-wrap">
                       <span className="mono text-[11px] font-semibold text-brand-700">{q.code}</span>
                       {q.isFeedback && <span className="chip-solid bg-brand-50 text-brand-700">feedback</span>}
                       <span className="chip-solid bg-bgAlt text-muted">{q.isRequired ? "required" : "optional"}</span>
                       <span className="chip-solid bg-bgAlt text-muted">{VIS_LABEL[visKey(q.visibleNationalities)]}</span>
+                      <span className="chip-solid bg-bgAlt text-muted">{ANSWER_TYPE_LABEL[q.answerType] ?? q.answerType}</span>
                     </div>
                     <p className="text-[13px] text-ink mb-1">{q.textEn}</p>
-                    <p className="text-[13px] text-ink/80 font-arabic" dir="rtl">{q.textAr}</p>
+                    <p className="text-[13px] text-ink/80 font-arabic mb-1" dir="rtl">{q.textAr}</p>
+                    {q.answerType !== "free_text" && q.options.length > 0 && (
+                      <ul className="mt-2 space-y-1">
+                        {q.options.map((o, oi) => (
+                          <li key={oi} className="text-[12px] text-muted flex flex-wrap gap-x-2">
+                            <span>{oi + 1}. {o.labelEn}</span>
+                            <span className="font-arabic" dir="rtl">{o.labelAr}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {(q.allowComment || q.allowSkip) && (
+                      <p className="text-[11px] text-muted-faint mt-2">
+                        {[q.allowComment ? "comment allowed" : null, q.allowSkip ? "skippable" : null]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </p>
+                    )}
                   </li>
                 ))}
               </ol>
