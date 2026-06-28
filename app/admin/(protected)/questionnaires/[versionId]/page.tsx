@@ -103,6 +103,12 @@ export default async function EditVersionPage({
             </Link>
             <div className="flex items-start gap-3">
               <Link
+                href={`/admin/questionnaires/${version.id}/consent-preview`}
+                className="btn-ghost text-[13px]"
+              >
+                Preview consent
+              </Link>
+              <Link
                 href={`/admin/questionnaires/${version.id}/preview`}
                 className="btn-secondary text-[13px]"
               >

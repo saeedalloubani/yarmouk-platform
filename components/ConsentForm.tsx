@@ -19,9 +19,14 @@ import { submitConsent } from "@/lib/actions/consent";
 export default function ConsentForm({
   lang,
   type,
+  preview = false,
 }: {
   lang: Lang;
   type: "pilot" | "main";
+  // D105a — owner preview: render + let the boxes/radio toggle (so Sign
+  // visibly enables), but the Sign button is INERT — no submitConsent, no
+  // write. Defaults false, so the real respondent flow is unchanged.
+  preview?: boolean;
 }) {
   const t = getTranslations(lang);
   const isAr = lang === "ar";
@@ -59,6 +64,7 @@ export default function ConsentForm({
 
   function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (preview) return; // D105a — owner preview: Sign is INERT; no submit, no write
     if (!canSubmit || pending) return;
     setError(null);
     startTransition(async () => {
