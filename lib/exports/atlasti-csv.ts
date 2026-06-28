@@ -18,10 +18,11 @@
 //
 // Pure value-in / value-out — no Supabase client, no I/O.
 
-import type {
-  AtlasExportPayload,
-  AtlasQuestion,
-  AtlasResponseRow,
+import {
+  atlasQuestionHasCommentColumn,
+  type AtlasExportPayload,
+  type AtlasQuestion,
+  type AtlasResponseRow,
 } from "../repos/exports";
 
 // Static (non-question) headers — same order + same labels as
@@ -64,6 +65,11 @@ function buildHeaders(questions: AtlasQuestion[]): string[] {
     // Q-code + label, ATLAS `::` separator. Question text could contain
     // commas / newlines — quote() at emission time handles RFC 4180.
     out.push(`${q.code}::${q.textEn}`);
+    // D107 — a choice-with-comment question's comment column, right after
+    // its value column (mirrors atlasti-xlsx.ts buildColumns).
+    if (atlasQuestionHasCommentColumn(q)) {
+      out.push(`${q.code} comment::${q.textEn}`);
+    }
   }
   out.push(TAGS_HEADER);
   return out;
@@ -86,6 +92,10 @@ function rowFields(
     // Empty cell for unanswered (variant-specific visibility or
     // partial-with-optional gaps). ATLAS reads empty as no-answer.
     fields.push(row.answers.get(q.code) ?? "");
+    // D107 — the comment cell (same column order as buildHeaders).
+    if (atlasQuestionHasCommentColumn(q)) {
+      fields.push(row.comments.get(q.code) ?? "");
+    }
   }
   // Literal comma separator (D84 Q-K — tags table empty today; backlog
   // ticket reserves tag-name validation to forbid commas at apply time).

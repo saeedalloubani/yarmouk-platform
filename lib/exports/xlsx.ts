@@ -40,12 +40,15 @@ const COLUMNS: ColumnSpec[] = [
   { header: "question_text_en",     width: 50 },
   { header: "question_text_ar",     width: 50 },
   { header: "answer_text",          width: 60 },
+  // D107 — choice answer comment in its own column (free_text rows: blank).
+  { header: "answer_comment",       width: 50 },
 ];
 
 const WRAP_TEXT_COLUMNS = [
   "question_text_en",
   "question_text_ar",
   "answer_text",
+  "answer_comment",
 ] as const;
 
 function rowValues(r: ExportRow): Record<string, string | number | boolean> {
@@ -70,6 +73,7 @@ function rowValues(r: ExportRow): Record<string, string | number | boolean> {
     question_text_en:     r.questionTextEn,
     question_text_ar:     r.questionTextAr,
     answer_text:          r.answerText,
+    answer_comment:       r.answerComment, // D107
   };
 }
 

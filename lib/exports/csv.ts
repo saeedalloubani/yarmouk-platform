@@ -37,6 +37,8 @@ const HEADERS = [
   "question_text_en",
   "question_text_ar",
   "answer_text",
+  // D107 — choice answer comment in its own column (free_text rows: blank).
+  "answer_comment",
 ] as const;
 
 function quote(v: string | number | boolean | null): string {
@@ -70,6 +72,7 @@ function rowFields(r: ExportRow): string[] {
     r.questionTextEn,
     r.questionTextAr,
     r.answerText,
+    r.answerComment, // D107
   ];
 }
 

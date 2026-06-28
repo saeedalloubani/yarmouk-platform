@@ -209,6 +209,25 @@ export function richAnswerIsAnswered(r: RichAnswer): boolean {
     : r.selectedOptions.length > 0;
 }
 
+/** D107 — ENGLISH-CANONICAL flat rendering of an answer's VALUE for the
+ *  export surfaces (ATLAS wide + long-format). Language-INDEPENDENT by lock:
+ *  always the English label, never the respondent's — canonical for ATLAS
+ *  coding so the same answer codes identically regardless of which language
+ *  the respondent used.
+ *    free_text  → the body verbatim (so the free_text/pilot export path is
+ *                 BYTE-IDENTICAL — this returns exactly the old answer_text).
+ *    single/multi_choice → "optionCode: labelEn" per selection, joined by
+ *                 " | " (space-pipe-space; comma-free so labels containing
+ *                 commas stay parseable). Empty selection → "" (blank cell,
+ *                 which ATLAS reads as no-answer — same as before).
+ *  The COMMENT is NOT included here — exports carry it in its own column. */
+export function renderAnswerValue(r: RichAnswer): string {
+  if (r.answerType === "free_text") return r.text;
+  return r.selectedOptions
+    .map((o) => `${o.optionCode}: ${o.labelEn}`)
+    .join(" | ");
+}
+
 /** Question_ids SATISFIED for the submit gate — TYPE-AWARE (D103):
  *    free_text → answer_text non-empty (unchanged from the pre-D103 rule);
  *    single/multi_choice → at least one selected option (answer_options row);
