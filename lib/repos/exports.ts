@@ -39,6 +39,9 @@ import type { Database } from "../supabase/database.types";
 // D95 — canonical variant→label for the long-format `variant` column.
 // Pure function; one source of truth with the D94 chips + analytics.
 import { variantLabel } from "./questionnaires";
+// D107 — choice-aware exports read through the same getRichAnswers keystone
+// the admin reader uses (D106), formatted English-canonical for ATLAS.
+import { getRichAnswers, renderAnswerValue, type RichAnswer } from "./answers";
 
 export type ExportRow = {
   refCode: string;
@@ -66,7 +69,14 @@ export type ExportRow = {
   isFeedback: boolean;
   questionTextEn: string;
   questionTextAr: string;
+  // D107 — the rendered answer VALUE (free_text body verbatim → byte-identical
+  // for existing exports; choice → "opt_1: Yes | ..."). Column header stays
+  // `answer_text` (Sura's column muscle-memory + any analysis scripts keying
+  // on it keep working); only the CONTENT for choice rows changes.
   answerText: string;
+  // D107 — the choice answer's comment, in its own `answer_comment` column.
+  // "" for free_text (no comment field) and for choice with no comment.
+  answerComment: string;
 };
 
 /**
@@ -161,7 +171,21 @@ export type AtlasQuestion = {
   textEn: string;      // label after `::` in column header
   orderIndex: number;
   isFeedback: boolean;
+  // D107 — answer_type + allow_comment drive the serializers' column build:
+  // a choice question that allows a comment gets an extra "{code} comment"
+  // column interleaved after its value column. free_text never does.
+  answerType: Database["public"]["Enums"]["answer_type"];
+  allowComment: boolean;
 };
+
+/** D107 — does this question get a "{code} comment" column in the wide
+ *  exports? Only choice questions that allow a comment: free_text never has
+ *  one, and a choice question without allow_comment can't carry one. Shared
+ *  by all three wide serializers (Survey CSV/XLSX + Desktop XLSX) + the
+ *  Desktop codebook so the comment-column set never drifts between them. */
+export function atlasQuestionHasCommentColumn(q: AtlasQuestion): boolean {
+  return q.answerType !== "free_text" && q.allowComment;
+}
 
 /** One row of the wide-format pivot. Static metadata + answers map keyed
  *  by question_code + tags array. The serializers fan out `answers` into
@@ -176,8 +200,14 @@ export type AtlasResponseRow = {
   collectionMode: string;
   submittedAt: string;
   consentSignedAt: string | null;
-  /** question_code → answer_text (empty/missing entries → blank cell). */
+  /** question_code → rendered answer VALUE (D107: free_text body verbatim;
+   *  choice → "opt_1: Yes | opt_2: No"). Empty/missing entries → blank cell. */
   answers: Map<string, string>;
+  /** D107 — question_code → comment text, for choice questions whose answer
+   *  carried a comment. Only present codes have a comment; the serializers
+   *  emit a "{code} comment" column for every choice-with-allow_comment
+   *  question and fill it from this map (blank when absent). */
+  comments: Map<string, string>;
   /** Tag names in apply-order (newest first to match the UI surface). */
   tags: string[];
 };
@@ -349,7 +379,7 @@ export async function getResponsesForAtlasExport(
 
   const { data: qRows, error: qErr } = await supabase
     .from("questions")
-    .select("id, question_code, order_index, is_feedback, text_en")
+    .select("id, question_code, order_index, is_feedback, text_en, answer_type, allow_comment")
     .eq("version_id", versionId)
     .order("order_index", { ascending: true });
   if (qErr) throw qErr;
@@ -359,28 +389,35 @@ export async function getResponsesForAtlasExport(
     textEn: q.text_en,
     orderIndex: q.order_index,
     isFeedback: q.is_feedback,
+    // D107 — drive the per-question comment column in the serializers.
+    answerType: q.answer_type,
+    allowComment: q.allow_comment,
   }));
   const questionCodeById = new Map(
     questionRows.map((q) => [q.id, q.question_code] as const)
   );
 
   // ── 5. Answers — keyed by (response_id, question_code) ────────────
+  // D107 — read through the getRichAnswers keystone, then renderAnswerValue
+  // (free_text → body verbatim → byte-identical; choice → "opt_1: Yes | ...").
+  // Comments ride a parallel map (choice answers that carried one).
   const responseIds = responses.map((r) => r.id);
-  const { data: ansRows, error: aErr } = await supabase
-    .from("answers")
-    .select("response_id, question_id, answer_text")
-    .in("response_id", responseIds);
-  if (aErr) throw aErr;
+  const rich = await getRichAnswers(supabase, responseIds);
   const answersByResponse = new Map<string, Map<string, string>>();
-  for (const a of ansRows ?? []) {
-    const qCode = questionCodeById.get(a.question_id);
-    if (!qCode) continue; // defensive — version_id mismatch shouldn't happen
-    let bucket = answersByResponse.get(a.response_id);
-    if (!bucket) {
-      bucket = new Map<string, string>();
-      answersByResponse.set(a.response_id, bucket);
+  const commentsByResponse = new Map<string, Map<string, string>>();
+  for (const [responseId, byQuestion] of rich) {
+    const answerBucket = new Map<string, string>();
+    const commentBucket = new Map<string, string>();
+    for (const [questionId, ra] of byQuestion) {
+      const qCode = questionCodeById.get(questionId);
+      if (!qCode) continue; // defensive — version_id mismatch shouldn't happen
+      answerBucket.set(qCode, renderAnswerValue(ra));
+      if (ra.comment && ra.comment.trim().length > 0) {
+        commentBucket.set(qCode, ra.comment);
+      }
     }
-    bucket.set(qCode, a.answer_text ?? "");
+    answersByResponse.set(responseId, answerBucket);
+    commentsByResponse.set(responseId, commentBucket);
   }
 
   // ── 6. Consent timestamps ─────────────────────────────────────────
@@ -432,6 +469,7 @@ export async function getResponsesForAtlasExport(
       submittedAt: resp.submitted_at as string,
       consentSignedAt: consentByResponse.get(resp.id) ?? null,
       answers: answersByResponse.get(resp.id) ?? new Map<string, string>(),
+      comments: commentsByResponse.get(resp.id) ?? new Map<string, string>(),
       tags: tagsByResponse.get(resp.id) ?? [],
     });
   }
@@ -661,18 +699,20 @@ export async function getResponsesForExport(
     (consentRows ?? []).map((c) => [c.response_id, c.signed_at] as const)
   );
 
-  // 5. Answers — join target.
-  const { data: ansRows, error: aErr } = await supabase
-    .from("answers")
-    .select("response_id, question_id, answer_text")
-    .in("response_id", responseIds);
-  if (aErr) throw aErr;
-  const answers = ansRows ?? [];
-  if (answers.length === 0) return [];
+  // 5. Answers — D107: read through the getRichAnswers keystone so choice
+  //    answers carry their selections + comment (the long-format row's
+  //    answer_text was previously '' for a choice answer). free_text rows are
+  //    byte-identical (renderAnswerValue returns the body verbatim, comment '').
+  const rich = await getRichAnswers(supabase, responseIds);
+  const questionIds = Array.from(
+    new Set(
+      [...rich.values()].flatMap((byQuestion) => [...byQuestion.keys()])
+    )
+  );
+  if (questionIds.length === 0) return [];
 
   // 6. Questions — denormalized join. Pull metadata for every distinct
   //    question_id referenced by the answers above.
-  const questionIds = Array.from(new Set(answers.map((a) => a.question_id)));
   const { data: qRows, error: qErr } = await supabase
     .from("questions")
     .select("id, question_code, order_index, is_feedback, text_en, text_ar")
@@ -689,15 +729,19 @@ export async function getResponsesForExport(
     const inv = invById.get(resp.invitation_id);
     if (!inv) continue;
     const consentSignedAt = consentByResponse.get(resp.id) ?? null;
-    const respAnswers = answers
-      .filter((a) => a.response_id === resp.id)
-      .map((a) => {
-        const q = questionById.get(a.question_id);
-        return q ? { a, q } : null;
+    const byQuestion = rich.get(resp.id);
+    if (!byQuestion) continue;
+    const respAnswers = [...byQuestion.entries()]
+      .map(([questionId, ra]) => {
+        const q = questionById.get(questionId);
+        return q ? { ra, q } : null;
       })
-      .filter((x): x is { a: (typeof answers)[number]; q: NonNullable<ReturnType<typeof questionById.get>> } => x !== null)
+      .filter(
+        (x): x is { ra: RichAnswer; q: NonNullable<ReturnType<typeof questionById.get>> } =>
+          x !== null
+      )
       .sort((x, y) => x.q.order_index - y.q.order_index);
-    for (const { a, q } of respAnswers) {
+    for (const { ra, q } of respAnswers) {
       out.push({
         refCode: inv.refCode,
         variant: inv.variant, // D95
@@ -721,7 +765,10 @@ export async function getResponsesForExport(
         isFeedback: q.is_feedback,
         questionTextEn: q.text_en,
         questionTextAr: q.text_ar,
-        answerText: a.answer_text,
+        // D107 — rendered VALUE (free_text body verbatim → byte-identical;
+        // choice → "opt_1: Yes | ...") + the comment in its own column.
+        answerText: renderAnswerValue(ra),
+        answerComment: ra.comment ?? "",
       });
     }
   }

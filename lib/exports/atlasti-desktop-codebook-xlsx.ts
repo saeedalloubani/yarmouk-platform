@@ -50,7 +50,10 @@
 // writer pattern as atlasti-desktop-xlsx.ts.
 
 import ExcelJS from "exceljs";
-import type { AtlasExportPayload } from "../repos/exports";
+import {
+  atlasQuestionHasCommentColumn,
+  type AtlasExportPayload,
+} from "../repos/exports";
 
 const CODE_COLUMN = { key: "code", header: "Code", width: 10 } as const;
 const COMMENT_COLUMN = {
@@ -111,6 +114,18 @@ export async function serializeAtlasDesktopCodebookXlsx(
       comment: q.textEn,
       group1: groupLabel,
     });
+    // D107 — the Desktop responses workbook emits a bare `{code} comment`
+    // column for each choice-with-comment question, which imports as a
+    // sibling CODE. Seed a matching codebook row so that code lands
+    // documented (comment = the parent question's text_en, same group) —
+    // preserving the one-row-per-importable-code completeness invariant.
+    if (atlasQuestionHasCommentColumn(q)) {
+      ws.addRow({
+        code: `${q.code} comment`,
+        comment: q.textEn,
+        group1: groupLabel,
+      });
+    }
   }
 
   // wrapText on the Comment column (questions can be long, multi-line).

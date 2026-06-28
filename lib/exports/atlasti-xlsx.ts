@@ -34,10 +34,11 @@
 // runs in Node).
 
 import ExcelJS from "exceljs";
-import type {
-  AtlasExportPayload,
-  AtlasQuestion,
-  AtlasResponseRow,
+import {
+  atlasQuestionHasCommentColumn,
+  type AtlasExportPayload,
+  type AtlasQuestion,
+  type AtlasResponseRow,
 } from "../repos/exports";
 
 // Static (non-question) column order. The serializer interleaves
@@ -71,9 +72,17 @@ function questionColKey(q: AtlasQuestion): string {
   return `q_${q.code}`;
 }
 
+/** D107 — column key for a choice question's comment column. */
+function questionCommentColKey(q: AtlasQuestion): string {
+  return `qc_${q.code}`;
+}
+
 /** Build the full ordered column spec: static prefix + question
  *  columns (in payload.questions order — order_index ASC, with feedback
- *  Q-codes after the main set per the seed convention) + #tags. */
+ *  Q-codes after the main set per the seed convention) + #tags. D107 —
+ *  a choice-with-comment question gets a `{code} comment::{textEn}` column
+ *  immediately after its value column (ATLAS reads the name before `::` as
+ *  the code, so the comment imports as a sibling code "Q1 comment"). */
 function buildColumns(
   questions: AtlasQuestion[]
 ): Array<{ key: string; header: string; width: number }> {
@@ -87,6 +96,13 @@ function buildColumns(
       header: `${q.code}::${q.textEn}`,
       width: 50,
     });
+    if (atlasQuestionHasCommentColumn(q)) {
+      cols.push({
+        key: questionCommentColKey(q),
+        header: `${q.code} comment::${q.textEn}`,
+        width: 40,
+      });
+    }
   }
   cols.push({
     key: TAGS_COLUMN.header,
@@ -115,6 +131,10 @@ function rowValues(
     // visibility, or partial response that submitted with optional
     // gaps). ATLAS reads empty as no-answer.
     v[questionColKey(q)] = row.answers.get(q.code) ?? "";
+    // D107 — the comment cell, when this question has a comment column.
+    if (atlasQuestionHasCommentColumn(q)) {
+      v[questionCommentColKey(q)] = row.comments.get(q.code) ?? "";
+    }
   }
   // Literal comma separator (D84 Q-K). Tags table empty today; backlog
   // ticket reserves tag-name comma validation for future hardening.
@@ -150,8 +170,16 @@ export async function serializeAtlasXlsx(
   // plus #tags (comma-separated lists can grow). The static metadata
   // columns are short and stay single-line.
   for (const q of payload.questions) {
-    const col = ws.getColumn(questionColKey(q));
-    col.alignment = { wrapText: true, vertical: "top" };
+    ws.getColumn(questionColKey(q)).alignment = {
+      wrapText: true,
+      vertical: "top",
+    };
+    if (atlasQuestionHasCommentColumn(q)) {
+      ws.getColumn(questionCommentColKey(q)).alignment = {
+        wrapText: true,
+        vertical: "top",
+      };
+    }
   }
   ws.getColumn(TAGS_COLUMN.header).alignment = {
     wrapText: true,
