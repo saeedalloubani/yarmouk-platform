@@ -21,6 +21,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../supabase/database.types";
+import { getRichAnswers, richAnswerIsAnswered } from "./answers";
 
 type DbRow = Database["public"]["Tables"]["responses"]["Row"];
 
@@ -39,12 +40,6 @@ export type ResponseRow = {
   isLocked: boolean;
   status: ResponseStatus;
   withdrawnAt: string | null;
-};
-
-export type AnswerDetail = {
-  questionId: string;
-  answerText: string;
-  wordCount: number;
 };
 
 function rowToResponse(r: DbRow): ResponseRow {
@@ -157,11 +152,12 @@ export async function getResponse(
 }
 
 /**
- * Non-empty answer count per response, for the list view. Counts only
- * answers whose text is non-blank (matches the questionnaire's notion of
- * "answered" — getAnsweredQuestionIds in answers.ts). Returns a Map keyed
- * by response_id; responses with no answers are simply absent (caller
- * defaults to 0).
+ * Answered-question count per response, for the list view. D106 — TYPE-AWARE
+ * via the shared getRichAnswers keystone + richAnswerIsAnswered predicate
+ * (free_text → non-empty text; choice → ≥1 selected option). Before D106 this
+ * counted non-blank answer_text only, so a choice answer (answer_text = '')
+ * never counted. Returns a Map keyed by response_id; responses with no
+ * answered questions are simply absent (caller defaults to 0).
  */
 export async function getAnswerCounts(
   supabase: SupabaseClient<Database>,
@@ -169,40 +165,11 @@ export async function getAnswerCounts(
 ): Promise<Map<string, number>> {
   const counts = new Map<string, number>();
   if (responseIds.length === 0) return counts;
-  const { data, error } = await supabase
-    .from("answers")
-    .select("response_id, answer_text")
-    .in("response_id", responseIds);
-  if (error) throw error;
-  for (const row of data ?? []) {
-    if ((row.answer_text ?? "").trim().length > 0) {
-      counts.set(row.response_id, (counts.get(row.response_id) ?? 0) + 1);
-    }
+  const rich = await getRichAnswers(supabase, responseIds);
+  for (const [responseId, byQuestion] of rich) {
+    let n = 0;
+    for (const a of byQuestion.values()) if (richAnswerIsAnswered(a)) n += 1;
+    if (n > 0) counts.set(responseId, n);
   }
   return counts;
-}
-
-/**
- * All answers for one response, keyed by question_id, for the detail view.
- * Includes the generated word_count (defaults to 0 when null). The detail
- * page left-joins this against the respondent's visible question set.
- */
-export async function getAnswersForResponse(
-  supabase: SupabaseClient<Database>,
-  responseId: string
-): Promise<Map<string, AnswerDetail>> {
-  const { data, error } = await supabase
-    .from("answers")
-    .select("question_id, answer_text, word_count")
-    .eq("response_id", responseId);
-  if (error) throw error;
-  const map = new Map<string, AnswerDetail>();
-  for (const row of data ?? []) {
-    map.set(row.question_id, {
-      questionId: row.question_id,
-      answerText: row.answer_text ?? "",
-      wordCount: row.word_count ?? 0,
-    });
-  }
-  return map;
 }
