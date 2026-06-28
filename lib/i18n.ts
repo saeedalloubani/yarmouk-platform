@@ -169,6 +169,94 @@ export const translations = {
   signAndContinue: { en: "Sign and Continue", ar: "التوقيع والمتابعة" },
   back: { en: "Back", ar: "رجوع" },
 
+  // ---- D105 MAIN consent (Sura's approved JUST/WDC IRB form) ----
+  // MAIN-ONLY keys (mc*). Pilot consent keeps its own keys above, untouched.
+  // EN + AR are VERBATIM from Sura's approved form, EXCEPT three short section
+  // titles she did not supply standalone — flagged [TITLE AR SUPPLIED] for her
+  // confirmation (the legal/body text is exact-from-form). The audio DECLINE
+  // option reuses the existing approved `audioDecline` label (the form gives
+  // only the agree wording, declaration #3).
+  mcTitle: { en: "INFORMED CONSENT FORM", ar: "نموذج الموافقة المستنيرة" },
+  mcResearchTitle: {
+    en: "Evaluating the 1987 Agreement Between Jordan and Syria Concerning the Utilization of the Yarmouk River in Light of International Water Law and Environmental Principles",
+    ar: "تقييم اتفاقية عام 1987 بين الأردن وسوريا بشأن استغلال مياه نهر اليرموك في ضوء القانون الدولي للمياه والمبادئ البيئية",
+  },
+  mcResearcher: {
+    en: "Sura Karasneh — Master's Student, Water Diplomacy Programme",
+    ar: "سرى كراسنة — طالبة ماجستير، برنامج دبلوماسية المياه",
+  },
+  mcInstitution: {
+    en: "Jordan University of Science and Technology (JUST)",
+    ar: "جامعة العلوم والتكنولوجيا الأردنية",
+  },
+  mcSupervisor: {
+    en: "Dr. Mutawakkil Obeidat, Director, Water Diplomacy Centre, JUST",
+    ar: "د. متوكل عبيدات، مدير مركز دبلوماسية المياه، جامعة العلوم والتكنولوجيا الأردنية",
+  },
+  mcCoAdvisor: {
+    en: "Dr. Virginia Tice, Senior Consultant on Water Resources Management and Environmental Protection, Hydro Nova",
+    ar: "د. فيرجينيا تايس، استشارية في ادارة الموارد المائية و الحماية البيئية، Hydro Nova - Italy",
+  },
+  mcPurposeTitle: { en: "Purpose of the Study", ar: "الغرض من الدراسة" },
+  mcPurposeText: {
+    en: "This research evaluates the 1987 Agreement between Jordan and Syria concerning the utilization of the Yarmouk River in light of International Water Law and International Environmental Law. The study aims to explore the structural limitations of the agreement and propose practical reforms to strengthen transboundary water governance in the basin.",
+    ar: "يقيّم هذا البحث اتفاقية عام 1987 بين الأردن وسوريا بشأن استغلال مياه نهر اليرموك في ضوء القانون الدولي للمياه والقانون البيئي الدولي. تهدف الدراسة إلى دراسة القيود الهيكلية في الاتفاقية واقتراح إصلاحات عملية لتعزيز حوكمة المياه العابرة للحدود في الحوض.",
+  },
+  mcParticipationTitle: {
+    en: "Your Participation",
+    ar: "مشاركتك", // [TITLE AR SUPPLIED — confirm]
+  },
+  mcParticipationText: {
+    en: "You are invited to participate in a research interview as part of this study. Your participation is entirely voluntary.",
+    ar: "أنت مدعو/ة للمشاركة في مقابلة بحثية ضمن هذه الدراسة. مشاركتك طوعية بالكامل.",
+  },
+  mcRecordingTitle: {
+    en: "Recording",
+    ar: "التسجيل الصوتي", // [TITLE AR SUPPLIED — confirm]
+  },
+  mcRecordingText: {
+    en: "With your permission, the interview will be audio-recorded to ensure accuracy in data collection and analysis. The recording will be used solely for research purposes and will not be shared with any third party.",
+    ar: "بعد موافقتك، سيتم تسجيل المقابلة صوتياً لضمان دقة جمع البيانات وتحليلها. سيُستخدم التسجيل لأغراض البحث فقط ولن يتم مشاركته مع أي طرف ثالث.",
+  },
+  mcConfidentialityTitle: { en: "Confidentiality", ar: "السرية" },
+  mcConfidentialityText: {
+    en: 'All responses will be treated with strict confidentiality. Your identity will remain anonymous throughout the research. No names or identifying information will appear in the thesis or any related publications. Responses will be reported in aggregate or using coded identifiers (e.g., "Jordanian Official 1", "Researcher 3").',
+    ar: 'ستُعامل جميع الإجابات بسرية تامة. ستبقى هويتك مجهولة طوال فترة البحث. لن تظهر أي أسماء أو معلومات تعريفية في الرسالة أو أي منشورات ذات صلة. سيتم الإبلاغ عن الردود بشكل إجمالي أو باستخدام رموز تعريفية (مثل: "مسؤول أردني 1"، "باحث 3").',
+  },
+  mcContactTitle: {
+    en: "Contact Information",
+    ar: "معلومات التواصل", // [TITLE AR SUPPLIED — confirm]
+  },
+  mcContactText: {
+    en: "If you have any questions about this study, please contact: Sura Karasneh — Email: sjkarasneh24@eng.just.edu.jo — Phone: +9627996610400",
+    ar: "إذا كان لديك أي أسئلة حول هذه الدراسة، يرجى التواصل مع: سرى كراسنة — البريد الإلكتروني: sjkarasneh24@eng.just.edu.jo — الهاتف: +9627996610400",
+  },
+  mcDeclHeading: {
+    en: "By signing below, I confirm that:",
+    ar: "بالتوقيع أدناه، أؤكد ما يلي:",
+  },
+  mcDecl1: {
+    en: "I have read and understood the above information about the study.",
+    ar: "لقد قرأت وفهمت المعلومات المذكورة أعلاه حول الدراسة.",
+  },
+  mcDecl2: {
+    en: "I understand that my participation is voluntary.",
+    ar: "أفهم أن مشاركتي طوعية.",
+  },
+  mcDecl3: {
+    en: "I consent to the audio recording of the interview.",
+    ar: "أوافق على التسجيل الصوتي للمقابلة.",
+  },
+  mcDecl4: {
+    en: "I understand that my responses will be kept confidential and anonymous.",
+    ar: "أفهم أن إجاباتي ستبقى سرية ومجهولة الهوية.",
+  },
+  mcDecl5: {
+    en: "I agree to participate in this research interview.",
+    ar: "أوافق على المشاركة في هذه المقابلة البحثية.",
+  },
+  mcSignatureLabel: { en: "Participant Name", ar: "اسم المشارك/ة" },
+
   // ---- questionnaire ----
   questionnaire: { en: "Questionnaire", ar: "الاستبيان" },
   question: { en: "Question", ar: "السؤال" },

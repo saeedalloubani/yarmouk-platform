@@ -16,7 +16,13 @@ import Link from "next/link";
 import { getTranslations, type Lang } from "@/lib/i18n";
 import { submitConsent } from "@/lib/actions/consent";
 
-export default function ConsentForm({ lang }: { lang: Lang }) {
+export default function ConsentForm({
+  lang,
+  type,
+}: {
+  lang: Lang;
+  type: "pilot" | "main";
+}) {
   const t = getTranslations(lang);
   const isAr = lang === "ar";
 
@@ -25,17 +31,31 @@ export default function ConsentForm({ lang }: { lang: Lang }) {
   const [audioChoice, setAudioChoice] = useState<"audio" | "noaudio" | null>(
     null
   );
+  // D105 — MAIN-only declarations 2 (voluntary) + 4 (confidentiality): required
+  // UI gates, NOT stored (Option A — no new columns). Unused on the pilot path.
+  const [agreeVoluntary, setAgreeVoluntary] = useState(false);
+  const [agreeConfidential, setAgreeConfidential] = useState(false);
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   const today = new Date().toLocaleDateString(isAr ? "ar-JO" : "en-GB");
 
+  // Pilot gate is unchanged. Main additionally requires the two new
+  // declaration checkboxes; audioChoice !== null = a conscious agree/decline
+  // (either value proceeds — declining audio still consents).
   const canSubmit =
-    agreeRead &&
-    agreeParticipate &&
-    audioChoice !== null &&
-    name.trim().length > 0;
+    type === "main"
+      ? agreeRead &&
+        agreeVoluntary &&
+        agreeConfidential &&
+        agreeParticipate &&
+        audioChoice !== null &&
+        name.trim().length > 0
+      : agreeRead &&
+        agreeParticipate &&
+        audioChoice !== null &&
+        name.trim().length > 0;
 
   function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -51,6 +71,169 @@ export default function ConsentForm({ lang }: { lang: Lang }) {
       // Success redirects server-side; only failures return here.
       if (res && !res.ok) setError(t.consentError);
     });
+  }
+
+  // D105 — MAIN consent (Sura's approved JUST/WDC IRB form). Identity blocks +
+  // 5 info sections + the 5-declaration block (1,2,4,5 required checkboxes; 3 is
+  // the audio agree/decline radio — declining still consents). The pilot render
+  // below is byte-identical to pre-D105.
+  if (type === "main") {
+    return (
+      <main
+        dir={isAr ? "rtl" : "ltr"}
+        className={`min-h-screen bg-white ${isAr ? "font-arabic" : ""}`}
+      >
+        <header className="border-b border-line">
+          <div className="max-w-3xl mx-auto px-6 py-4 flex items-center justify-between">
+            <Link href="/" className="text-[14px] font-bold text-ink tracking-tight">
+              {t.studyLabel}
+            </Link>
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-muted">
+              {t.step1of3}
+            </div>
+          </div>
+        </header>
+
+        <div className="max-w-2xl mx-auto px-6 pt-12 pb-20">
+          <div className="eyebrow mb-3">{t.consent}</div>
+          <h1 className="text-[28px] font-bold text-ink leading-tight mb-3 tracking-tight">
+            {t.mcTitle}
+          </h1>
+          <p className="text-[15px] text-muted-strong leading-relaxed mb-6">
+            {t.mcResearchTitle}
+          </p>
+
+          {/* Identity block — self-describing values (researcher / institution
+              / supervisor / co-advisor). */}
+          <div className="card p-5 mb-8 space-y-1.5 text-[13px] text-ink">
+            <div>{t.mcResearcher}</div>
+            <div>{t.mcInstitution}</div>
+            <div>{t.mcSupervisor}</div>
+            <div>{t.mcCoAdvisor}</div>
+          </div>
+
+          <form onSubmit={onSubmit} className="space-y-5">
+            <Section index="1" title={t.mcPurposeTitle} body={t.mcPurposeText} />
+            <Section
+              index="2"
+              title={t.mcParticipationTitle}
+              body={t.mcParticipationText}
+            />
+            <Section
+              index="3"
+              title={t.mcRecordingTitle}
+              body={t.mcRecordingText}
+            />
+            <Section
+              index="4"
+              title={t.mcConfidentialityTitle}
+              body={t.mcConfidentialityText}
+            />
+            <Section
+              index="5"
+              title={t.mcContactTitle}
+              body={t.mcContactText}
+            />
+
+            {/* Consent declaration — 5 items in form order. 1,2,4,5 are required
+                checkboxes; 3 is the audio agree/decline radio (optional —
+                declining audio still consents + participates). */}
+            <div className="card p-6">
+              <p className="text-[15px] font-bold text-ink mb-4">
+                {t.mcDeclHeading}
+              </p>
+              <div className="space-y-3">
+                <CheckOption
+                  checked={agreeRead}
+                  onChange={setAgreeRead}
+                  label={t.mcDecl1}
+                />
+                <CheckOption
+                  checked={agreeVoluntary}
+                  onChange={setAgreeVoluntary}
+                  label={t.mcDecl2}
+                />
+                {/* 3 — audio recording: explicit agree/decline radio */}
+                <div className="space-y-2.5 py-1">
+                  <RadioOption
+                    checked={audioChoice === "audio"}
+                    onChange={() => setAudioChoice("audio")}
+                    label={t.mcDecl3}
+                  />
+                  <RadioOption
+                    checked={audioChoice === "noaudio"}
+                    onChange={() => setAudioChoice("noaudio")}
+                    label={t.audioDecline}
+                  />
+                </div>
+                <CheckOption
+                  checked={agreeConfidential}
+                  onChange={setAgreeConfidential}
+                  label={t.mcDecl4}
+                />
+                <CheckOption
+                  checked={agreeParticipate}
+                  onChange={setAgreeParticipate}
+                  label={t.mcDecl5}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-6 mt-2 border-t border-line">
+                <div>
+                  <label className="label">{t.mcSignatureLabel}</label>
+                  <input
+                    type="text"
+                    className="field"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder={t.fullNamePlaceholder}
+                  />
+                </div>
+                <div>
+                  <label className="label">{t.todayDate}</label>
+                  <input type="text" className="field" value={today} disabled />
+                </div>
+              </div>
+            </div>
+
+            {error && (
+              <div className="notice-warn">
+                <span>{error}</span>
+              </div>
+            )}
+
+            <div className="flex items-center justify-between gap-4 pt-2">
+              <Link href="/" className="btn-secondary">
+                <span className="rtl:rotate-180">←</span> {t.back}
+              </Link>
+              <button
+                type="submit"
+                disabled={!canSubmit || pending}
+                className="btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {t.signAndContinue}
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  className="rtl:rotate-180"
+                >
+                  <path
+                    d="M 3 8 L 13 8 M 9 4 L 13 8 L 9 12"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    fill="none"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+            </div>
+          </form>
+        </div>
+      </main>
+    );
   }
 
   return (

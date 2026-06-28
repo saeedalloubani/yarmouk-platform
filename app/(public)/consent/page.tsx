@@ -10,6 +10,7 @@ import { redirect } from "next/navigation";
 import { getSession, getLang } from "@/lib/cookies";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { consentExistsForResponse } from "@/lib/repos/consent";
+import { getVersion } from "@/lib/repos/questionnaires";
 import ConsentForm from "@/components/ConsentForm";
 
 export const dynamic = "force-dynamic";
@@ -23,6 +24,13 @@ export default async function ConsentPage() {
     redirect("/questionnaire");
   }
 
+  // D105 — the consent COPY is type-specific: main shows the approved JUST/WDC
+  // IRB form; pilot keeps its original wording. Resolve the version type
+  // server-side from the session (never the client). Defaults to the pilot
+  // copy if the version can't be resolved (safe, unchanged behavior).
+  const version = await getVersion(admin, session.questionnaireVersionId);
+  const consentType = version?.type === "main" ? "main" : "pilot";
+
   const lang = await getLang();
-  return <ConsentForm lang={lang} />;
+  return <ConsentForm lang={lang} type={consentType} />;
 }
