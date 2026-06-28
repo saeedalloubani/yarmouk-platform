@@ -33,6 +33,7 @@ import { redirect } from "next/navigation";
 import { getSession, getLang } from "@/lib/cookies";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { consentExistsForResponse } from "@/lib/repos/consent";
+import { getVersion } from "@/lib/repos/questionnaires";
 
 export type ConsentInput = {
   agreedToRead: boolean;
@@ -85,6 +86,13 @@ export async function submitConsent(
 
   const lang = await getLang();
 
+  // D105 — stamp the consent_text_version with the wording actually shown:
+  // main respondents see the approved JUST/WDC form ("main-v1"); pilot keeps
+  // "v1.0". Resolved server-side from the session's version type (never the
+  // client). Unresolvable version → "v1.0" (safe, matches the pilot default).
+  const version = await getVersion(admin, session.questionnaireVersionId);
+  const consentTextVersion = version?.type === "main" ? "main-v1" : "v1.0";
+
   // D83 — atomic commit via commit_consent_sign SECURITY DEFINER RPC.
   // The RPC's body does INSERT consent_records + UPDATE invitations
   // use_count++ + INSERT audit_log inside one transaction. Idempotent
@@ -98,7 +106,7 @@ export async function submitConsent(
     p_agreed_to_read: true,
     p_agreed_to_participate: true,
     p_language: lang,
-    p_consent_text_version: "v1.0", // bump when consent wording changes (ethics trail)
+    p_consent_text_version: consentTextVersion, // D105 — "main-v1" / "v1.0" (ethics trail)
   });
 
   if (rpcErr) {
