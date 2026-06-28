@@ -74,6 +74,141 @@ export async function getChoiceAnswers(
   return out;
 }
 
+// D106 — the choice-aware admin READ keystone. ONE loader that returns every
+// answer in full: the free_text body, the choice selections WITH their option
+// labels/codes, and the comment. Admin surfaces read through this instead of
+// re-implementing the answers→answer_options→question_options join per surface
+// (the pre-D106 readers selected answer_text only, so a choice answer — whose
+// answer_text is '' — rendered blank). Generalizes getChoiceAnswers (which
+// serves the respondent resume path) for admin reads across one OR many
+// responses. Pure read; no writes. D107 (exports) reads through it too.
+export type SelectedOption = {
+  id: string;
+  labelEn: string;
+  labelAr: string;
+  optionCode: string;
+};
+
+export type RichAnswer = {
+  // answer_type lives on the QUESTION (answers carries no type column), so the
+  // loader sources it from questions. Defaults to free_text defensively.
+  answerType: Database["public"]["Enums"]["answer_type"];
+  text: string; // answer_text — the free_text body; '' for a choice answer
+  selectedOptions: SelectedOption[]; // ordered by option order_index; [] for free_text
+  comment: string | null; // answer_comment — present for choice w/ allow_comment
+  wordCount: number; // GENERATED column; 0 for a choice answer (no prose)
+};
+
+/** Full answers for one or many responses, keyed response_id → question_id →
+ *  RichAnswer. Four batched SELECTs: answers, questions (for answer_type),
+ *  answer_options (selections), question_options (labels/codes). */
+export async function getRichAnswers(
+  admin: SupabaseClient<Database>,
+  responseIds: string[]
+): Promise<Map<string, Map<string, RichAnswer>>> {
+  const out = new Map<string, Map<string, RichAnswer>>();
+  if (responseIds.length === 0) return out;
+
+  // 1. answer rows for the response set.
+  const { data: aRows, error: aErr } = await admin
+    .from("answers")
+    .select("id, response_id, question_id, answer_text, answer_comment, word_count")
+    .in("response_id", responseIds);
+  if (aErr) throw aErr;
+  const rows = aRows ?? [];
+  if (rows.length === 0) return out;
+
+  // 2. answer_type per question — answers has no type column; it lives on the
+  //    question. One batched lookup over the distinct question ids.
+  const questionIds = Array.from(new Set(rows.map((r) => r.question_id)));
+  const { data: qRows, error: qErr } = await admin
+    .from("questions")
+    .select("id, answer_type")
+    .in("id", questionIds);
+  if (qErr) throw qErr;
+  const answerTypeByQuestion = new Map(
+    (qRows ?? []).map((q) => [q.id, q.answer_type] as const)
+  );
+
+  // 3. selected option ids per answer.
+  const answerIds = rows.map((r) => r.id);
+  const { data: selRows, error: sErr } = await admin
+    .from("answer_options")
+    .select("answer_id, option_id")
+    .in("answer_id", answerIds);
+  if (sErr) throw sErr;
+  const optionIdsByAnswer = new Map<string, string[]>();
+  for (const s of selRows ?? []) {
+    const list = optionIdsByAnswer.get(s.answer_id) ?? [];
+    list.push(s.option_id);
+    optionIdsByAnswer.set(s.answer_id, list);
+  }
+
+  // 4. labels/codes/order for every selected option.
+  const optionIds = Array.from(new Set((selRows ?? []).map((s) => s.option_id)));
+  const optionById = new Map<
+    string,
+    { id: string; labelEn: string; labelAr: string; optionCode: string; orderIndex: number }
+  >();
+  if (optionIds.length > 0) {
+    const { data: optRows, error: oErr } = await admin
+      .from("question_options")
+      .select("id, label_en, label_ar, option_code, order_index")
+      .in("id", optionIds);
+    if (oErr) throw oErr;
+    for (const o of optRows ?? []) {
+      optionById.set(o.id, {
+        id: o.id,
+        labelEn: o.label_en,
+        labelAr: o.label_ar,
+        optionCode: o.option_code,
+        orderIndex: o.order_index,
+      });
+    }
+  }
+
+  // 5. assemble — selections sorted by option order_index for stable display.
+  for (const r of rows) {
+    const selectedOptions: SelectedOption[] = (optionIdsByAnswer.get(r.id) ?? [])
+      .map((oid) => optionById.get(oid))
+      .filter((o): o is NonNullable<typeof o> => o != null)
+      .sort((x, y) => x.orderIndex - y.orderIndex)
+      .map((o) => ({
+        id: o.id,
+        labelEn: o.labelEn,
+        labelAr: o.labelAr,
+        optionCode: o.optionCode,
+      }));
+    const rich: RichAnswer = {
+      answerType: answerTypeByQuestion.get(r.question_id) ?? "free_text",
+      text: r.answer_text ?? "",
+      selectedOptions,
+      comment: r.answer_comment ?? null,
+      wordCount: r.word_count ?? 0,
+    };
+    let bucket = out.get(r.response_id);
+    if (!bucket) {
+      bucket = new Map<string, RichAnswer>();
+      out.set(r.response_id, bucket);
+    }
+    bucket.set(r.question_id, rich);
+  }
+  return out;
+}
+
+/** Shared "is this answer answered?" predicate for admin COUNT surfaces (the
+ *  detail "Answered X/N" and the responses-list answered tally). CONTENT-based,
+ *  matching the submit gate's per-type rule MINUS allow_skip: free_text →
+ *  non-empty text; choice → at least one selected option. A skippable question
+ *  left empty has no content, so it counts as NOT answered — honest for a
+ *  display tally. A comment alone never counts (mirrors the gate: a choice
+ *  question needs a selection, not just a comment). */
+export function richAnswerIsAnswered(r: RichAnswer): boolean {
+  return r.answerType === "free_text"
+    ? r.text.trim().length > 0
+    : r.selectedOptions.length > 0;
+}
+
 /** Question_ids SATISFIED for the submit gate — TYPE-AWARE (D103):
  *    free_text → answer_text non-empty (unchanged from the pre-D103 rule);
  *    single/multi_choice → at least one selected option (answer_options row);

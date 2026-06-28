@@ -28,9 +28,13 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCurrentAdmin } from "@/lib/auth";
 import {
   getResponse,
-  getAnswersForResponse,
   computeActiveDurationMinutes,
 } from "@/lib/repos/responses";
+import {
+  getRichAnswers,
+  richAnswerIsAnswered,
+  type RichAnswer,
+} from "@/lib/repos/answers";
 import { getInvitation, categoryLabel, collectionModeLabel } from "@/lib/repos/invitations";
 import { getConsentForResponse } from "@/lib/repos/consent";
 import { getVisibleQuestions } from "@/lib/repos/questions";
@@ -132,10 +136,19 @@ export default async function ResponseDetailPage({
         invitation.nationality
       )
     : [];
-  const answers = await getAnswersForResponse(supabase, response.id);
+  // D106 — choice-aware read via the shared keystone. answers maps
+  // question_id → RichAnswer (free_text body, choice selections WITH labels,
+  // comment, word_count). Pre-D106 this read answer_text only, so choice
+  // answers rendered "(no answer)" and didn't count as answered.
+  const richByResponse = await getRichAnswers(supabase, [response.id]);
+  const answers =
+    richByResponse.get(response.id) ?? new Map<string, RichAnswer>();
 
+  // Answered count — TYPE-AWARE (shared predicate): free_text → non-empty
+  // text; choice → ≥1 selection. Total words stays from the generated
+  // word_count (a choice answer honestly contributes 0 prose words).
   const answeredCount = [...answers.values()].filter(
-    (a) => a.answerText.trim().length > 0
+    richAnswerIsAnswered
   ).length;
   const totalWords = [...answers.values()].reduce(
     (sum, a) => sum + a.wordCount,
@@ -410,7 +423,11 @@ export default async function ResponseDetailPage({
             <ol className="space-y-6">
               {questions.map((q) => {
                 const a = answers.get(q.id);
-                const answerText = (a?.answerText ?? "").trim();
+                const answerText = (a?.text ?? "").trim();
+                // D106 — branch on the QUESTION's type (answers carry no type).
+                const isChoice = q.answerType !== "free_text";
+                const selected = a?.selectedOptions ?? [];
+                const comment = (a?.comment ?? "").trim();
                 return (
                   <li
                     key={q.id}
@@ -441,18 +458,67 @@ export default async function ResponseDetailPage({
                     >
                       {q.textAr}
                     </p>
-                    {/* Participant's answer — bumped to text-[15px] + full
+                    {/* D106 — FREE_TEXT path is byte-identical to pre-D106:
+                        the participant's answer, bumped to text-[15px] + full
                         text-ink + whitespace-pre-line for thesis-readable
                         treatment. pre-line preserves paragraph breaks but
                         collapses run-on whitespace, which reads better than
                         pre-wrap's full preservation. */}
-                    {answerText ? (
-                      <p
-                        className="text-[15px] text-ink leading-relaxed whitespace-pre-line"
-                        dir={lang === "ar" ? "rtl" : "ltr"}
-                      >
-                        {answerText}
-                      </p>
+                    {!isChoice ? (
+                      answerText ? (
+                        <p
+                          className="text-[15px] text-ink leading-relaxed whitespace-pre-line"
+                          dir={lang === "ar" ? "rtl" : "ltr"}
+                        >
+                          {answerText}
+                        </p>
+                      ) : (
+                        <p className="text-[13px] text-muted italic">
+                          (no answer)
+                        </p>
+                      )
+                    ) : selected.length > 0 || comment ? (
+                      /* CHOICE — selected option label(s) in the respondent's
+                         language as chips (mirrors the wizard), then the
+                         comment in its own sub-block when present. */
+                      <div>
+                        {selected.length > 0 ? (
+                          <ul
+                            className="flex flex-wrap gap-2"
+                            dir={lang === "ar" ? "rtl" : "ltr"}
+                          >
+                            {selected.map((o) => (
+                              <li
+                                key={o.id}
+                                className="chip-solid bg-brand-50 text-brand-700 text-[14px]"
+                              >
+                                <span
+                                  className={
+                                    lang === "ar" ? "font-arabic" : undefined
+                                  }
+                                >
+                                  {lang === "ar" ? o.labelAr : o.labelEn}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p className="text-[13px] text-muted italic">
+                            (no selection)
+                          </p>
+                        )}
+                        {comment && (
+                          <div className="mt-2.5">
+                            <div className="eyebrow mb-0.5">Comment</div>
+                            <p
+                              className="text-[14px] text-ink leading-relaxed whitespace-pre-line"
+                              dir={lang === "ar" ? "rtl" : "ltr"}
+                            >
+                              {comment}
+                            </p>
+                          </div>
+                        )}
+                      </div>
                     ) : (
                       <p className="text-[13px] text-muted italic">
                         (no answer)
