@@ -99,9 +99,32 @@ export type RichAnswer = {
   wordCount: number; // GENERATED column; 0 for a choice answer (no prose)
 };
 
+// D106a — PostgREST rejects a GET whose URL is too long (HTTP 400 "Bad
+// Request"), so an unbounded `.in(col, ids)` fails once the id list grows.
+// getRichAnswers is called with EVERY response's answers at once by the
+// responses list (getAnswerCounts) and bulk exports (D107) — at 48 responses
+// that is ~700 answer ids, and `.in("answer_id", [~700 uuids])` blew the
+// limit and 500'd both surfaces. Batch id-filtered reads into fixed-size
+// chunks and merge. 100 keeps each URL well under the limit (~3.7 KB), inside
+// the proven-safe range (a 107-id list succeeded; a 692-id list failed).
+const IN_CHUNK_SIZE = 100;
+
+async function inChunks<Row>(
+  ids: string[],
+  fetch: (chunk: string[]) => Promise<Row[]>
+): Promise<Row[]> {
+  const out: Row[] = [];
+  for (let i = 0; i < ids.length; i += IN_CHUNK_SIZE) {
+    out.push(...(await fetch(ids.slice(i, i + IN_CHUNK_SIZE))));
+  }
+  return out;
+}
+
 /** Full answers for one or many responses, keyed response_id → question_id →
  *  RichAnswer. Four batched SELECTs: answers, questions (for answer_type),
- *  answer_options (selections), question_options (labels/codes). */
+ *  answer_options (selections), question_options (labels/codes). Every
+ *  id-filtered read is CHUNKED (inChunks) so a large id list can't exceed the
+ *  PostgREST URL limit — see D106a. */
 export async function getRichAnswers(
   admin: SupabaseClient<Database>,
   responseIds: string[]
@@ -110,61 +133,70 @@ export async function getRichAnswers(
   if (responseIds.length === 0) return out;
 
   // 1. answer rows for the response set.
-  const { data: aRows, error: aErr } = await admin
-    .from("answers")
-    .select("id, response_id, question_id, answer_text, answer_comment, word_count")
-    .in("response_id", responseIds);
-  if (aErr) throw aErr;
-  const rows = aRows ?? [];
+  const rows = await inChunks(responseIds, async (chunk) => {
+    const { data, error } = await admin
+      .from("answers")
+      .select("id, response_id, question_id, answer_text, answer_comment, word_count")
+      .in("response_id", chunk);
+    if (error) throw error;
+    return data ?? [];
+  });
   if (rows.length === 0) return out;
 
   // 2. answer_type per question — answers has no type column; it lives on the
-  //    question. One batched lookup over the distinct question ids.
+  //    question. One batched (chunked) lookup over the distinct question ids.
   const questionIds = Array.from(new Set(rows.map((r) => r.question_id)));
-  const { data: qRows, error: qErr } = await admin
-    .from("questions")
-    .select("id, answer_type")
-    .in("id", questionIds);
-  if (qErr) throw qErr;
+  const qRows = await inChunks(questionIds, async (chunk) => {
+    const { data, error } = await admin
+      .from("questions")
+      .select("id, answer_type")
+      .in("id", chunk);
+    if (error) throw error;
+    return data ?? [];
+  });
   const answerTypeByQuestion = new Map(
-    (qRows ?? []).map((q) => [q.id, q.answer_type] as const)
+    qRows.map((q) => [q.id, q.answer_type] as const)
   );
 
   // 3. selected option ids per answer.
   const answerIds = rows.map((r) => r.id);
-  const { data: selRows, error: sErr } = await admin
-    .from("answer_options")
-    .select("answer_id, option_id")
-    .in("answer_id", answerIds);
-  if (sErr) throw sErr;
+  const selRows = await inChunks(answerIds, async (chunk) => {
+    const { data, error } = await admin
+      .from("answer_options")
+      .select("answer_id, option_id")
+      .in("answer_id", chunk);
+    if (error) throw error;
+    return data ?? [];
+  });
   const optionIdsByAnswer = new Map<string, string[]>();
-  for (const s of selRows ?? []) {
+  for (const s of selRows) {
     const list = optionIdsByAnswer.get(s.answer_id) ?? [];
     list.push(s.option_id);
     optionIdsByAnswer.set(s.answer_id, list);
   }
 
   // 4. labels/codes/order for every selected option.
-  const optionIds = Array.from(new Set((selRows ?? []).map((s) => s.option_id)));
+  const optionIds = Array.from(new Set(selRows.map((s) => s.option_id)));
+  const optRows = await inChunks(optionIds, async (chunk) => {
+    const { data, error } = await admin
+      .from("question_options")
+      .select("id, label_en, label_ar, option_code, order_index")
+      .in("id", chunk);
+    if (error) throw error;
+    return data ?? [];
+  });
   const optionById = new Map<
     string,
     { id: string; labelEn: string; labelAr: string; optionCode: string; orderIndex: number }
   >();
-  if (optionIds.length > 0) {
-    const { data: optRows, error: oErr } = await admin
-      .from("question_options")
-      .select("id, label_en, label_ar, option_code, order_index")
-      .in("id", optionIds);
-    if (oErr) throw oErr;
-    for (const o of optRows ?? []) {
-      optionById.set(o.id, {
-        id: o.id,
-        labelEn: o.label_en,
-        labelAr: o.label_ar,
-        optionCode: o.option_code,
-        orderIndex: o.order_index,
-      });
-    }
+  for (const o of optRows) {
+    optionById.set(o.id, {
+      id: o.id,
+      labelEn: o.label_en,
+      labelAr: o.label_ar,
+      optionCode: o.option_code,
+      orderIndex: o.order_index,
+    });
   }
 
   // 5. assemble — selections sorted by option order_index for stable display.
